@@ -116,11 +116,96 @@ class RiskConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class DataConfig:
+    cache_dir: str = "data/cache"  # relative paths resolve against the working directory
+    use_cache: bool = True
+    page_limit: int = 1000  # candles per public OHLCV request
+
+    def __post_init__(self) -> None:
+        _require(
+            isinstance(self.cache_dir, str) and self.cache_dir.strip() != "",
+            "data.cache_dir must be a non-empty path",
+        )
+        _require(isinstance(self.use_cache, bool), "data.use_cache must be true or false")
+        _require(
+            isinstance(self.page_limit, int)
+            and not isinstance(self.page_limit, bool)
+            and 1 <= self.page_limit <= 5000,
+            f"data.page_limit must be an integer in [1, 5000], got {self.page_limit!r}",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class StrategySpec:
+    """One strategy entry: ``[strategies.<name>]`` in TOML.
+
+    ``enabled`` and ``weight`` are generic. Every other key is passed to the
+    strategy's constructor as a parameter, and the strategy registry validates
+    them when strategies are built.
+    """
+
+    name: str
+    enabled: bool = True
+    weight: float = 1.0
+    params: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _require(
+            isinstance(self.name, str) and self.name.isidentifier(),
+            f"strategy name must be an identifier, got {self.name!r}",
+        )
+        _require(isinstance(self.enabled, bool), f"strategies.{self.name}.enabled must be bool")
+        _number(self, "weight", low=0.0, high=1e6)
+        _require(isinstance(self.params, dict), f"strategies.{self.name} params must be a table")
+        object.__setattr__(self, "params", dict(self.params))
+
+    @classmethod
+    def from_table(cls, name: str, table: Mapping[str, Any]) -> StrategySpec:
+        _require(isinstance(table, Mapping), f"[strategies.{name}] must be a table")
+        params = {k: v for k, v in table.items() if k not in ("enabled", "weight")}
+        return cls(
+            name=name,
+            enabled=table.get("enabled", True),
+            weight=table.get("weight", 1.0),
+            params=params,
+        )
+
+
+DEFAULT_STRATEGIES: tuple[StrategySpec, ...] = (
+    StrategySpec("rsi", params={"period": 14, "oversold": 30.0, "overbought": 70.0}),
+    StrategySpec("macd", params={"fast": 12, "slow": 26, "signal": 9}),
+    StrategySpec("bollinger", params={"period": 20, "num_std": 2.0}),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class VotingConfig:
+    """How strategy signals are combined (see ``ensemble.voting``)."""
+
+    buy_threshold: float = 0.15
+    sell_threshold: float = 0.15
+    min_agreeing: int = 1
+
+    def __post_init__(self) -> None:
+        _number(self, "buy_threshold", low=0.0, high=1.0, low_inclusive=False)
+        _number(self, "sell_threshold", low=0.0, high=1.0, low_inclusive=False)
+        _require(
+            isinstance(self.min_agreeing, int)
+            and not isinstance(self.min_agreeing, bool)
+            and self.min_agreeing >= 1,
+            f"voting.min_agreeing must be an integer >= 1, got {self.min_agreeing!r}",
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
     market: MarketConfig = field(default_factory=MarketConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
+    data: DataConfig = field(default_factory=DataConfig)
+    strategies: tuple[StrategySpec, ...] = DEFAULT_STRATEGIES
+    voting: VotingConfig = field(default_factory=VotingConfig)
 
     def __post_init__(self) -> None:
         for symbol in self.market.symbols:
@@ -129,10 +214,22 @@ class AppConfig:
                 quote == self.portfolio.quote_currency,
                 f"symbol {symbol} is not quoted in {self.portfolio.quote_currency}",
             )
+        object.__setattr__(self, "strategies", tuple(self.strategies))
+        names = [s.name for s in self.strategies]
+        _require(len(set(names)) == len(names), "duplicate strategy names")
+        enabled = [s for s in self.strategies if s.enabled]
+        _require(bool(enabled), "at least one strategy must be enabled")
+        _require(
+            sum(s.weight for s in enabled) > 0, "enabled strategies must have positive total weight"
+        )
+
+    @property
+    def enabled_strategies(self) -> tuple[StrategySpec, ...]:
+        return tuple(s for s in self.strategies if s.enabled)
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> AppConfig:
-        unknown = set(data) - set(_SECTIONS)
+        unknown = set(data) - set(_SECTIONS) - {"strategies"}
         _require(not unknown, f"unknown config section(s): {sorted(unknown)}")
         sections: dict[str, Any] = {}
         for name, section_cls in _SECTIONS.items():
@@ -142,11 +239,18 @@ class AppConfig:
             bad = set(raw) - allowed
             _require(not bad, f"unknown key(s) in [{name}]: {sorted(bad)}")
             sections[name] = section_cls(**raw)
+        if "strategies" in data:
+            raw_strategies = data["strategies"]
+            _require(isinstance(raw_strategies, Mapping), "[strategies] must be a table of tables")
+            sections["strategies"] = tuple(
+                StrategySpec.from_table(name, table) for name, table in raw_strategies.items()
+            )
         return cls(**sections)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["market"]["symbols"] = list(self.market.symbols)
+        data["strategies"] = [asdict(s) for s in self.strategies]
         return data
 
     def fingerprint(self) -> str:
@@ -160,6 +264,8 @@ _SECTIONS: dict[str, type] = {
     "market": MarketConfig,
     "execution": ExecutionConfig,
     "risk": RiskConfig,
+    "data": DataConfig,
+    "voting": VotingConfig,
 }
 
 

@@ -2,6 +2,7 @@
 
 from trading_lab.core.errors import (
     ConfigError,
+    DataError,
     InsufficientFundsError,
     MissingPriceError,
     PositionError,
@@ -27,6 +28,7 @@ __all__ = [
     "SUPPORTED_TIMEFRAMES",
     "ClosedTrade",
     "ConfigError",
+    "DataError",
     "Direction",
     "ExecutionReport",
     "Fill",

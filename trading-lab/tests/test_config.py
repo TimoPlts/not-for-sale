@@ -74,3 +74,42 @@ def test_supported_symbols_and_timeframes():
 def test_missing_config_file(tmp_path):
     with pytest.raises(ConfigError, match="not found"):
         load_config(tmp_path / "nope.toml")
+
+
+def test_default_strategies_and_voting():
+    cfg = AppConfig()
+    assert [s.name for s in cfg.enabled_strategies] == ["rsi", "macd", "bollinger"]
+    assert cfg.strategies[0].params == {"period": 14, "oversold": 30.0, "overbought": 70.0}
+    assert cfg.voting.buy_threshold == 0.15 and cfg.voting.min_agreeing == 1
+
+
+def test_strategies_section_replaces_defaults(tmp_path):
+    path = tmp_path / "cfg.toml"
+    path.write_text(
+        "[strategies.rsi]\nweight = 2\nperiod = 7\n"
+        "[strategies.macd]\nenabled = false\n"
+    )
+    cfg = load_config(path)
+    rsi, macd = cfg.strategies
+    assert rsi.weight == 2.0 and rsi.params == {"period": 7}
+    assert not macd.enabled
+    assert [s.name for s in cfg.enabled_strategies] == ["rsi"]
+
+
+@pytest.mark.parametrize(
+    "data, match",
+    [
+        ({"strategies": {"rsi": {"enabled": False}}}, "at least one strategy"),
+        ({"strategies": {"rsi": {"weight": -1}}}, "weight"),
+        ({"strategies": {"rsi": {"weight": 0}}}, "positive total weight"),
+        ({"strategies": {"rsi": 5}}, "must be a table"),
+        ({"strategies": {"bad-name": {}}}, "identifier"),
+        ({"voting": {"buy_threshold": 0}}, "buy_threshold"),
+        ({"voting": {"min_agreeing": 0}}, "min_agreeing"),
+        ({"data": {"page_limit": 0}}, "page_limit"),
+        ({"data": {"use_cache": "yes"}}, "use_cache"),
+    ],
+)
+def test_invalid_stage2_config_is_rejected(data, match):
+    with pytest.raises(ConfigError, match=match):
+        AppConfig.from_mapping(data)

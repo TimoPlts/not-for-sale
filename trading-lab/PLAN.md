@@ -150,7 +150,7 @@ average trade return.
 
 ## 3. Implementation stages
 
-### Stage 1: Foundations and simulation core ✅ (this commit)
+### Stage 1: Foundations and simulation core ✅
 - Project skeleton (`pyproject.toml`, src layout, pytest config, `.gitignore`, README)
 - `core`: enums, domain models with validation, errors, supported symbols (BTC/ETH/SOL/DOGE vs USDT) and timeframes
 - `config`: strict, typed TOML config with defaults ($10,000 starting cash, 0.1% fee, 5 bps slippage, risk limits), fingerprinting
@@ -159,12 +159,21 @@ average trade return.
 - `risk`: `RiskManager` (entry sizing, exit decisions, limits, stop checks)
 - Tests: config, models, portfolio accounting, execution, risk limits, safety scan
 
-### Stage 2: Market data, strategies and voting
-- `MarketDataProvider` ABC. `CcxtPublicProvider` with credential-free exchange, `enableRateLimit`, pagination, closed-candle filtering, dedupe/sort and gap detection. CSV cache keyed by exchange/symbol/timeframe. `SyntheticProvider` (seeded) for offline tests.
-- Indicators: RSI (Wilder), MACD (12/26/9), Bollinger (20, 2σ), with no look-ahead.
-- `Strategy` ABC, strategy registry, `RsiStrategy`, `MacdStrategy`, `BollingerMeanReversionStrategy`. Confidence comes from indicator distance to thresholds. Metadata holds the indicator values.
-- `VotingEngine`: weighted, confidence-weighted vote with a minimum agreement threshold and a minimum confidence. Ties and abstentions resolve to HOLD.
-- Tests: indicator values against hand-computed references, strategy signals on crafted series, voting rules.
+### Stage 2: Market data, strategies and voting ✅
+- `data`: a `MarketDataProvider` ABC and the canonical OHLCV frame (UTC open-time index, float64, closed candles only, validated).
+  - `CcxtPublicProvider`: the client is built without credentials and refuses any client that has them. It sets `enableRateLimit`, paginates, retries network errors with exponential backoff, drops the candle still forming, and calls only `fetch_ohlcv`.
+  - `CachedProvider`: a CSV cache that fetches only the missing tail and writes atomically.
+  - `SyntheticProvider`: a seeded random walk that is the same at any given timestamp regardless of the window requested.
+  - `candles_from_closes` builds crafted test scenarios.
+- `indicators`: RSI (exact Wilder smoothing), EMA, MACD (12/26/9) and Bollinger Bands (20, 2σ, population std, %B, bandwidth). Tests check them against independent reference implementations and the published Wilder example, and verify they are causal.
+- `strategies`: the `Strategy` ABC (template method with warmup handling and params in the metadata), a registry with `@register_strategy` plus a config-driven `build_strategies`, and three strategies:
+  - `RsiStrategy`: BUY below 30, SELL above 70.
+  - `MacdStrategy`: histogram zero-crossovers.
+  - `BollingerMeanReversionStrategy`: BUY below the lower band, SELL at or above `exit_percent_b` (the upper band by default; 0.5 exits at the middle band).
+  - Confidence convention: 0.5 when a trigger is just met, rising to 1.0 at extremes. HOLD always has confidence 0.
+- `ensemble`: the `VotingEngine` computes a confidence-weighted net score in which abstentions dilute and opposing votes cancel. It applies `buy_threshold`/`sell_threshold` and `min_agreeing`, and records the full vote breakdown in the metadata.
+- Config: new `[data]`, `[strategies.<name>]` (`enabled`, `weight` and strategy params) and `[voting]` sections.
+- Tests: indicators, strategy signals on crafted series, voting rules, data validation, the CCXT provider (with fake clients), cache behaviour and synthetic determinism.
 
 ### Stage 3: Persistence, backtesting and metrics
 - SQLite schema (`runs`, `signals`, `decisions`, `orders`, `fills`, `equity_snapshots`, `closed_trades`) with `PRAGMA user_version` migrations. Each run stores the config JSON and fingerprint.

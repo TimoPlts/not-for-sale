@@ -19,3 +19,7 @@ class PositionError(TradingLabError):
 
 class MissingPriceError(TradingLabError, KeyError):
     """A mark price is required for a symbol but was not provided."""
+
+
+class DataError(TradingLabError):
+    """Market data is missing, malformed or could not be fetched."""

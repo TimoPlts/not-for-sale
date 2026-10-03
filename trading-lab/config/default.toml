@@ -22,3 +22,35 @@ stop_loss_pct = 0.05          # stop distance below the entry fill price
 max_open_positions = 4
 max_total_exposure_pct = 1.0  # 1.0 = fully invested, no leverage
 allow_pyramiding = false      # add to an existing position?
+
+[data]
+cache_dir = "data/cache"      # CSV cache of public candles
+use_cache = true
+page_limit = 1000             # candles per public request
+
+# Each [strategies.<name>] table enables one strategy. `enabled` and `weight`
+# are generic; all other keys are strategy parameters.
+[strategies.rsi]
+enabled = true
+weight = 1.0
+period = 14
+oversold = 30.0
+overbought = 70.0
+
+[strategies.macd]
+enabled = true
+weight = 1.0
+fast = 12
+slow = 26
+signal = 9
+
+[strategies.bollinger]
+enabled = true
+weight = 1.0
+period = 20
+num_std = 2.0
+
+[voting]
+buy_threshold = 0.15          # net weighted score needed to BUY
+sell_threshold = 0.15         # net weighted score needed to SELL
+min_agreeing = 1              # min number of strategies voting that way
