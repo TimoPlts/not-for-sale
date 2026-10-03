@@ -1,0 +1,56 @@
+# trading-lab default configuration (paper trading only; no API keys are ever read).
+# These values mirror the defaults in src/trading_lab/config.py.
+
+[portfolio]
+initial_cash = 10000.0
+quote_currency = "USDT"
+
+[market]
+exchange = "binance"          # public market data only
+symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "DOGE/USDT"]
+timeframe = "1h"
+
+[execution]
+fee_rate = 0.001              # 0.1% taker fee per fill
+slippage_bps = 5.0            # adverse slippage in basis points
+min_notional = 10.0           # minimum order value in quote currency
+
+[risk]
+max_position_pct = 0.25       # max value of one position as a fraction of equity
+risk_per_trade_pct = 0.01     # equity lost if a stop-loss is hit (incl. costs)
+stop_loss_pct = 0.05          # stop distance below the entry fill price
+max_open_positions = 4
+max_total_exposure_pct = 1.0  # 1.0 = fully invested, no leverage
+allow_pyramiding = false      # add to an existing position?
+
+[data]
+cache_dir = "data/cache"      # CSV cache of public candles
+use_cache = true
+page_limit = 1000             # candles per public request
+
+# Each [strategies.<name>] table enables one strategy. `enabled` and `weight`
+# are generic; all other keys are strategy parameters.
+[strategies.rsi]
+enabled = true
+weight = 1.0
+period = 14
+oversold = 30.0
+overbought = 70.0
+
+[strategies.macd]
+enabled = true
+weight = 1.0
+fast = 12
+slow = 26
+signal = 9
+
+[strategies.bollinger]
+enabled = true
+weight = 1.0
+period = 20
+num_std = 2.0
+
+[voting]
+buy_threshold = 0.15          # net weighted score needed to BUY
+sell_threshold = 0.15         # net weighted score needed to SELL
+min_agreeing = 1              # min number of strategies voting that way
