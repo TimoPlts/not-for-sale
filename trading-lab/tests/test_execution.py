@@ -139,3 +139,11 @@ def test_execution_is_deterministic_and_ids_are_sequential():
     assert p1.fills == p2.fills
     assert p1.cash == p2.cash
     assert [r.status for r in r1].count(OrderStatus.REJECTED) == 1
+
+
+def test_slippage_accepts_plain_string_sides():
+    slip = FixedBpsSlippage(10)
+    assert slip.fill_price("buy", 100.0) == pytest.approx(100.1)
+    assert slip.fill_price("sell", 100.0) == pytest.approx(99.9)
+    with pytest.raises(ValueError):
+        slip.fill_price("short", 100.0)

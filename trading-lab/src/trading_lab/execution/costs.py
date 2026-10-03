@@ -64,7 +64,7 @@ class FixedBpsSlippage:
 
     def fill_price(self, side: Side, reference_price: float) -> float:
         factor = self.bps / 10_000.0
-        if side is Side.BUY:
+        if Side(side) is Side.BUY:  # Side() also validates plain strings like "buy"
             return reference_price * (1.0 + factor)
         return reference_price * (1.0 - factor)
 
