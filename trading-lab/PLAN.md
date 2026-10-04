@@ -201,7 +201,29 @@ average trade return.
 - Storage: schema v2 (adds `run_state`) via the migration path, `atomic()` transactions, fill loading, and run status (`running` / `stopped` / `completed` / `failed`).
 - CLI (`trading-lab`, or `python -m trading_lab`): `backtest`, `paper` (with `--resume`, `--once`, `--max-cycles`, `--synthetic`), `report` and `signals`, plus global `--config` and `--db`. The scripts in `scripts/` are now shortcuts to these commands.
 
-### Stage 5: Later (out of V1 scope)
-AI-agent signal sources, short positions, limit and stop orders, partial fills
-and order-book or volume-aware slippage, walk-forward and parameter-sweep
-tooling, a drawdown kill-switch and daily loss limits, and dashboards.
+### Stage 5: Risk circuit breakers ✅
+- Portfolio-wide breakers that block **new entries**; exits are always allowed:
+  - **Max drawdown kill switch:** permanent for the run, and optionally closes all positions.
+  - **Daily loss limit:** resets at the next UTC day.
+  - **Per-symbol cooldown** after a stop-loss.
+- Breaker state lives in the `TradingSession`, is persisted for live runs, and every trip is recorded as a decision.
+
+### Stage 6: AI agent framework ✅
+- An `Agent` interface: it receives a structured, serialisable market context and returns direction, confidence and a rationale. It plugs in through an `AgentStrategy` adapter, so agents vote like any other strategy and can never place orders themselves.
+- **Record and replay:** responses are cached in SQLite, keyed by agent, version, symbol, bar and context hash. Backtests with an agent are reproducible even if the agent is not, and a replay never calls the agent.
+- Prompt rendering and strict JSON response parsing, ready for an LLM-backed agent later.
+- An offline, deterministic example agent.
+
+### Stage 7: Research tools ✅
+- Parameter sweeps over any config keys, with data loaded once, results ranked and saved.
+- Walk-forward evaluation: choose parameters on a training window, measure on the next unseen window, and report in-sample versus out-of-sample performance to expose overfitting.
+- A buy-and-hold benchmark in every backtest.
+- A `compare` command for side-by-side metrics.
+
+### Stage 8: More realistic execution ✅
+- Volume-aware slippage: square-root market impact against recent traded volume, using only information available at fill time.
+- A liquidity cap: maximum participation in recent bar volume, applied as a sizing limit.
+- Limit entry orders: price offset, time-to-live, maker fee, trade-through fill rule, and partial fills capped by bar volume with the remainder resting until expiry.
+
+### Later
+Short positions, trailing stops, an LLM-backed agent (needs an LLM API key, never exchange keys), order-book data, and dashboards.

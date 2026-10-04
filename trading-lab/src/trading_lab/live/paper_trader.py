@@ -40,10 +40,14 @@ from trading_lab.core.models import Decision, DecisionAction, Fill
 from trading_lab.core.timeutils import ensure_utc
 from trading_lab.data.base import MarketDataProvider, timeframe_delta
 from trading_lab.engine import Bar, Intent, TradingSession
+from trading_lab.engine.session import RestingLimit
+from trading_lab.execution.costs import market_stats_frame, next_bar_stats, stats_series
 from trading_lab.portfolio import Portfolio
+from trading_lab.risk.breakers import BreakerState
 from trading_lab.reporting import run_metrics
 from trading_lab.storage import SQLiteStore
-from trading_lab.strategies import Strategy, build_strategies
+from trading_lab.strategies import Strategy
+from trading_lab.strategy_factory import strategies_for
 
 RUN_KIND = "paper"
 _GRACE = timedelta(seconds=5)  # wait a little after a candle closes before fetching it
@@ -82,7 +86,7 @@ class LivePaperTrader:
         self._store = store
         self._clock = clock
         self._strategies = (
-            list(strategies) if strategies is not None else build_strategies(config.enabled_strategies)
+            list(strategies) if strategies is not None else strategies_for(config)
         )
         self._voting = build_voting(config, self._strategies)
         self._step = timeframe_delta(config.market.timeframe)
@@ -145,6 +149,8 @@ class LivePaperTrader:
             order_sequence=state.get("order_sequence", self._store.count("orders", self.run_id)),
             pending={s: Intent.from_json(v) for s, v in state.get("pending", {}).items()},
             last_close=state.get("last_close", {}),
+            breaker_state=BreakerState.from_json(state["breakers"]) if "breakers" in state else None,
+            resting={s: RestingLimit.from_json(v) for s, v in state.get("resting", {}).items()},
         )
         last = state.get("last_processed")
         self._last_processed = pd.Timestamp(last) if last else None
@@ -184,6 +190,8 @@ class LivePaperTrader:
             "pending": {s: intent.to_json() for s, intent in self._session.pending.items()},
             "last_close": dict(self._session.last_close),
             "order_sequence": self._session.executor.sequence,
+            "breakers": self._session.breakers.state.to_json(),
+            "resting": {s: order.to_json() for s, order in self._session.resting.items()},
         }
 
     # ------------------------------------------------------------------ cycle
@@ -219,20 +227,22 @@ class LivePaperTrader:
                 for sym in cfg.market.symbols
             }
             position = {sym: {ts: i for i, ts in enumerate(candles[sym].index)} for sym in candles}
+            lookback = cfg.execution.volume_lookback
+            market_stats = {
+                sym: stats_series(market_stats_frame(frame, lookback)) for sym, frame in candles.items()
+            }
+            columns = ("open", "high", "low", "close", "volume")
             for t in new_bars:
                 ts = t.to_pydatetime()
                 idx = {sym: i for sym in cfg.market.symbols if (i := position[sym].get(t)) is not None}
                 bars = {
-                    sym: Bar(
-                        float(candles[sym]["open"].iloc[i]),
-                        float(candles[sym]["low"].iloc[i]),
-                        float(candles[sym]["close"].iloc[i]),
-                    )
-                    for sym, i in idx.items()
+                    sym: Bar(*(float(candles[sym][c].iloc[i]) for c in columns)) for sym, i in idx.items()
                 }
-                self._session.open_bar(ts, {sym: b.open for sym, b in bars.items()})
+                stats = {sym: market_stats[sym][i] for sym, i in idx.items()}
+                self._session.open_bar(ts, {sym: b.open for sym, b in bars.items()}, stats)
                 self._session.close_bar(
-                    ts, bars, {sym: [per_bar[i] for per_bar in signals[sym]] for sym, i in idx.items()}
+                    ts, bars, {sym: [per_bar[i] for per_bar in signals[sym]] for sym, i in idx.items()},
+                    stats,
                 )
                 self._last_processed = t
 
@@ -253,7 +263,9 @@ class LivePaperTrader:
                 if price is not None:
                     opens[sym] = price
             if needed <= set(opens):
-                self._session.open_bar(next_bar.to_pydatetime(), opens)
+                lookback = cfg.execution.volume_lookback
+                stats = {sym: next_bar_stats(candles[sym], lookback) for sym in opens}
+                self._session.open_bar(next_bar.to_pydatetime(), opens, stats)
 
         records = self._session.drain()
         new_trades = self.portfolio.closed_trades[self._persisted_trades :]

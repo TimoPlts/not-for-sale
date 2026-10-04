@@ -80,14 +80,50 @@ class MarketConfig:
 
 @dataclass(frozen=True, slots=True)
 class ExecutionConfig:
-    fee_rate: float = 0.001
-    slippage_bps: float = 5.0
+    fee_rate: float = 0.001  # taker fee (market orders)
+    slippage_bps: float = 5.0  # base adverse slippage for market orders
     min_notional: float = 10.0
+    # Market impact: "fixed" = slippage_bps only; "volume" = slippage_bps plus
+    # impact_coefficient * volatility * sqrt(order value / average bar value traded).
+    slippage_model: str = "fixed"
+    impact_coefficient: float = 1.0
+    volume_lookback: int = 20  # bars used for average volume and volatility
+    # Liquidity: max share of average bar volume one order may take (0 disables).
+    max_participation_pct: float = 0.0
+    # Entries as "market" orders, or "limit" orders resting below the open.
+    entry_order_type: str = "market"
+    limit_offset_bps: float = 10.0  # buy limit = open * (1 - offset)
+    limit_ttl_bars: int = 3  # unfilled remainder expires after this many bars
+    maker_fee_rate: float = 0.001  # fee for limit-order fills
 
     def __post_init__(self) -> None:
         _number(self, "fee_rate", low=0.0, high=0.05)
         _number(self, "slippage_bps", low=0.0, high=500.0)
         _number(self, "min_notional", low=0.0, high=1e9)
+        _require(
+            self.slippage_model in ("fixed", "volume"),
+            f"execution.slippage_model must be 'fixed' or 'volume', got {self.slippage_model!r}",
+        )
+        _number(self, "impact_coefficient", low=0.0, high=100.0)
+        _require(
+            isinstance(self.volume_lookback, int)
+            and not isinstance(self.volume_lookback, bool)
+            and self.volume_lookback >= 2,
+            f"execution.volume_lookback must be an integer >= 2, got {self.volume_lookback!r}",
+        )
+        _number(self, "max_participation_pct", low=0.0, high=1.0)
+        _require(
+            self.entry_order_type in ("market", "limit"),
+            f"execution.entry_order_type must be 'market' or 'limit', got {self.entry_order_type!r}",
+        )
+        _number(self, "limit_offset_bps", low=0.0, high=2000.0)
+        _require(
+            isinstance(self.limit_ttl_bars, int)
+            and not isinstance(self.limit_ttl_bars, bool)
+            and self.limit_ttl_bars >= 1,
+            f"execution.limit_ttl_bars must be an integer >= 1, got {self.limit_ttl_bars!r}",
+        )
+        _number(self, "maker_fee_rate", low=0.0, high=0.05)
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,8 +134,22 @@ class RiskConfig:
     max_open_positions: int = 4
     max_total_exposure_pct: float = 1.0
     allow_pyramiding: bool = False
+    # Circuit breakers (0 disables each one). They block new entries; exits stay allowed.
+    max_drawdown_pct: float = 0.25  # kill switch: equity this far below its peak
+    daily_loss_limit_pct: float = 0.05  # equity this far below the start of the UTC day
+    stop_loss_cooldown_bars: int = 3  # no re-entry into a symbol for N bars after a stop-out
+    flatten_on_halt: bool = False  # also close every position when the kill switch trips
 
     def __post_init__(self) -> None:
+        _number(self, "max_drawdown_pct", low=0.0, high=0.99)
+        _number(self, "daily_loss_limit_pct", low=0.0, high=0.99)
+        _require(
+            isinstance(self.stop_loss_cooldown_bars, int)
+            and not isinstance(self.stop_loss_cooldown_bars, bool)
+            and self.stop_loss_cooldown_bars >= 0,
+            f"risk.stop_loss_cooldown_bars must be an integer >= 0, got {self.stop_loss_cooldown_bars!r}",
+        )
+        _require(isinstance(self.flatten_on_halt, bool), "risk.flatten_on_halt must be true or false")
         _number(self, "max_position_pct", low=0.0, high=1.0, low_inclusive=False)
         _number(self, "risk_per_trade_pct", low=0.0, high=1.0, low_inclusive=False)
         _number(self, "stop_loss_pct", low=0.0, high=0.99, low_inclusive=False)
@@ -218,6 +268,29 @@ class StorageConfig:
         )
 
 
+AGENT_MODES = ("live", "record", "replay")
+
+
+@dataclass(frozen=True, slots=True)
+class AgentsConfig:
+    """How AI-agent strategies are called (see ``trading_lab.agents``).
+
+    * ``record``: use a cached answer when there is one, otherwise ask the agent and cache it
+    * ``replay``: only use cached answers (never call the agent) for exact reproducibility
+    * ``live``: always ask the agent and cache nothing
+    """
+
+    mode: str = "record"
+    cache_path: str = "data/agent_cache.db"
+
+    def __post_init__(self) -> None:
+        _require(self.mode in AGENT_MODES, f"agents.mode must be one of {AGENT_MODES}, got {self.mode!r}")
+        _require(
+            isinstance(self.cache_path, str) and self.cache_path.strip() != "",
+            "agents.cache_path must be a non-empty path",
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
@@ -229,6 +302,7 @@ class AppConfig:
     voting: VotingConfig = field(default_factory=VotingConfig)
     backtest: BacktestConfig = field(default_factory=BacktestConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
+    agents: AgentsConfig = field(default_factory=AgentsConfig)
 
     def __post_init__(self) -> None:
         for symbol in self.market.symbols:
@@ -325,6 +399,7 @@ _SECTIONS: dict[str, type] = {
     "voting": VotingConfig,
     "backtest": BacktestConfig,
     "storage": StorageConfig,
+    "agents": AgentsConfig,
 }
 
 

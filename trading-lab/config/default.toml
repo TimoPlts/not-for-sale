@@ -14,6 +14,14 @@ timeframe = "1h"
 fee_rate = 0.001              # 0.1% taker fee per fill
 slippage_bps = 5.0            # adverse slippage in basis points
 min_notional = 10.0           # minimum order value in quote currency
+slippage_model = "fixed"      # "fixed" (slippage_bps) or "volume" (adds square-root market impact)
+impact_coefficient = 1.0      # volume model: impact = coef * volatility * sqrt(order / avg bar volume)
+volume_lookback = 20          # bars for average volume and volatility (known before the fill)
+max_participation_pct = 0.0   # liquidity cap: max share of avg bar volume per order (0 = off)
+entry_order_type = "market"   # "market" or "limit" entries
+limit_offset_bps = 10.0       # limit entries: buy limit this far below the open
+limit_ttl_bars = 3            # limit entries: cancel the unfilled rest after N bars
+maker_fee_rate = 0.001        # fee for limit (maker) fills
 
 [risk]
 max_position_pct = 0.25       # max value of one position as a fraction of equity
@@ -22,6 +30,11 @@ stop_loss_pct = 0.05          # stop distance below the entry fill price
 max_open_positions = 4
 max_total_exposure_pct = 1.0  # 1.0 = fully invested, no leverage
 allow_pyramiding = false      # add to an existing position?
+# Circuit breakers (0 disables). They block NEW entries; exits are always allowed.
+max_drawdown_pct = 0.25       # kill switch: stop opening trades after a 25% drawdown
+daily_loss_limit_pct = 0.05   # pause new entries for the rest of a UTC day after -5%
+stop_loss_cooldown_bars = 3   # wait 3 bars before re-entering a symbol after a stop-out
+flatten_on_halt = false       # true = also close all positions when the kill switch trips
 
 [data]
 cache_dir = "data/cache"      # CSV cache of public candles
@@ -60,3 +73,7 @@ liquidate_at_end = false      # true = sell open positions at the final close
 
 [storage]
 db_path = "data/trading_lab.db"   # SQLite history of runs, signals, decisions, trades
+
+[agents]
+mode = "record"               # record | replay | live (see README: AI agents)
+cache_path = "data/agent_cache.db"

@@ -15,7 +15,7 @@ from typing import Mapping
 
 from trading_lab.config import RiskConfig
 from trading_lab.core.models import Order, Position, Side
-from trading_lab.execution.costs import CostModel
+from trading_lab.execution.costs import CostModel, MarketStats
 from trading_lab.portfolio.portfolio import Portfolio
 
 
@@ -63,6 +63,8 @@ class RiskManager:
       * **max position size**: position value <= ``equity * max_position_pct``
       * **max total exposure**: all positions <= ``equity * max_total_exposure_pct``
       * **available cash**: notional plus fee must be affordable
+      * **liquidity** (optional): notional <= ``max_participation_pct`` of the
+        average traded value per bar, when ``MarketStats`` are supplied
 
     Entries are also rejected when the open-position limit is reached, when
     pyramiding is disabled and a position already exists, or when the result
@@ -70,11 +72,17 @@ class RiskManager:
     """
 
     def __init__(
-        self, config: RiskConfig, cost_model: CostModel, *, min_notional: float = 0.0
+        self,
+        config: RiskConfig,
+        cost_model: CostModel,
+        *,
+        min_notional: float = 0.0,
+        max_participation_pct: float = 0.0,
     ) -> None:
         self._config = config
         self._costs = cost_model
         self._min_notional = float(min_notional)
+        self._max_participation = float(max_participation_pct)
 
     @property
     def config(self) -> RiskConfig:
@@ -89,6 +97,7 @@ class RiskManager:
         reference_price: float,
         portfolio: Portfolio,
         prices: Mapping[str, float],
+        stats: MarketStats | None = None,
     ) -> RiskDecision:
         """Size a new long entry. ``prices`` must contain marks for all open positions."""
         cfg = self._config
@@ -127,6 +136,8 @@ class RiskManager:
             "max_total_exposure": (equity * cfg.max_total_exposure_pct - total_value) / fill_price,
             "available_cash": self._costs.max_buy_quantity(portfolio.cash, reference_price),
         }
+        if self._max_participation > 0 and stats is not None:
+            candidates["liquidity"] = self._max_participation * stats.avg_quote_volume / fill_price
         binding = min(candidates, key=candidates.__getitem__)
         quantity = max(candidates[binding], 0.0)
         sizing: dict[str, float | str] = {
