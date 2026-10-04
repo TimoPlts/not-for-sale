@@ -4,6 +4,9 @@
     trading-lab paper    [--symbols ...] [--timeframe TF] [--resume RUN_ID] [--once] [--synthetic SEED]
     trading-lab report   [RUN_ID] [--limit N]
     trading-lab signals  [--symbols ...] [--timeframe TF] [--days N]
+    trading-lab sweep    --param strategies.rsi.period=7,14,21 [--param ...] [--start/--end] [--metric M]
+    trading-lab walkforward --param ... [--train-days 90] [--test-days 30]
+    trading-lab compare  RUN_ID RUN_ID ...
 
 Global options (before the command): ``--config PATH`` and ``--db PATH``.
 
@@ -97,6 +100,10 @@ def cmd_backtest(args: argparse.Namespace) -> int:
 
     print("\n=== Performance ===")
     print(result.metrics.format_table())
+    if result.benchmark is not None:
+        print(f"\nBuy & hold (equal weight, same costs): return {result.benchmark.total_return:+.2%}, "
+              f"max drawdown {-result.benchmark.max_drawdown:.2%}, "
+              f"sharpe {_fmt_num(result.benchmark.sharpe_ratio)}")
     per_symbol: dict[str, list[float]] = defaultdict(list)
     for t in result.trades:
         per_symbol[t.symbol].append(t.pnl)
@@ -246,6 +253,10 @@ def cmd_report(args: argparse.Namespace) -> int:
         metrics = run_metrics(store, args.run_id)
         print("\n=== Performance ===")
         print(metrics.format_table() if metrics else "no equity data yet")
+        bench = (store.load_metrics(args.run_id) or {}).get("benchmark")
+        if bench:
+            print(f"\nBuy & hold (equal weight, same costs): return {_fmt_pct(bench.get('total_return'))}, "
+                  f"max drawdown {_fmt_dd(bench.get('max_drawdown'))}")
 
         trades = store.load_closed_trades(args.run_id)
         print(f"\n=== Closed trades ({len(trades)}) - last {args.limit} ===")
@@ -294,6 +305,164 @@ def cmd_signals(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------- research
+def _coerce(token: str) -> Any:
+    lowered = token.strip().lower()
+    if lowered in ("true", "false"):
+        return lowered == "true"
+    for cast in (int, float):
+        try:
+            return cast(token)
+        except ValueError:
+            pass
+    return token.strip()
+
+
+def _grid(args: argparse.Namespace) -> dict[str, list[Any]]:
+    import tomllib
+
+    grid: dict[str, list[Any]] = {}
+    if args.grid:
+        with open(args.grid, "rb") as fh:
+            data = tomllib.load(fh)
+        table = data.get("grid", data)
+        for key, values in table.items():
+            grid[key] = list(values) if isinstance(values, list) else [values]
+    for item in args.param or []:
+        key, sep, values = item.partition("=")
+        if not sep or not key.strip() or not values.strip():
+            raise TradingLabError(f"--param must look like section.key=v1,v2 (got {item!r})")
+        grid[key.strip()] = [_coerce(v) for v in values.split(",")]
+    if not grid:
+        raise TradingLabError("give at least one --param (or --grid FILE)")
+    return grid
+
+
+def _period(args: argparse.Namespace, default_days: int) -> tuple[datetime, datetime]:
+    end = args.end or datetime.now(timezone.utc)
+    start = args.start or end - timedelta(days=default_days)
+    if end <= start:
+        raise TradingLabError("--end must be after --start")
+    return start, end
+
+
+def _short(params: dict[str, Any]) -> str:
+    return " ".join(f"{k.split('.', 1)[-1]}={v}" for k, v in params.items())
+
+
+def cmd_sweep(args: argparse.Namespace) -> int:
+    from trading_lab.research import run_sweep
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    grid = _grid(args)
+    start, end = _period(args, args.days)
+    provider = _provider(cfg, args.synthetic)
+    combos = 1
+    for values in grid.values():
+        combos *= len(values)
+    print(f"Sweep: {combos} backtests | {start:%Y-%m-%d} -> {end:%Y-%m-%d} | {cfg.market.timeframe} | "
+          f"ranked by {args.metric} | data: {provider.name}")
+
+    store = SQLiteStore(cfg.storage.db_path) if args.save else None
+    try:
+        results = run_sweep(
+            cfg, provider, start, end, grid, metric=args.metric, store=store,
+            progress=lambda n, total, params: print(f"  [{n}/{total}] {_short(params)}"),
+        )
+    finally:
+        if store is not None:
+            store.close()
+
+    bench = results[0].benchmark
+    print(f"\n{'#':>3}  {'return':>8} {'max dd':>7} {'sharpe':>7} {'trades':>6} {'win':>6}  params")
+    for rank, r in enumerate(results, 1):
+        m = r.metrics
+        win = "n/a" if m.win_rate is None else f"{m.win_rate:.0%}"
+        print(f"{rank:>3}  {m.total_return:>+8.2%} {-m.max_drawdown:>7.1%} {_fmt_num(m.sharpe_ratio):>7} "
+              f"{m.num_trades:>6} {win:>6}  {_short(r.params)}")
+    if bench is not None:
+        print(f"\nBuy & hold over the same period: {bench.total_return:+.2%} "
+              f"(max drawdown {-bench.max_drawdown:.1%})")
+    print("\nNote: the best in-sample row is optimistic by construction; use walkforward to check it.")
+    if args.export:
+        rows = [{**r.params, **r.metrics.to_dict(), "run_id": r.run_id} for r in results]
+        Path(args.export).parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(rows).to_csv(args.export, index=False)
+        print(f"Results written to {Path(args.export).resolve()}")
+    return 0
+
+
+def cmd_walkforward(args: argparse.Namespace) -> int:
+    from trading_lab.research import walk_forward
+
+    cfg = _load_config(args)
+    grid = _grid(args)
+    start, end = _period(args, args.days)
+    provider = _provider(cfg, args.synthetic)
+    print(f"Walk-forward | {start:%Y-%m-%d} -> {end:%Y-%m-%d} | train {args.train_days}d, "
+          f"test {args.test_days}d | choose by {args.metric} | data: {provider.name}")
+    result = walk_forward(
+        cfg, provider, start, end, grid,
+        train=timedelta(days=args.train_days), test=timedelta(days=args.test_days),
+        metric=args.metric, progress=lambda msg: print(f"  {msg}"),
+    )
+    metric = args.metric
+    print(f"\n{'test window':<25} {'in-sample':>10} {'out-of-sample':>14} "
+          f"{'OOS return':>11} {'buy&hold':>9}  chosen params")
+    for f in result.folds:
+        is_v = getattr(f.in_sample, metric)
+        oos_v = getattr(f.out_of_sample, metric)
+        bh = "n/a" if f.benchmark is None else f"{f.benchmark.total_return:+.2%}"
+        print(f"{f.test_start:%Y-%m-%d} -> {f.test_end:%Y-%m-%d}  {_fmt_num(is_v):>10} {_fmt_num(oos_v):>14} "
+              f"{f.out_of_sample.total_return:>+11.2%} {bh:>9}  {_short(f.best_params)}")
+    is_mean, oos_mean = result.mean_metric("in_sample"), result.mean_metric("out_of_sample")
+    print(f"\nMean {metric}: in-sample {_fmt_num(is_mean)} vs out-of-sample {_fmt_num(oos_mean)}")
+    bench = result.benchmark_return
+    print(f"Combined out-of-sample return {result.out_of_sample_return:+.2%}"
+          + ("" if bench is None else f" vs buy & hold {bench:+.2%}"))
+    if is_mean is not None and oos_mean is not None and oos_mean < is_mean:
+        print("Out-of-sample is worse than in-sample: expect live results closer to the out-of-sample numbers.")
+    return 0
+
+
+def cmd_compare(args: argparse.Namespace) -> int:
+    from trading_lab.reporting import run_metrics
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    rows = [
+        ("total_return", "Total return", _fmt_pct), ("annualized_return", "Annualized", _fmt_pct),
+        ("max_drawdown", "Max drawdown", _fmt_dd), ("sharpe_ratio", "Sharpe", _fmt_num),
+        ("sortino_ratio", "Sortino", _fmt_num), ("num_trades", "Trades", str),
+        ("win_rate", "Win rate", lambda v: "n/a" if v is None else f"{v:.1%}"),
+        ("profit_factor", "Profit factor", _fmt_num), ("total_fees", "Fees", _fmt_num),
+        ("exposure", "Exposure", lambda v: "n/a" if v is None else f"{v:.1%}"),
+    ]
+    columns = []
+    with SQLiteStore(cfg.storage.db_path) as store:
+        for run_id in args.run_ids:
+            run = store.get_run(run_id)
+            if run is None:
+                raise TradingLabError(f"unknown run id {run_id}")
+            stored = store.load_metrics(run_id) or {}
+            live = run_metrics(store, run_id)
+            metrics = live.to_dict() if live else stored
+            bench = stored.get("benchmark", {})
+            columns.append((run_id, run, metrics, bench))
+    width = max(16, *(len(c[0]) for c in columns))
+    print(f"{'':<16}" + "".join(f"{c[0]:>{width + 2}}" for c in columns))
+    info = [("Kind", lambda r: r["kind"]), ("Timeframe", lambda r: r["timeframe"]),
+            ("Period start", lambda r: (r["period_start"] or "")[:10]),
+            ("Period end", lambda r: (r["period_end"] or "now")[:10])]
+    for label, getter in info:
+        print(f"{label:<16}" + "".join(f"{getter(c[1]):>{width + 2}}" for c in columns))
+    for key, label, fmt in rows:
+        print(f"{label:<16}" + "".join(f"{fmt(c[2].get(key)):>{width + 2}}" for c in columns))
+    print(f"{'Buy & hold':<16}" + "".join(f"{_fmt_pct(c[3].get('total_return')):>{width + 2}}" for c in columns))
+    return 0
+
+
 # ------------------------------------------------------------------ parser
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -338,6 +507,33 @@ def build_parser() -> argparse.ArgumentParser:
     market_options(sg)
     sg.add_argument("--days", type=int, default=30, help="history to load (default 30)")
     sg.set_defaults(func=cmd_signals)
+
+    def research_options(p: argparse.ArgumentParser, default_days: int) -> None:
+        market_options(p)
+        p.add_argument("--param", action="append", metavar="KEY=V1,V2",
+                       help="dotted config key and values, e.g. strategies.rsi.period=7,14,21 (repeatable)")
+        p.add_argument("--grid", metavar="FILE", help="TOML file with a [grid] table of key = [values]")
+        p.add_argument("--start", type=_date, help="YYYY-MM-DD (UTC)")
+        p.add_argument("--end", type=_date, help="YYYY-MM-DD (UTC, exclusive); default now")
+        p.add_argument("--days", type=int, default=default_days,
+                       help=f"length when --start is omitted (default {default_days})")
+        p.add_argument("--metric", default="sharpe_ratio", help="ranking metric (default sharpe_ratio)")
+
+    sw = sub.add_parser("sweep", help="backtest every combination of parameter values")
+    research_options(sw, 180)
+    sw.add_argument("--save", action="store_true", help="store every run in the database")
+    sw.add_argument("--export", metavar="CSV", help="write the results table to a CSV file")
+    sw.set_defaults(func=cmd_sweep)
+
+    wf = sub.add_parser("walkforward", help="choose parameters in-sample, measure them out-of-sample")
+    research_options(wf, 365)
+    wf.add_argument("--train-days", type=int, default=90)
+    wf.add_argument("--test-days", type=int, default=30)
+    wf.set_defaults(func=cmd_walkforward)
+
+    cp = sub.add_parser("compare", help="compare stored runs side by side")
+    cp.add_argument("run_ids", nargs="+")
+    cp.set_defaults(func=cmd_compare)
     return parser
 
 

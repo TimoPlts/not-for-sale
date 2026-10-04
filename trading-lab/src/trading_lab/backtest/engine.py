@@ -44,7 +44,9 @@ from trading_lab.core.timeutils import ensure_utc
 from trading_lab.data.base import MarketDataProvider, timeframe_delta
 from trading_lab.engine import Bar, TradingSession
 from trading_lab.ensemble import VotingEngine
+from trading_lab.execution import CostModel
 from trading_lab.metrics import PerformanceMetrics, compute_metrics
+from trading_lab.metrics.benchmark import buy_and_hold_equity
 from trading_lab.storage import SQLiteStore
 from trading_lab.strategies import Strategy
 from trading_lab.strategy_factory import strategies_for
@@ -74,6 +76,14 @@ class BacktestResult:
     reports: tuple[ExecutionReport, ...]
     decisions: tuple[Decision, ...]
     signals: tuple[Signal, ...]
+    benchmark: PerformanceMetrics | None = None  # equal-weight buy and hold, same costs
+    benchmark_curve: pd.Series | None = None
+
+    def stored_metrics(self) -> dict:
+        data = self.metrics.to_dict()
+        if self.benchmark is not None:
+            data["benchmark"] = self.benchmark.to_dict()
+        return data
 
     def actions(self) -> dict[str, int]:
         counts: dict[str, int] = {}
@@ -179,7 +189,7 @@ class BacktestEngine:
             store.add_execution_reports(run_id, result.reports)
             store.add_snapshots(run_id, result.snapshots)
             store.add_closed_trades(run_id, result.trades)
-            store.save_metrics(run_id, result.metrics.to_dict())
+            store.save_metrics(run_id, result.stored_metrics())
 
     def _simulate(self, start: datetime, end: datetime, run_id: str | None) -> BacktestResult:
         cfg = self._config
@@ -241,6 +251,15 @@ class BacktestEngine:
             total_fees=portfolio.fees_paid,
             in_market=records.in_market,
         )
+        benchmark_curve = buy_and_hold_equity(
+            candles, timeline, portfolio.initial_cash, CostModel.from_config(cfg.execution)
+        )
+        benchmark = compute_metrics(
+            [portfolio.initial_cash, *benchmark_curve.tolist()],
+            [],
+            cfg.market.timeframe,
+            in_market=[True] * len(benchmark_curve),
+        )
         return BacktestResult(
             run_id=run_id,
             start=start,
@@ -254,4 +273,6 @@ class BacktestEngine:
             reports=tuple(records.reports),
             decisions=tuple(records.decisions),
             signals=tuple(records.signals),
+            benchmark=benchmark,
+            benchmark_curve=benchmark_curve,
         )

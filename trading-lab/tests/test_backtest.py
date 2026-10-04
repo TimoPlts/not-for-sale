@@ -299,7 +299,7 @@ def test_results_are_persisted(tmp_path):
         assert store.load_closed_trades(r.run_id) == list(r.trades)
         curve = store.load_equity_curve(r.run_id)
         np.testing.assert_allclose(curve["equity"], r.equity_curve["equity"])
-        assert store.load_metrics(r.run_id) == r.metrics.to_dict()
+        assert store.load_metrics(r.run_id) == r.stored_metrics()
 
 
 def test_failed_run_is_marked(tmp_path):
@@ -314,3 +314,22 @@ def test_failed_run_is_marked(tmp_path):
             BacktestEngine(AppConfig(), Broken(), store=store).run(START, END, run_id="bt-broken")
         run = store.get_run("bt-broken")
         assert run["status"] == "failed" and "exchange unreachable" in run["error"]
+
+
+def test_buy_and_hold_benchmark():
+    frame = bars([(100, 101, 99, 100), (110, 111, 109, 110), (120, 121, 119, 120)])
+    r = run_scripted({"BTC/USDT": frame}, {})  # the strategy never trades
+    assert r.benchmark is not None
+    # Zero costs: bought at the first open (100), worth 120 at the end.
+    assert list(r.benchmark_curve) == pytest.approx([10_000, 11_000, 12_000])
+    assert r.benchmark.total_return == pytest.approx(0.2)
+    assert r.metrics.total_return == 0.0
+    costly = run_scripted({"BTC/USDT": frame}, {}, config(fee=0.001, slip=10.0))
+    assert costly.benchmark.total_return < 0.2  # pays the same costs as the strategy
+
+
+def test_benchmark_splits_cash_equally():
+    a = bars([(100, 101, 99, 100), (200, 201, 199, 200)])
+    b = bars([(10, 11, 9, 10), (10, 11, 9, 10)])
+    r = run_scripted({"BTC/USDT": a, "ETH/USDT": b}, {}, config(symbols=("BTC/USDT", "ETH/USDT")))
+    assert r.benchmark_curve.iloc[-1] == pytest.approx(5_000 * 2 + 5_000)

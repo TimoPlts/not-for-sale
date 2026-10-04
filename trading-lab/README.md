@@ -142,3 +142,18 @@ Every answer is saved in `data/agent_cache.db`, and `[agents] mode` controls how
 Answers are keyed by agent, version, parameters, symbol, candle and a hash of the exact context the agent saw. Changing the agent, its prompt or the data therefore never reuses a stale answer. Rationales are stored with each signal in the run history.
 
 To connect an LLM later, pass any `complete(system_prompt, user_prompt) -> text` function to `LLMAgentStrategy`. It builds the prompt from the market context and strictly validates the JSON answer. Invalid answers and errors become HOLD signals and never crash a run. An LLM needs its own API key; exchange keys are never needed.
+
+## Research tools
+
+Every backtest now reports an equal-weight **buy & hold benchmark** over the same period, paying the same fees and slippage.
+
+```powershell
+# Backtest every combination of values (data is downloaded once):
+.venv/Scripts/trading-lab sweep --param voting.min_agreeing=1,2 --param strategies.rsi.period=7,14,21 --start 2025-01-01 --end 2025-07-01
+# Honest check for overfitting: choose parameters on 90 days, test them on the next 30 unseen days, repeat:
+.venv/Scripts/trading-lab walkforward --param voting.min_agreeing=1,2 --train-days 90 --test-days 30 --start 2025-01-01
+# Side-by-side metrics of stored runs:
+.venv/Scripts/trading-lab compare <run id> <run id>
+```
+
+`--param` takes any dotted config key, such as `risk.stop_loss_pct=0.03,0.05` or `strategies.trend_analyst.weight=0,1`. A sweep's best row is optimistic by construction, so judge it by the walk-forward **out-of-sample** results.
