@@ -1,19 +1,30 @@
 """The per-bar trading logic shared by backtesting and live paper trading.
 
 ``TradingSession`` owns the simulated portfolio, the paper executor, the risk
-manager and the scheduled orders. Callers feed it bars in time order:
+manager, the circuit breakers and all working orders. Callers feed it bars in
+time order:
 
-    session.open_bar(t, opens)                     # fill orders scheduled for bar t
-    session.close_bar(t, bars, strategy_signals)   # stops, mark to market, new signals
+    session.open_bar(t, opens, stats)                    # orders scheduled for bar t
+    session.close_bar(t, bars, strategy_signals, stats)  # limit fills, stops, marks, signals
 
 Because the backtester and the live paper trader both drive this one object,
 a live paper run follows exactly the same rules as a backtest over the same
 period:
 
-  * Signals are computed at a bar's close. The resulting orders fill at the
-    open of that symbol's next bar, through the cost model.
-  * Exits fill before entries. Entries are sized at fill time and processed
-    in descending signal confidence.
+  * Signals are computed at a bar's close. The resulting orders are handled
+    at the open of that symbol's next bar.
+  * Exits are market orders and fill before entries. Entries are sized at
+    that open and processed in descending signal confidence.
+  * Market entries fill at the open through the cost model, which can include
+    volume-aware impact based on ``MarketStats`` from earlier bars.
+  * Limit entries (``entry_order_type = "limit"``) rest at
+    ``open × (1 − limit_offset_bps)``:
+      - They fill only when a bar trades *through* the limit (low < limit), at
+        the limit price with the maker fee and no slippage.
+      - Each bar's fill is capped at ``max_participation_pct`` of that bar's
+        volume, which produces partial fills.
+      - Whatever is unfilled after ``limit_ttl_bars`` bars expires.
+      - An exit signal or the kill switch cancels a resting order.
   * A stop-loss triggers when a bar's low reaches the stop. It fills at the
     stop price, or at the open if the bar gapped below it.
 
@@ -29,66 +40,98 @@ from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 from trading_lab.config import AppConfig
-from trading_lab.data.base import timeframe_delta
 from trading_lab.core.models import (
     Decision,
     DecisionAction,
     Direction,
     ExecutionReport,
+    Order,
+    OrderType,
     PortfolioSnapshot,
+    Side,
     Signal,
 )
+from trading_lab.data.base import timeframe_delta
 from trading_lab.ensemble import VotingEngine
 from trading_lab.execution import CostModel, PaperExecutor
+from trading_lab.execution.costs import MarketStats
 from trading_lab.portfolio import Portfolio
 from trading_lab.risk import RiskManager
 from trading_lab.risk.breakers import BreakerState, CircuitBreakers
 
-
 PORTFOLIO = "PORTFOLIO"  # symbol used for portfolio-level decisions
+_DUST = 1e-12
 
 
 @dataclass(frozen=True, slots=True)
 class Bar:
     open: float
+    high: float
     low: float
     close: float
+    volume: float = 0.0  # base-currency volume traded during the bar
+
+
+def _signal_to_json(s: Signal) -> dict[str, Any]:
+    return {
+        "strategy": s.strategy,
+        "symbol": s.symbol,
+        "direction": s.direction.value,
+        "confidence": s.confidence,
+        "timestamp": s.timestamp.isoformat(),
+        "metadata": _plain(s.metadata),
+    }
+
+
+def _signal_from_json(sig: Mapping[str, Any]) -> Signal:
+    return Signal(
+        sig["strategy"], sig["symbol"], Direction(sig["direction"]), sig["confidence"],
+        datetime.fromisoformat(sig["timestamp"]), sig.get("metadata", {}),
+    )
 
 
 @dataclass(frozen=True, slots=True)
 class Intent:
-    """An order scheduled at a bar's close, to fill at the next bar's open."""
+    """An order scheduled at a bar's close, to be handled at the next bar's open."""
 
     action: DecisionAction  # ENTER_SIGNAL or EXIT_SIGNAL
     signal: Signal
 
     def to_json(self) -> dict[str, Any]:
-        s = self.signal
-        return {
-            "action": self.action.value,
-            "signal": {
-                "strategy": s.strategy,
-                "symbol": s.symbol,
-                "direction": s.direction.value,
-                "confidence": s.confidence,
-                "timestamp": s.timestamp.isoformat(),
-                "metadata": _plain(s.metadata),
-            },
-        }
+        return {"action": self.action.value, "signal": _signal_to_json(self.signal)}
 
     @classmethod
     def from_json(cls, data: Mapping[str, Any]) -> Intent:
-        sig = data["signal"]
+        return cls(DecisionAction(data["action"]), _signal_from_json(data["signal"]))
+
+
+@dataclass(slots=True)
+class RestingLimit:
+    """A working limit buy order."""
+
+    symbol: str
+    limit_price: float
+    quantity: float  # originally requested
+    remaining: float
+    stop_price: float | None
+    placed_at: datetime
+    bars_left: int
+    signal: Signal
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol, "limit_price": self.limit_price, "quantity": self.quantity,
+            "remaining": self.remaining, "stop_price": self.stop_price,
+            "placed_at": self.placed_at.isoformat(), "bars_left": self.bars_left,
+            "signal": _signal_to_json(self.signal),
+        }
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> RestingLimit:
         return cls(
-            DecisionAction(data["action"]),
-            Signal(
-                sig["strategy"],
-                sig["symbol"],
-                Direction(sig["direction"]),
-                sig["confidence"],
-                datetime.fromisoformat(sig["timestamp"]),
-                sig.get("metadata", {}),
-            ),
+            data["symbol"], data["limit_price"], data["quantity"], data["remaining"],
+            data["stop_price"], datetime.fromisoformat(data["placed_at"]), data["bars_left"],
+            _signal_from_json(data["signal"]),
         )
 
 
@@ -121,28 +164,29 @@ class TradingSession:
         pending: Mapping[str, Intent] | None = None,
         last_close: Mapping[str, float] | None = None,
         breaker_state: BreakerState | None = None,
+        resting: Mapping[str, RestingLimit] | None = None,
     ) -> None:
         self.config = config
         self.voting = voting
-        costs = CostModel.from_config(config.execution)
+        ex = config.execution
+        self.costs = CostModel.from_config(ex)
         self.portfolio = portfolio or Portfolio(
             config.portfolio.initial_cash, config.portfolio.quote_currency
         )
         self.executor = PaperExecutor(
-            self.portfolio,
-            costs,
-            min_notional=config.execution.min_notional,
-            id_prefix=id_prefix,
-            start_sequence=order_sequence,
+            self.portfolio, self.costs, min_notional=ex.min_notional,
+            id_prefix=id_prefix, start_sequence=order_sequence,
         )
-        self.risk = RiskManager(config.risk, costs, min_notional=config.execution.min_notional)
+        self.risk = RiskManager(
+            config.risk, self.costs, min_notional=ex.min_notional,
+            max_participation_pct=ex.max_participation_pct,
+        )
         self.breakers = CircuitBreakers(
-            config.risk,
-            timeframe_delta(config.market.timeframe),
-            self.portfolio.initial_cash,
-            breaker_state,
+            config.risk, timeframe_delta(config.market.timeframe),
+            self.portfolio.initial_cash, breaker_state,
         )
         self.pending: dict[str, Intent] = dict(pending or {})
+        self.resting: dict[str, RestingLimit] = dict(resting or {})
         self.last_close: dict[str, float] = dict(last_close or {})
         self.records = SessionRecords()
         self._order = {s: i for i, s in enumerate(config.market.symbols)}
@@ -152,15 +196,25 @@ class TradingSession:
         records, self.records = self.records, SessionRecords()
         return records
 
+    def _sorted(self, symbols) -> list[str]:  # type: ignore[no-untyped-def]
+        return sorted(symbols, key=self._order.__getitem__)
+
     # ------------------------------------------------------------------ steps
-    def open_bar(self, ts: datetime, opens: Mapping[str, float]) -> None:
-        """Fill orders scheduled for this bar at its open price (exits first)."""
+    def open_bar(
+        self,
+        ts: datetime,
+        opens: Mapping[str, float],
+        stats: Mapping[str, MarketStats | None] | None = None,
+    ) -> None:
+        """Handle orders scheduled for this bar at its open (exits first)."""
+        stats = stats or {}
         marks = {**self.last_close, **opens}
-        for sym in sorted(self.pending, key=self._order.__getitem__):
+        for sym in self._sorted(self.pending):
             intent = self.pending[sym]
             if intent.action is DecisionAction.EXIT_SIGNAL and sym in opens:
                 del self.pending[sym]
-                self._exit(sym, opens[sym], ts, DecisionAction.EXIT, "signal exit", intent.signal)
+                self._exit(sym, opens[sym], ts, DecisionAction.EXIT, "signal exit", intent.signal,
+                           stats.get(sym))
 
         entry_syms = sorted(
             (s for s, it in self.pending.items()
@@ -171,46 +225,35 @@ class TradingSession:
             sig = self.pending.pop(sym).signal
             blocked = self.breakers.entry_block_reason(sym, ts)
             if blocked is not None:
-                self.records.decisions.append(
-                    Decision(ts, sym, DecisionAction.REJECTED, blocked, sig.direction,
-                             sig.confidence, reference_price=opens[sym])
-                )
+                self._decide(ts, sym, DecisionAction.REJECTED, blocked, sig, reference_price=opens[sym])
                 continue
-            decision = self.risk.evaluate_entry(sym, opens[sym], self.portfolio, marks)
-            if not decision.approved:
-                self.records.decisions.append(
-                    Decision(ts, sym, DecisionAction.REJECTED, decision.reason, sig.direction,
-                             sig.confidence, reference_price=opens[sym], details=decision.sizing)
-                )
-                continue
-            report = self.executor.submit(decision.to_order(ts, reason="enter"), opens[sym])
-            self.records.reports.append(report)
-            self.records.decisions.append(
-                Decision(
-                    ts, sym, DecisionAction.ENTER if report.filled else DecisionAction.REJECTED,
-                    decision.reason if report.filled else report.reason,
-                    sig.direction, sig.confidence, quantity=decision.quantity,
-                    reference_price=opens[sym], stop_price=decision.stop_price,
-                    order_id=report.order_id, details=decision.sizing,
-                )
-            )
+            if self.config.execution.entry_order_type == "limit":
+                self._place_limit(sym, opens[sym], ts, sig, marks, stats.get(sym))
+            else:
+                self._market_entry(sym, opens[sym], ts, sig, marks, stats.get(sym))
 
     def close_bar(
         self,
         ts: datetime,
         bars: Mapping[str, Bar],
         strategy_signals: Mapping[str, Sequence[Signal]],
+        stats: Mapping[str, MarketStats | None] | None = None,
     ) -> None:
-        """Check stops, mark to market at the close, and schedule new orders."""
-        for sym in sorted(bars, key=self._order.__getitem__):
+        """Limit fills, stop-losses, mark to market, circuit breakers, new signals."""
+        stats = stats or {}
+        for sym in self._sorted(s for s in self.resting if s in bars):
+            self._match_limit(sym, bars[sym], ts)
+
+        for sym in self._sorted(bars):
             bar = bars[sym]
             position = self.portfolio.position(sym)
             if position is not None and self.risk.stop_triggered(position, bar.low):
                 stop = position.stop_price
                 assert stop is not None
+                self._cancel_resting(sym, ts, "cancelled: stop-loss hit")
                 self._exit(
                     sym, min(bar.open, stop), ts, DecisionAction.STOP_LOSS,
-                    f"stop {stop:.8g} hit (bar low {bar.low:.8g})",
+                    f"stop {stop:.8g} hit (bar low {bar.low:.8g})", None, stats.get(sym),
                 )
                 self.breakers.on_stop_loss(sym, ts)
 
@@ -222,13 +265,14 @@ class TradingSession:
 
         was_halted = self.breakers.halted
         for event in self.breakers.on_bar_close(ts, snapshot.equity):
-            self.records.decisions.append(
-                Decision(ts, PORTFOLIO, DecisionAction.CIRCUIT_BREAKER, event)
-            )
-        if self.breakers.halted and not was_halted and self.config.risk.flatten_on_halt:
-            self._flatten(ts)
+            self.records.decisions.append(Decision(ts, PORTFOLIO, DecisionAction.CIRCUIT_BREAKER, event))
+        if self.breakers.halted and not was_halted:
+            for sym in self._sorted(self.resting):
+                self._cancel_resting(sym, ts, "cancelled by kill switch")
+            if self.config.risk.flatten_on_halt:
+                self._flatten(ts)
 
-        for sym in sorted(bars, key=self._order.__getitem__):
+        for sym in self._sorted(bars):
             strat_sigs = list(strategy_signals[sym])
             ensemble = self.voting.combine(strat_sigs)
             self.records.signals.extend(strat_sigs)
@@ -236,18 +280,18 @@ class TradingSession:
             self._schedule(sym, ts, ensemble)
 
     def expire_pending(self, ts: datetime) -> None:
-        for sym in sorted(self.pending, key=self._order.__getitem__):
+        for sym in self._sorted(self.pending):
             intent = self.pending.pop(sym)
-            self.records.decisions.append(
-                Decision(ts, sym, DecisionAction.EXPIRED, "data ended before the order could fill",
-                         intent.signal.direction, intent.signal.confidence)
-            )
+            self._decide(ts, sym, DecisionAction.EXPIRED, "data ended before the order could fill",
+                         intent.signal)
+        for sym in self._sorted(self.resting):
+            self._cancel_resting(sym, ts, "data ended with the limit order still working")
 
     def liquidate(self, ts: datetime) -> None:
         """Close every position at its last close and refresh the latest snapshot."""
         if not self.portfolio.positions:
             return
-        for sym in sorted(self.portfolio.positions, key=self._order.__getitem__):
+        for sym in self._sorted(self.portfolio.positions):
             self._exit(sym, self.last_close[sym], ts, DecisionAction.LIQUIDATE, "end of backtest")
         snapshot = self.portfolio.snapshot(self.last_close, ts)
         if self.records.snapshots and self.records.snapshots[-1].timestamp == snapshot.timestamp:
@@ -257,61 +301,162 @@ class TradingSession:
             self.records.snapshots.append(snapshot)
             self.records.in_market.append(bool(self.portfolio.positions))
 
-    # --------------------------------------------------------------- helpers
+    # ---------------------------------------------------------------- entries
+    def _market_entry(
+        self, sym: str, open_price: float, ts: datetime, sig: Signal,
+        marks: Mapping[str, float], stats: MarketStats | None,
+    ) -> None:
+        decision = self.risk.evaluate_entry(sym, open_price, self.portfolio, marks, stats)
+        if not decision.approved:
+            self._decide(ts, sym, DecisionAction.REJECTED, decision.reason, sig,
+                         reference_price=open_price, details=decision.sizing)
+            return
+        quantity = decision.quantity
+        # Market impact grows with size; shrink the order if impact makes it unaffordable.
+        fill = self.costs.fill_price(Side.BUY, open_price, quantity, stats)
+        affordable = self.costs.fee_model.max_notional(self.portfolio.cash) * (1 - 1e-9) / fill
+        quantity = min(quantity, affordable)
+        stop = self.risk.stop_price_for(fill)
+        order = Order(sym, Side.BUY, quantity, ts, stop_price=stop, reason="enter")
+        report = self.executor.submit(order, open_price, stats)
+        self.records.reports.append(report)
+        details = dict(decision.sizing)
+        if report.fill is not None and stats is not None:
+            details["impact_bps"] = (report.fill.fill_price / open_price - 1) * 1e4
+        self._decide(
+            ts, sym, DecisionAction.ENTER if report.filled else DecisionAction.REJECTED,
+            decision.reason if report.filled else report.reason, sig, quantity=quantity,
+            reference_price=open_price, stop_price=stop, order_id=report.order_id, details=details,
+        )
+
+    def _place_limit(
+        self, sym: str, open_price: float, ts: datetime, sig: Signal,
+        marks: Mapping[str, float], stats: MarketStats | None,
+    ) -> None:
+        ex = self.config.execution
+        if sym in self.resting:
+            self._decide(ts, sym, DecisionAction.IGNORED, "limit order already working", sig)
+            return
+        limit = open_price * (1.0 - ex.limit_offset_bps / 10_000.0)
+        decision = self.risk.evaluate_entry(sym, limit, self.portfolio, marks, stats)
+        if not decision.approved:
+            self._decide(ts, sym, DecisionAction.REJECTED, decision.reason, sig,
+                         reference_price=limit, details=decision.sizing)
+            return
+        stop = self.risk.stop_price_for(limit)
+        self.resting[sym] = RestingLimit(
+            sym, limit, decision.quantity, decision.quantity, stop, ts, ex.limit_ttl_bars, sig
+        )
+        self._decide(
+            ts, sym, DecisionAction.ORDER_PLACED,
+            f"limit buy {decision.quantity:.8g} @ {limit:.8g} for {ex.limit_ttl_bars} bar(s)",
+            sig, quantity=decision.quantity, reference_price=limit, stop_price=stop,
+            details=decision.sizing,
+        )
+
+    def _match_limit(self, sym: str, bar: Bar, ts: datetime) -> None:
+        order = self.resting[sym]
+        ex = self.config.execution
+        if bar.low < order.limit_price:  # traded through the limit: we were filled
+            quantity = order.remaining
+            if ex.max_participation_pct > 0:
+                quantity = min(quantity, ex.max_participation_pct * bar.volume)
+            quantity = min(quantity, self.costs.max_limit_buy_quantity(self.portfolio.cash, order.limit_price))
+            if quantity * order.limit_price >= max(ex.min_notional, _DUST):
+                limit_order = Order(
+                    sym, Side.BUY, quantity, ts, order_type=OrderType.LIMIT, stop_price=order.stop_price,
+                    reason="enter_limit", limit_price=order.limit_price,
+                )
+                report = self.executor.submit(limit_order, order.limit_price)
+                self.records.reports.append(report)
+                if report.filled:
+                    order.remaining -= quantity
+                    partial = order.remaining > _DUST * max(1.0, order.quantity)
+                    self._decide(
+                        ts, sym, DecisionAction.ENTER,
+                        f"limit filled {quantity:.8g} @ {order.limit_price:.8g}"
+                        + (f" (partial, {order.remaining:.8g} left)" if partial else ""),
+                        order.signal, quantity=quantity, reference_price=order.limit_price,
+                        stop_price=order.stop_price, order_id=report.order_id,
+                        details={"partial": partial, "requested": order.quantity},
+                    )
+                else:
+                    self._cancel_resting(sym, ts, f"limit fill rejected: {report.reason}")
+                    return
+            elif order.remaining * order.limit_price < ex.min_notional or self.portfolio.cash <= 0:
+                self._cancel_resting(sym, ts, "remaining limit order below minimum or unaffordable")
+                return
+        order.bars_left -= 1
+        if order.remaining <= _DUST * max(1.0, order.quantity):
+            del self.resting[sym]
+        elif order.bars_left <= 0:
+            self._cancel_resting(sym, ts, "limit order expired")
+
+    def _cancel_resting(self, sym: str, ts: datetime, reason: str) -> None:
+        order = self.resting.pop(sym, None)
+        if order is None:
+            return
+        filled = order.quantity - order.remaining
+        self._decide(
+            ts, sym, DecisionAction.EXPIRED,
+            f"{reason}; filled {filled:.8g} of {order.quantity:.8g}", order.signal,
+            quantity=order.remaining, reference_price=order.limit_price,
+        )
+
+    # ---------------------------------------------------------------- helpers
+    def _decide(
+        self, ts: datetime, sym: str, action: DecisionAction, reason: str, signal: Signal | None,
+        **kwargs: Any,
+    ) -> None:
+        self.records.decisions.append(
+            Decision(ts, sym, action, reason,
+                     signal.direction if signal else None, signal.confidence if signal else None,
+                     **kwargs)
+        )
+
     def _flatten(self, ts: datetime) -> None:
         """Schedule exits for every position at the next open (kill switch)."""
-        for sym in sorted(self.portfolio.positions, key=self._order.__getitem__):
+        for sym in self._sorted(self.portfolio.positions):
             signal = Signal("risk_manager", sym, Direction.SELL, 1.0, ts, {"reason": "kill switch"})
             self.pending[sym] = Intent(DecisionAction.EXIT_SIGNAL, signal)
-            self.records.decisions.append(
-                Decision(ts, sym, DecisionAction.EXIT_SIGNAL, "kill switch: closing position",
-                         Direction.SELL, 1.0)
-            )
+            self._decide(ts, sym, DecisionAction.EXIT_SIGNAL, "kill switch: closing position", signal)
 
     def _schedule(self, sym: str, ts: datetime, ensemble: Signal) -> None:
-        has_position = self.portfolio.position(sym) is not None
-        d, c = ensemble.direction, ensemble.confidence
-        decisions = self.records.decisions
         existing = self.pending.get(sym)
         if existing is not None and existing.signal.strategy == "risk_manager":
             return  # a kill-switch exit is scheduled; strategies cannot override it
+        has_position = self.portfolio.position(sym) is not None
+        d = ensemble.direction
         if d is Direction.BUY:
             if has_position and not self.config.risk.allow_pyramiding:
-                decisions.append(Decision(ts, sym, DecisionAction.IGNORED,
-                                          "BUY signal but position already open", d, c))
+                self._decide(ts, sym, DecisionAction.IGNORED, "BUY signal but position already open", ensemble)
+            elif sym in self.resting:
+                self._decide(ts, sym, DecisionAction.IGNORED, "BUY signal but limit order already working", ensemble)
             else:
                 self.pending[sym] = Intent(DecisionAction.ENTER_SIGNAL, ensemble)
-                decisions.append(Decision(ts, sym, DecisionAction.ENTER_SIGNAL,
-                                          "entry scheduled for next bar open", d, c))
+                self._decide(ts, sym, DecisionAction.ENTER_SIGNAL, "entry scheduled for next bar open", ensemble)
         elif d is Direction.SELL:
+            self._cancel_resting(sym, ts, "cancelled by SELL signal")
             if has_position:
                 self.pending[sym] = Intent(DecisionAction.EXIT_SIGNAL, ensemble)
-                decisions.append(Decision(ts, sym, DecisionAction.EXIT_SIGNAL,
-                                          "exit scheduled for next bar open", d, c))
+                self._decide(ts, sym, DecisionAction.EXIT_SIGNAL, "exit scheduled for next bar open", ensemble)
             else:
-                decisions.append(Decision(ts, sym, DecisionAction.IGNORED,
-                                          "SELL signal but no position (long-only)", d, c))
+                self._decide(ts, sym, DecisionAction.IGNORED, "SELL signal but no position (long-only)", ensemble)
         else:
-            decisions.append(Decision(ts, sym, DecisionAction.HOLD, "ensemble HOLD", d, c))
+            self._decide(ts, sym, DecisionAction.HOLD, "ensemble HOLD", ensemble)
 
     def _exit(
         self, sym: str, ref: float, ts: datetime, action: DecisionAction, reason: str,
-        signal: Signal | None = None,
+        signal: Signal | None = None, stats: MarketStats | None = None,
     ) -> None:
         decision = self.risk.evaluate_exit(sym, self.portfolio, reason)
-        sig_dir = signal.direction if signal else None
-        sig_conf = signal.confidence if signal else None
         if not decision.approved:
-            self.records.decisions.append(
-                Decision(ts, sym, DecisionAction.REJECTED, decision.reason, sig_dir, sig_conf)
-            )
+            self._decide(ts, sym, DecisionAction.REJECTED, decision.reason, signal)
             return
-        report = self.executor.submit(decision.to_order(ts, reason=action.value), ref)
+        report = self.executor.submit(decision.to_order(ts, reason=action.value), ref, stats)
         self.records.reports.append(report)
-        self.records.decisions.append(
-            Decision(
-                ts, sym, action if report.filled else DecisionAction.REJECTED,
-                reason if report.filled else report.reason, sig_dir, sig_conf,
-                quantity=decision.quantity, reference_price=ref, order_id=report.order_id,
-            )
+        self._decide(
+            ts, sym, action if report.filled else DecisionAction.REJECTED,
+            reason if report.filled else report.reason, signal,
+            quantity=decision.quantity, reference_price=ref, order_id=report.order_id,
         )

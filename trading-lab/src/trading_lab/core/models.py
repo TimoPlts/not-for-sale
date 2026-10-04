@@ -37,6 +37,7 @@ class Direction(StrEnum):
 
 class OrderType(StrEnum):
     MARKET = "market"
+    LIMIT = "limit"
 
 
 class OrderStatus(StrEnum):
@@ -58,6 +59,7 @@ class DecisionAction(StrEnum):
     REJECTED = "rejected"  # risk manager or executor refused the order
     EXPIRED = "expired"  # scheduled order never executed (data ended)
     CIRCUIT_BREAKER = "circuit_breaker"  # a portfolio-level risk limit tripped
+    ORDER_PLACED = "order_placed"  # a limit order started working
 
 
 def _check_positive(name: str, value: float) -> float:
@@ -122,7 +124,7 @@ class Signal:
 
 @dataclass(frozen=True, slots=True)
 class Order:
-    """A request to trade. In V1 only simulated market orders exist."""
+    """A request to trade (simulated market or limit order)."""
 
     symbol: str
     side: Side
@@ -131,6 +133,7 @@ class Order:
     order_type: OrderType = OrderType.MARKET
     stop_price: float | None = None
     reason: str = ""
+    limit_price: float | None = None
 
     def __post_init__(self) -> None:
         _check_symbol(self.symbol)
@@ -140,6 +143,12 @@ class Order:
         object.__setattr__(self, "timestamp", ensure_utc(self.timestamp))
         if self.stop_price is not None:
             object.__setattr__(self, "stop_price", _check_positive("stop_price", self.stop_price))
+        if self.order_type is OrderType.LIMIT:
+            if self.limit_price is None:
+                raise ValueError("a limit order needs a limit_price")
+            object.__setattr__(self, "limit_price", _check_positive("limit_price", self.limit_price))
+        elif self.limit_price is not None:
+            raise ValueError("only limit orders have a limit_price")
 
 
 @dataclass(frozen=True, slots=True)

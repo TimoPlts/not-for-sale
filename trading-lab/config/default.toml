@@ -14,6 +14,14 @@ timeframe = "1h"
 fee_rate = 0.001              # 0.1% taker fee per fill
 slippage_bps = 5.0            # adverse slippage in basis points
 min_notional = 10.0           # minimum order value in quote currency
+slippage_model = "fixed"      # "fixed" (slippage_bps) or "volume" (adds square-root market impact)
+impact_coefficient = 1.0      # volume model: impact = coef * volatility * sqrt(order / avg bar volume)
+volume_lookback = 20          # bars for average volume and volatility (known before the fill)
+max_participation_pct = 0.0   # liquidity cap: max share of avg bar volume per order (0 = off)
+entry_order_type = "market"   # "market" or "limit" entries
+limit_offset_bps = 10.0       # limit entries: buy limit this far below the open
+limit_ttl_bars = 3            # limit entries: cancel the unfilled rest after N bars
+maker_fee_rate = 0.001        # fee for limit (maker) fills
 
 [risk]
 max_position_pct = 0.25       # max value of one position as a fraction of equity

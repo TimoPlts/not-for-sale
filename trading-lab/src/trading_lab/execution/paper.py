@@ -17,12 +17,18 @@ from trading_lab.core.models import (
     OrderType,
     Side,
 )
-from trading_lab.execution.costs import CostModel
+from trading_lab.execution.costs import CostModel, MarketStats
 from trading_lab.portfolio.portfolio import CASH_TOLERANCE, Portfolio, quantities_match
 
 
 class PaperExecutor:
-    """Fills market orders immediately at ``reference_price`` adjusted for slippage, plus fees.
+    """Fills orders immediately.
+
+    * Market orders fill at ``reference_price`` adjusted by the slippage model
+      (which may use the order size and ``MarketStats``), plus the taker fee.
+    * Limit orders fill at their ``limit_price`` with the maker fee and no
+      slippage. Deciding *whether* and *how much* a limit order fills is the
+      caller's job (see ``engine.TradingSession``).
 
     Rules enforced (rejections leave the portfolio untouched):
       * long-only: no sells without a position, and no selling more than is held
@@ -63,15 +69,18 @@ class PaperExecutor:
         """Number of orders submitted so far (including rejected ones)."""
         return self._sequence
 
-    def submit(self, order: Order, reference_price: float) -> ExecutionReport:
+    def submit(
+        self, order: Order, reference_price: float, stats: MarketStats | None = None
+    ) -> ExecutionReport:
         self._sequence += 1
         order_id = f"{self._id_prefix}-{self._sequence:06d}"
 
         def reject(reason: str) -> ExecutionReport:
             return ExecutionReport(order_id, order, OrderStatus.REJECTED, reason=reason)
 
-        if order.order_type is not OrderType.MARKET:
-            return reject(f"unsupported order type {order.order_type}")
+        is_limit = order.order_type is OrderType.LIMIT
+        if is_limit:
+            reference_price = order.limit_price  # type: ignore[assignment]
         if (
             isinstance(reference_price, bool)
             or not isinstance(reference_price, (int, float))
@@ -94,12 +103,15 @@ class PaperExecutor:
                 quantity = position.quantity  # absorb float dust
             closes_position = quantities_match(quantity, position.quantity)
 
-        fill_price = self._costs.fill_price(order.side, reference_price)
+        if is_limit:
+            fill_price = float(reference_price)
+        else:
+            fill_price = self._costs.fill_price(order.side, reference_price, quantity, stats)
         notional = quantity * fill_price
         if notional < self._min_notional and not closes_position:
             return reject(f"notional {notional:.4f} below minimum {self._min_notional:.4f}")
 
-        fee = self._costs.fee(notional)
+        fee = self._costs.maker_fee(notional) if is_limit else self._costs.fee(notional)
         if order.side is Side.BUY and notional + fee > self._portfolio.cash + CASH_TOLERANCE:
             return reject(
                 f"insufficient cash: need {notional + fee:.4f}, have {self._portfolio.cash:.4f}"

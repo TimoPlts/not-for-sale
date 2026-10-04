@@ -45,6 +45,7 @@ from trading_lab.data.base import MarketDataProvider, timeframe_delta
 from trading_lab.engine import Bar, TradingSession
 from trading_lab.ensemble import VotingEngine
 from trading_lab.execution import CostModel
+from trading_lab.execution.costs import market_stats_frame, stats_series
 from trading_lab.metrics import PerformanceMetrics, compute_metrics
 from trading_lab.metrics.benchmark import buy_and_hold_equity
 from trading_lab.storage import SQLiteStore
@@ -204,9 +205,13 @@ class BacktestEngine:
             for sym in symbols
         }
         position = {sym: {ts: i for i, ts in enumerate(candles[sym].index)} for sym in symbols}
-        ohlc = {
-            sym: (frame["open"].to_numpy(), frame["low"].to_numpy(), frame["close"].to_numpy())
+        ohlcv = {
+            sym: tuple(frame[c].to_numpy() for c in ("open", "high", "low", "close", "volume"))
             for sym, frame in candles.items()
+        }
+        lookback = cfg.execution.volume_lookback
+        market_stats = {
+            sym: stats_series(market_stats_frame(frame, lookback)) for sym, frame in candles.items()
         }
 
         start_ts = pd.Timestamp(start)
@@ -227,13 +232,12 @@ class BacktestEngine:
         for t in timeline:
             ts = t.to_pydatetime()
             idx = {sym: i for sym in symbols if (i := position[sym].get(t)) is not None}
-            bars = {
-                sym: Bar(float(ohlc[sym][0][i]), float(ohlc[sym][1][i]), float(ohlc[sym][2][i]))
-                for sym, i in idx.items()
-            }
-            session.open_bar(ts, {sym: bar.open for sym, bar in bars.items()})
+            bars = {sym: Bar(*(float(col[i]) for col in ohlcv[sym])) for sym, i in idx.items()}
+            stats = {sym: market_stats[sym][i] for sym, i in idx.items()}
+            session.open_bar(ts, {sym: bar.open for sym, bar in bars.items()}, stats)
             session.close_bar(
-                ts, bars, {sym: [per_bar[i] for per_bar in strategy_signals[sym]] for sym, i in idx.items()}
+                ts, bars, {sym: [per_bar[i] for per_bar in strategy_signals[sym]] for sym, i in idx.items()},
+                stats,
             )
 
         last_ts = timeline[-1].to_pydatetime()
