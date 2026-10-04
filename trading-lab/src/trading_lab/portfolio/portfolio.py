@@ -153,6 +153,7 @@ class Portfolio:
                 pnl=pnl,
                 opened_at=position.opened_at,
                 closed_at=fill.timestamp,
+                exit_order_id=fill.order_id,
             )
         )
         if closes:

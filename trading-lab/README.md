@@ -13,7 +13,25 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 
 - **Stage 1 (complete):** configuration, domain models, fee and slippage cost model, paper execution (long-only market orders), portfolio accounting and the risk manager.
 - **Stage 2 (complete):** public CCXT market data with a CSV cache, a synthetic data provider, indicators, the RSI, MACD and Bollinger strategies, and the voting engine.
-- **Next:** SQLite history, backtesting and metrics (Stage 3), then the CLI and live paper trading (Stage 4).
+- **Stage 3 (complete):** an event-driven backtester (next-bar-open fills, stop-losses, no look-ahead), the SQLite history of every signal, decision, order, fill and trade, and performance metrics.
+- **Next:** a proper CLI and live paper trading (Stage 4).
+
+## Quick start
+
+From this folder, in PowerShell:
+
+```powershell
+.venv/Scripts/python -m pytest                                   # run all tests
+.venv/Scripts/python scripts/live_signals.py                     # current signals, live public data
+.venv/Scripts/python scripts/paper_trade_demo.py                 # one simulated trade, step by step
+.venv/Scripts/python scripts/run_backtest.py                     # backtest the last 90 days
+.venv/Scripts/python scripts/run_backtest.py --start 2025-01-01 --end 2025-07-01 --timeframe 4h
+.venv/Scripts/python scripts/run_backtest.py --synthetic 7       # offline backtest on random data
+.venv/Scripts/python scripts/show_runs.py                        # list stored backtests
+.venv/Scripts/python scripts/show_runs.py --run-id <id>          # details of one run
+```
+
+Backtests are saved in `data/trading_lab.db` (SQLite). You can open it with any SQLite viewer, such as DB Browser for SQLite.
 
 ## Setup (Windows / PowerShell)
 

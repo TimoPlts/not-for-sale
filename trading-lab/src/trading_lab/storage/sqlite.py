@@ -1,0 +1,485 @@
+"""SQLite history of runs, signals, decisions, orders, fills, equity and trades.
+
+Timestamps are stored as ISO-8601 UTC strings, and free-form data (metadata,
+sizing details, configs, metrics) as JSON. The schema version lives in
+``PRAGMA user_version``, and ``_MIGRATIONS`` upgrades older databases in place.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterable, Sequence
+
+import pandas as pd
+
+from trading_lab.core.models import (
+    ClosedTrade,
+    Decision,
+    ExecutionReport,
+    Fill,
+    PortfolioSnapshot,
+    Signal,
+)
+
+SCHEMA_VERSION = 1
+
+_SCHEMA_V1 = """
+CREATE TABLE runs (
+    run_id             TEXT PRIMARY KEY,
+    kind               TEXT NOT NULL,           -- 'backtest' | 'paper'
+    status             TEXT NOT NULL,           -- 'running' | 'completed' | 'failed'
+    created_at         TEXT NOT NULL,
+    finished_at        TEXT,
+    period_start       TEXT,
+    period_end         TEXT,
+    timeframe          TEXT NOT NULL,
+    symbols_json       TEXT NOT NULL,
+    exchange           TEXT NOT NULL,
+    config_json        TEXT NOT NULL,
+    config_fingerprint TEXT NOT NULL,
+    notes              TEXT NOT NULL DEFAULT '',
+    error              TEXT
+);
+CREATE TABLE signals (
+    id            INTEGER PRIMARY KEY,
+    run_id        TEXT NOT NULL REFERENCES runs(run_id),
+    timestamp     TEXT NOT NULL,
+    symbol        TEXT NOT NULL,
+    strategy      TEXT NOT NULL,
+    direction     TEXT NOT NULL,
+    confidence    REAL NOT NULL,
+    metadata_json TEXT NOT NULL
+);
+CREATE INDEX idx_signals_run ON signals(run_id, symbol, timestamp);
+CREATE TABLE decisions (
+    id                INTEGER PRIMARY KEY,
+    run_id            TEXT NOT NULL REFERENCES runs(run_id),
+    timestamp         TEXT NOT NULL,
+    symbol            TEXT NOT NULL,
+    action            TEXT NOT NULL,
+    reason            TEXT NOT NULL,
+    signal_direction  TEXT,
+    signal_confidence REAL,
+    quantity          REAL,
+    reference_price   REAL,
+    stop_price        REAL,
+    order_id          TEXT,
+    details_json      TEXT NOT NULL
+);
+CREATE INDEX idx_decisions_run ON decisions(run_id, symbol, timestamp);
+CREATE TABLE orders (
+    run_id        TEXT NOT NULL REFERENCES runs(run_id),
+    order_id      TEXT NOT NULL,
+    timestamp     TEXT NOT NULL,
+    symbol        TEXT NOT NULL,
+    side          TEXT NOT NULL,
+    order_type    TEXT NOT NULL,
+    quantity      REAL NOT NULL,
+    stop_price    REAL,
+    reason        TEXT NOT NULL,
+    status        TEXT NOT NULL,
+    reject_reason TEXT NOT NULL,
+    PRIMARY KEY (run_id, order_id)
+);
+CREATE TABLE fills (
+    run_id          TEXT NOT NULL REFERENCES runs(run_id),
+    order_id        TEXT NOT NULL,
+    timestamp       TEXT NOT NULL,
+    symbol          TEXT NOT NULL,
+    side            TEXT NOT NULL,
+    quantity        REAL NOT NULL,
+    reference_price REAL NOT NULL,
+    fill_price      REAL NOT NULL,
+    fee             REAL NOT NULL,
+    stop_price      REAL,
+    PRIMARY KEY (run_id, order_id)
+);
+CREATE TABLE equity_snapshots (
+    run_id          TEXT NOT NULL REFERENCES runs(run_id),
+    timestamp       TEXT NOT NULL,
+    cash            REAL NOT NULL,
+    positions_value REAL NOT NULL,
+    equity          REAL NOT NULL,
+    realized_pnl    REAL NOT NULL,
+    unrealized_pnl  REAL NOT NULL,
+    fees_paid       REAL NOT NULL,
+    open_positions  INTEGER NOT NULL,
+    PRIMARY KEY (run_id, timestamp)
+);
+CREATE TABLE closed_trades (
+    id            INTEGER PRIMARY KEY,
+    run_id        TEXT NOT NULL REFERENCES runs(run_id),
+    symbol        TEXT NOT NULL,
+    quantity      REAL NOT NULL,
+    entry_price   REAL NOT NULL,
+    exit_price    REAL NOT NULL,
+    cost_basis    REAL NOT NULL,
+    proceeds      REAL NOT NULL,
+    pnl           REAL NOT NULL,
+    return_pct    REAL NOT NULL,
+    opened_at     TEXT NOT NULL,
+    closed_at     TEXT NOT NULL,
+    exit_order_id TEXT NOT NULL
+);
+CREATE INDEX idx_trades_run ON closed_trades(run_id);
+CREATE TABLE metrics (
+    run_id       TEXT PRIMARY KEY REFERENCES runs(run_id),
+    metrics_json TEXT NOT NULL
+);
+"""
+
+# version -> SQL that upgrades from version-1 to version.
+_MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1}
+
+
+def _ts(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def _parse_ts(value: str) -> datetime:
+    return datetime.fromisoformat(value)
+
+
+def _json(value: Any) -> str:
+    def default(obj: Any) -> Any:
+        if isinstance(obj, datetime):
+            return _ts(obj)
+        if hasattr(obj, "items"):
+            return dict(obj.items())
+        return str(obj)
+
+    def clean(obj: Any) -> Any:
+        if isinstance(obj, float) and not math.isfinite(obj):
+            return None if math.isnan(obj) else ("inf" if obj > 0 else "-inf")
+        if isinstance(obj, dict) or hasattr(obj, "items"):
+            return {k: clean(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [clean(v) for v in obj]
+        return obj
+
+    return json.dumps(clean(value), default=default, sort_keys=True, allow_nan=False)
+
+
+class SQLiteStore:
+    """Thin repository over one SQLite database (``":memory:"`` is supported)."""
+
+    def __init__(self, path: str | Path) -> None:
+        self._path = str(path)
+        if self._path != ":memory:":
+            Path(self._path).parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(self._path)
+        self._conn.execute("PRAGMA foreign_keys = ON")
+        self._migrate()
+
+    # ------------------------------------------------------------- lifecycle
+    def close(self) -> None:
+        self._conn.close()
+
+    def __enter__(self) -> SQLiteStore:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    @property
+    def schema_version(self) -> int:
+        return int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+
+    def _migrate(self) -> None:
+        current = self.schema_version
+        if current > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"database schema v{current} is newer than this code (v{SCHEMA_VERSION})"
+            )
+        for version in range(current + 1, SCHEMA_VERSION + 1):
+            with self._conn:
+                self._conn.executescript(_MIGRATIONS[version])
+                self._conn.execute(f"PRAGMA user_version = {version}")
+
+    # ------------------------------------------------------------------ runs
+    def create_run(
+        self,
+        run_id: str,
+        *,
+        kind: str,
+        timeframe: str,
+        symbols: Sequence[str],
+        exchange: str,
+        config: dict[str, Any],
+        config_fingerprint: str,
+        period_start: datetime | None = None,
+        period_end: datetime | None = None,
+        notes: str = "",
+    ) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO runs (run_id, kind, status, created_at, period_start, period_end, "
+                "timeframe, symbols_json, exchange, config_json, config_fingerprint, notes) "
+                "VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    kind,
+                    _ts(datetime.now(timezone.utc)),
+                    _ts(period_start) if period_start else None,
+                    _ts(period_end) if period_end else None,
+                    timeframe,
+                    _json(list(symbols)),
+                    exchange,
+                    _json(config),
+                    config_fingerprint,
+                    notes,
+                ),
+            )
+
+    def finish_run(self, run_id: str, status: str = "completed", error: str | None = None) -> None:
+        with self._conn:
+            self._conn.execute(
+                "UPDATE runs SET status = ?, finished_at = ?, error = ? WHERE run_id = ?",
+                (status, _ts(datetime.now(timezone.utc)), error, run_id),
+            )
+
+    def get_run(self, run_id: str) -> dict[str, Any] | None:
+        cur = self._conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,))
+        row = cur.fetchone()
+        if row is None:
+            return None
+        record = dict(zip([c[0] for c in cur.description], row))
+        record["symbols"] = json.loads(record.pop("symbols_json"))
+        record["config"] = json.loads(record.pop("config_json"))
+        return record
+
+    def list_runs(self, limit: int = 20) -> list[dict[str, Any]]:
+        cur = self._conn.execute(
+            "SELECT r.run_id, r.kind, r.status, r.created_at, r.period_start, r.period_end, "
+            "r.timeframe, r.symbols_json, m.metrics_json FROM runs r "
+            "LEFT JOIN metrics m ON m.run_id = r.run_id ORDER BY r.created_at DESC LIMIT ?",
+            (limit,),
+        )
+        out = []
+        for row in cur.fetchall():
+            record = dict(zip([c[0] for c in cur.description], row))
+            record["symbols"] = json.loads(record.pop("symbols_json"))
+            metrics_json = record.pop("metrics_json")
+            record["metrics"] = json.loads(metrics_json) if metrics_json else None
+            out.append(record)
+        return out
+
+    # --------------------------------------------------------------- writes
+    def add_signals(self, run_id: str, signals: Iterable[Signal]) -> None:
+        with self._conn:
+            self._conn.executemany(
+                "INSERT INTO signals (run_id, timestamp, symbol, strategy, direction, confidence, "
+                "metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    (
+                        run_id,
+                        _ts(s.timestamp),
+                        s.symbol,
+                        s.strategy,
+                        s.direction.value,
+                        s.confidence,
+                        _json(dict(s.metadata)),
+                    )
+                    for s in signals
+                ),
+            )
+
+    def add_decisions(self, run_id: str, decisions: Iterable[Decision]) -> None:
+        with self._conn:
+            self._conn.executemany(
+                "INSERT INTO decisions (run_id, timestamp, symbol, action, reason, signal_direction, "
+                "signal_confidence, quantity, reference_price, stop_price, order_id, details_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    (
+                        run_id,
+                        _ts(d.timestamp),
+                        d.symbol,
+                        d.action.value,
+                        d.reason,
+                        d.signal_direction.value if d.signal_direction else None,
+                        d.signal_confidence,
+                        d.quantity,
+                        d.reference_price,
+                        d.stop_price,
+                        d.order_id,
+                        _json(dict(d.details)),
+                    )
+                    for d in decisions
+                ),
+            )
+
+    def add_execution_reports(self, run_id: str, reports: Iterable[ExecutionReport]) -> None:
+        reports = list(reports)
+        with self._conn:
+            self._conn.executemany(
+                "INSERT INTO orders (run_id, order_id, timestamp, symbol, side, order_type, "
+                "quantity, stop_price, reason, status, reject_reason) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    (
+                        run_id,
+                        r.order_id,
+                        _ts(r.order.timestamp),
+                        r.order.symbol,
+                        r.order.side.value,
+                        r.order.order_type.value,
+                        r.order.quantity,
+                        r.order.stop_price,
+                        r.order.reason,
+                        r.status.value,
+                        r.reason,
+                    )
+                    for r in reports
+                ),
+            )
+            self._conn.executemany(
+                "INSERT INTO fills (run_id, order_id, timestamp, symbol, side, quantity, "
+                "reference_price, fill_price, fee, stop_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    (
+                        run_id,
+                        f.order_id,
+                        _ts(f.timestamp),
+                        f.symbol,
+                        f.side.value,
+                        f.quantity,
+                        f.reference_price,
+                        f.fill_price,
+                        f.fee,
+                        f.stop_price,
+                    )
+                    for f in (r.fill for r in reports if r.fill is not None)
+                ),
+            )
+
+    def add_snapshots(self, run_id: str, snapshots: Iterable[PortfolioSnapshot]) -> None:
+        with self._conn:
+            self._conn.executemany(
+                "INSERT INTO equity_snapshots (run_id, timestamp, cash, positions_value, equity, "
+                "realized_pnl, unrealized_pnl, fees_paid, open_positions) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    (
+                        run_id,
+                        _ts(s.timestamp),
+                        s.cash,
+                        s.positions_value,
+                        s.equity,
+                        s.realized_pnl,
+                        s.unrealized_pnl,
+                        s.fees_paid,
+                        s.open_positions,
+                    )
+                    for s in snapshots
+                ),
+            )
+
+    def add_closed_trades(self, run_id: str, trades: Iterable[ClosedTrade]) -> None:
+        with self._conn:
+            self._conn.executemany(
+                "INSERT INTO closed_trades (run_id, symbol, quantity, entry_price, exit_price, "
+                "cost_basis, proceeds, pnl, return_pct, opened_at, closed_at, exit_order_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    (
+                        run_id,
+                        t.symbol,
+                        t.quantity,
+                        t.entry_price,
+                        t.exit_price,
+                        t.cost_basis,
+                        t.proceeds,
+                        t.pnl,
+                        t.return_pct,
+                        _ts(t.opened_at),
+                        _ts(t.closed_at),
+                        t.exit_order_id,
+                    )
+                    for t in trades
+                ),
+            )
+
+    def save_metrics(self, run_id: str, metrics: dict[str, Any]) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO metrics (run_id, metrics_json) VALUES (?, ?)",
+                (run_id, _json(metrics)),
+            )
+
+    # ---------------------------------------------------------------- reads
+    def _frame(self, sql: str, params: Sequence[Any], ts_cols: Sequence[str]) -> pd.DataFrame:
+        frame = pd.read_sql_query(sql, self._conn, params=list(params))
+        for col in ts_cols:
+            frame[col] = pd.to_datetime(frame[col], utc=True, format="ISO8601")
+        return frame
+
+    def load_equity_curve(self, run_id: str) -> pd.DataFrame:
+        frame = self._frame(
+            "SELECT timestamp, cash, positions_value, equity, realized_pnl, unrealized_pnl, "
+            "fees_paid, open_positions FROM equity_snapshots WHERE run_id = ? ORDER BY timestamp",
+            (run_id,),
+            ["timestamp"],
+        )
+        return frame.set_index("timestamp")
+
+    def load_closed_trades(self, run_id: str) -> list[ClosedTrade]:
+        cur = self._conn.execute(
+            "SELECT symbol, quantity, entry_price, exit_price, cost_basis, proceeds, pnl, "
+            "opened_at, closed_at, exit_order_id FROM closed_trades WHERE run_id = ? ORDER BY id",
+            (run_id,),
+        )
+        return [
+            ClosedTrade(
+                symbol=r[0],
+                quantity=r[1],
+                entry_price=r[2],
+                exit_price=r[3],
+                cost_basis=r[4],
+                proceeds=r[5],
+                pnl=r[6],
+                opened_at=_parse_ts(r[7]),
+                closed_at=_parse_ts(r[8]),
+                exit_order_id=r[9],
+            )
+            for r in cur.fetchall()
+        ]
+
+    def load_fills(self, run_id: str) -> pd.DataFrame:
+        return self._frame(
+            "SELECT f.*, o.reason FROM fills f JOIN orders o "
+            "ON o.run_id = f.run_id AND o.order_id = f.order_id "
+            "WHERE f.run_id = ? ORDER BY f.timestamp, f.order_id",
+            (run_id,),
+            ["timestamp"],
+        )
+
+    def load_decisions(self, run_id: str, *, include_holds: bool = True) -> pd.DataFrame:
+        sql = "SELECT * FROM decisions WHERE run_id = ?"
+        if not include_holds:
+            sql += " AND action != 'hold'"
+        return self._frame(sql + " ORDER BY id", (run_id,), ["timestamp"])
+
+    def load_signals(self, run_id: str, symbol: str | None = None) -> pd.DataFrame:
+        sql, params = "SELECT * FROM signals WHERE run_id = ?", [run_id]
+        if symbol is not None:
+            sql += " AND symbol = ?"
+            params.append(symbol)
+        return self._frame(sql + " ORDER BY id", params, ["timestamp"])
+
+    def load_metrics(self, run_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT metrics_json FROM metrics WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def count(self, table: str, run_id: str) -> int:
+        if table not in {"signals", "decisions", "orders", "fills", "equity_snapshots", "closed_trades"}:
+            raise ValueError(f"unknown table {table!r}")
+        return int(
+            self._conn.execute(f"SELECT COUNT(*) FROM {table} WHERE run_id = ?", (run_id,)).fetchone()[0]
+        )

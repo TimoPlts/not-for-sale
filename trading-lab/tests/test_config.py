@@ -113,3 +113,13 @@ def test_strategies_section_replaces_defaults(tmp_path):
 def test_invalid_stage2_config_is_rejected(data, match):
     with pytest.raises(ConfigError, match=match):
         AppConfig.from_mapping(data)
+
+
+def test_mapping_round_trip_and_overrides():
+    cfg = AppConfig()
+    assert AppConfig.from_mapping(cfg.to_mapping()) == cfg
+    changed = cfg.with_overrides({"market": {"timeframe": "15m"}, "risk": {"stop_loss_pct": 0.03}})
+    assert changed.market.timeframe == "15m" and changed.risk.stop_loss_pct == 0.03
+    assert changed.strategies == cfg.strategies and cfg.market.timeframe == "1h"
+    with pytest.raises(ConfigError):
+        cfg.with_overrides({"market": {"timeframe": "7m"}})
