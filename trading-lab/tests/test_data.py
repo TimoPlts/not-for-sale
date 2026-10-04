@@ -233,9 +233,24 @@ def test_synthetic_is_deterministic_and_window_independent():
     assert len(a) == 120 and not find_gaps(a, "1h")
 
 
-def test_synthetic_requires_until():
-    with pytest.raises(ValueError):
-        SyntheticProvider().fetch_ohlcv("BTC/USDT", "1h", START)
+def test_synthetic_without_until_returns_closed_candles_only():
+    now = START + timedelta(hours=5, minutes=20)
+    provider = SyntheticProvider(seed=1, clock=lambda: now)
+    frame = provider.fetch_ohlcv("BTC/USDT", "1h", START)
+    assert frame.index[-1] == pd.Timestamp(START + timedelta(hours=4))  # 05:00 still forming
+    # The forming candle's open is already known; a future candle's is not.
+    full = provider.fetch_ohlcv("BTC/USDT", "1h", START, START + timedelta(hours=6))
+    assert provider.current_open("BTC/USDT", "1h", START + timedelta(hours=5)) == full["open"].iloc[5]
+    assert provider.current_open("BTC/USDT", "1h", START + timedelta(hours=6)) is None
+
+
+def test_ccxt_current_open_reads_forming_candle():
+    client = FakeExchange(rows(10))
+    now = START + timedelta(hours=7, minutes=5)
+    provider = CcxtPublicProvider("fake", client=client, clock=fixed_clock(now))
+    assert provider.current_open("BTC/USDT", "1h", START + timedelta(hours=7)) == 107.0
+    assert client.calls[-1][3] == 1  # a single-candle request
+    assert provider.current_open("BTC/USDT", "1h", START + timedelta(hours=8)) is None
 
 
 def test_candles_from_closes():

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import zlib
 from datetime import datetime, timezone
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -32,8 +32,16 @@ DEFAULT_START_PRICES: Mapping[str, float] = {
 DEFAULT_ANCHOR = datetime(2020, 1, 1, tzinfo=timezone.utc)
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 class SyntheticProvider(MarketDataProvider):
-    """Seeded geometric random walk with plausible OHLCV structure."""
+    """Seeded geometric random walk with plausible OHLCV structure.
+
+    With ``until=None`` it behaves like a live feed: it returns candles that
+    have closed by ``clock()``, which makes it usable for offline paper trading.
+    """
 
     def __init__(
         self,
@@ -43,6 +51,7 @@ class SyntheticProvider(MarketDataProvider):
         drift: float = 0.0,
         start_prices: Mapping[str, float] = DEFAULT_START_PRICES,
         anchor: datetime = DEFAULT_ANCHOR,
+        clock: Callable[[], datetime] = _utcnow,
     ) -> None:
         if volatility < 0:
             raise ValueError("volatility must be >= 0")
@@ -51,6 +60,7 @@ class SyntheticProvider(MarketDataProvider):
         self._drift = drift
         self._start_prices = dict(start_prices)
         self._anchor = to_utc_timestamp(anchor)
+        self._clock = clock
 
     @property
     def name(self) -> str:
@@ -63,11 +73,13 @@ class SyntheticProvider(MarketDataProvider):
         since: datetime,
         until: datetime | None = None,
     ) -> pd.DataFrame:
-        if until is None:
-            raise ValueError("SyntheticProvider requires an explicit `until`")
         if symbol not in self._start_prices:
             raise ValueError(f"no start price configured for {symbol}")
         step = pd.Timedelta(timeframe_delta(timeframe))
+        if until is None:
+            # Only closed candles: stop at the start of the candle forming now.
+            now = to_utc_timestamp(self._clock())
+            until = self._anchor + ((now - self._anchor) // step) * step
         end = to_utc_timestamp(until)
         if end <= self._anchor:
             return empty_ohlcv()
@@ -89,6 +101,14 @@ class SyntheticProvider(MarketDataProvider):
             index=index,
         )
         return normalize_ohlcv(slice_ohlcv(frame, since, until))
+
+    def current_open(self, symbol: str, timeframe: str, bar_open: datetime) -> float | None:
+        start = to_utc_timestamp(bar_open)
+        if start > to_utc_timestamp(self._clock()):
+            return None
+        step = timeframe_delta(timeframe)
+        frame = self.fetch_ohlcv(symbol, timeframe, start.to_pydatetime(), (start + step).to_pydatetime())
+        return float(frame["open"].iloc[0]) if not frame.empty and frame.index[0] == start else None
 
 
 def candles_from_closes(

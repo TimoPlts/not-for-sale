@@ -7,6 +7,7 @@ sizing details, configs, metrics) as JSON. The schema version lives in
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import sqlite3
@@ -22,10 +23,11 @@ from trading_lab.core.models import (
     ExecutionReport,
     Fill,
     PortfolioSnapshot,
+    Side,
     Signal,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA_V1 = """
 CREATE TABLE runs (
@@ -132,8 +134,16 @@ CREATE TABLE metrics (
 );
 """
 
+_SCHEMA_V2 = """
+CREATE TABLE run_state (
+    run_id     TEXT PRIMARY KEY REFERENCES runs(run_id),
+    state_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
 # version -> SQL that upgrades from version-1 to version.
-_MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1}
+_MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2}
 
 
 def _ts(value: datetime) -> str:
@@ -173,7 +183,24 @@ class SQLiteStore:
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._path)
         self._conn.execute("PRAGMA foreign_keys = ON")
+        self._in_atomic = False
         self._migrate()
+
+    @contextlib.contextmanager
+    def atomic(self):  # type: ignore[no-untyped-def]
+        """Group several writes into one transaction (all or nothing)."""
+        if self._in_atomic:
+            yield
+            return
+        self._in_atomic = True
+        try:
+            with self._conn:
+                yield
+        finally:
+            self._in_atomic = False
+
+    def _tx(self) -> contextlib.AbstractContextManager:
+        return contextlib.nullcontext() if self._in_atomic else self._conn
 
     # ------------------------------------------------------------- lifecycle
     def close(self) -> None:
@@ -215,7 +242,7 @@ class SQLiteStore:
         period_end: datetime | None = None,
         notes: str = "",
     ) -> None:
-        with self._conn:
+        with self._tx():
             self._conn.execute(
                 "INSERT INTO runs (run_id, kind, status, created_at, period_start, period_end, "
                 "timeframe, symbols_json, exchange, config_json, config_fingerprint, notes) "
@@ -236,11 +263,28 @@ class SQLiteStore:
             )
 
     def finish_run(self, run_id: str, status: str = "completed", error: str | None = None) -> None:
-        with self._conn:
+        with self._tx():
             self._conn.execute(
                 "UPDATE runs SET status = ?, finished_at = ?, error = ? WHERE run_id = ?",
                 (status, _ts(datetime.now(timezone.utc)), error, run_id),
             )
+
+    def set_run_status(self, run_id: str, status: str) -> None:
+        with self._tx():
+            self._conn.execute("UPDATE runs SET status = ? WHERE run_id = ?", (status, run_id))
+
+    def save_state(self, run_id: str, state: dict[str, Any]) -> None:
+        with self._tx():
+            self._conn.execute(
+                "INSERT OR REPLACE INTO run_state (run_id, state_json, updated_at) VALUES (?, ?, ?)",
+                (run_id, _json(state), _ts(datetime.now(timezone.utc))),
+            )
+
+    def load_state(self, run_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT state_json FROM run_state WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return json.loads(row[0]) if row else None
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         cur = self._conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,))
@@ -270,7 +314,7 @@ class SQLiteStore:
 
     # --------------------------------------------------------------- writes
     def add_signals(self, run_id: str, signals: Iterable[Signal]) -> None:
-        with self._conn:
+        with self._tx():
             self._conn.executemany(
                 "INSERT INTO signals (run_id, timestamp, symbol, strategy, direction, confidence, "
                 "metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -289,7 +333,7 @@ class SQLiteStore:
             )
 
     def add_decisions(self, run_id: str, decisions: Iterable[Decision]) -> None:
-        with self._conn:
+        with self._tx():
             self._conn.executemany(
                 "INSERT INTO decisions (run_id, timestamp, symbol, action, reason, signal_direction, "
                 "signal_confidence, quantity, reference_price, stop_price, order_id, details_json) "
@@ -315,7 +359,7 @@ class SQLiteStore:
 
     def add_execution_reports(self, run_id: str, reports: Iterable[ExecutionReport]) -> None:
         reports = list(reports)
-        with self._conn:
+        with self._tx():
             self._conn.executemany(
                 "INSERT INTO orders (run_id, order_id, timestamp, symbol, side, order_type, "
                 "quantity, stop_price, reason, status, reject_reason) "
@@ -358,9 +402,9 @@ class SQLiteStore:
             )
 
     def add_snapshots(self, run_id: str, snapshots: Iterable[PortfolioSnapshot]) -> None:
-        with self._conn:
+        with self._tx():
             self._conn.executemany(
-                "INSERT INTO equity_snapshots (run_id, timestamp, cash, positions_value, equity, "
+                "INSERT OR REPLACE INTO equity_snapshots (run_id, timestamp, cash, positions_value, equity, "
                 "realized_pnl, unrealized_pnl, fees_paid, open_positions) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
@@ -380,7 +424,7 @@ class SQLiteStore:
             )
 
     def add_closed_trades(self, run_id: str, trades: Iterable[ClosedTrade]) -> None:
-        with self._conn:
+        with self._tx():
             self._conn.executemany(
                 "INSERT INTO closed_trades (run_id, symbol, quantity, entry_price, exit_price, "
                 "cost_basis, proceeds, pnl, return_pct, opened_at, closed_at, exit_order_id) "
@@ -405,7 +449,7 @@ class SQLiteStore:
             )
 
     def save_metrics(self, run_id: str, metrics: dict[str, Any]) -> None:
-        with self._conn:
+        with self._tx():
             self._conn.execute(
                 "INSERT OR REPLACE INTO metrics (run_id, metrics_json) VALUES (?, ?)",
                 (run_id, _json(metrics)),
@@ -457,6 +501,18 @@ class SQLiteStore:
             (run_id,),
             ["timestamp"],
         )
+
+    def load_fill_objects(self, run_id: str) -> list[Fill]:
+        """Fills in execution order, e.g. to rebuild a portfolio by replaying them."""
+        cur = self._conn.execute(
+            "SELECT order_id, symbol, side, quantity, reference_price, fill_price, fee, timestamp, "
+            "stop_price FROM fills WHERE run_id = ? ORDER BY rowid",
+            (run_id,),
+        )
+        return [
+            Fill(r[0], r[1], Side(r[2]), r[3], r[4], r[5], r[6], _parse_ts(r[7]), stop_price=r[8])
+            for r in cur.fetchall()
+        ]
 
     def load_decisions(self, run_id: str, *, include_holds: bool = True) -> pd.DataFrame:
         sql = "SELECT * FROM decisions WHERE run_id = ?"

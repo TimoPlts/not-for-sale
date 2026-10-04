@@ -40,6 +40,7 @@ class PaperExecutor:
         *,
         min_notional: float = 10.0,
         id_prefix: str = "paper",
+        start_sequence: int = 0,
     ) -> None:
         if not math.isfinite(min_notional) or min_notional < 0:
             raise ValueError(f"min_notional must be >= 0, got {min_notional!r}")
@@ -47,7 +48,7 @@ class PaperExecutor:
         self._costs = cost_model
         self._min_notional = float(min_notional)
         self._id_prefix = id_prefix
-        self._sequence = 0
+        self._sequence = start_sequence  # continue numbering when resuming a run
 
     @property
     def portfolio(self) -> Portfolio:
@@ -56,6 +57,11 @@ class PaperExecutor:
     @property
     def cost_model(self) -> CostModel:
         return self._costs
+
+    @property
+    def sequence(self) -> int:
+        """Number of orders submitted so far (including rejected ones)."""
+        return self._sequence
 
     def submit(self, order: Order, reference_price: float) -> ExecutionReport:
         self._sequence += 1

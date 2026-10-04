@@ -14,24 +14,29 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 1 (complete):** configuration, domain models, fee and slippage cost model, paper execution (long-only market orders), portfolio accounting and the risk manager.
 - **Stage 2 (complete):** public CCXT market data with a CSV cache, a synthetic data provider, indicators, the RSI, MACD and Bollinger strategies, and the voting engine.
 - **Stage 3 (complete):** an event-driven backtester (next-bar-open fills, stop-losses, no look-ahead), the SQLite history of every signal, decision, order, fill and trade, and performance metrics.
-- **Next:** a proper CLI and live paper trading (Stage 4).
+- **Stage 4 (complete):** the `trading-lab` command line and live paper trading on real-time public data. It can be resumed after a stop and follows exactly the same rules as a backtest.
 
 ## Quick start
 
-From this folder, in PowerShell:
+Run these from this folder in PowerShell. The `trading-lab` command lives in the project's virtual environment:
 
 ```powershell
-.venv/Scripts/python -m pytest                                   # run all tests
-.venv/Scripts/python scripts/live_signals.py                     # current signals, live public data
-.venv/Scripts/python scripts/paper_trade_demo.py                 # one simulated trade, step by step
-.venv/Scripts/python scripts/run_backtest.py                     # backtest the last 90 days
-.venv/Scripts/python scripts/run_backtest.py --start 2025-01-01 --end 2025-07-01 --timeframe 4h
-.venv/Scripts/python scripts/run_backtest.py --synthetic 7       # offline backtest on random data
-.venv/Scripts/python scripts/show_runs.py                        # list stored backtests
-.venv/Scripts/python scripts/show_runs.py --run-id <id>          # details of one run
+.venv/Scripts/trading-lab --help
+.venv/Scripts/trading-lab signals                       # current signals (live public data)
+.venv/Scripts/trading-lab backtest                      # backtest the last 90 days
+.venv/Scripts/trading-lab backtest --start 2025-01-01 --end 2025-07-01 --timeframe 4h
+.venv/Scripts/trading-lab backtest --synthetic 7        # offline, random-walk data
+.venv/Scripts/trading-lab paper                         # live paper trading; Ctrl+C to stop
+.venv/Scripts/trading-lab paper --timeframe 15m         # faster feedback
+.venv/Scripts/trading-lab paper --resume <run id>       # continue a stopped paper run
+.venv/Scripts/trading-lab report                        # list all runs
+.venv/Scripts/trading-lab report <run id>               # details of one run
+.venv/Scripts/python -m pytest                          # run all tests
 ```
 
-Backtests are saved in `data/trading_lab.db` (SQLite). You can open it with any SQLite viewer, such as DB Browser for SQLite.
+To type just `trading-lab`, activate the environment first with `.venv\Scripts\Activate.ps1`.
+
+**How paper trading works:** the trader acts once per *closed* candle. It computes signals at the close and fills any resulting order at the open price of the candle that just started, with fees and slippage. Stops are checked against candle lows. These are the same rules as the backtester, so paper results are directly comparable with backtests. Every signal, decision, fill and equity value is saved to `data/trading_lab.db`, and a stopped run continues exactly where it left off with `--resume`. No orders are ever sent to an exchange.
 
 ## Setup (Windows / PowerShell)
 

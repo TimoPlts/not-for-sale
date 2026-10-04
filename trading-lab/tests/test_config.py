@@ -123,3 +123,9 @@ def test_mapping_round_trip_and_overrides():
     assert changed.strategies == cfg.strategies and cfg.market.timeframe == "1h"
     with pytest.raises(ConfigError):
         cfg.with_overrides({"market": {"timeframe": "7m"}})
+
+
+def test_from_dict_round_trip():
+    cfg = AppConfig().with_overrides({"strategies": {"rsi": {"weight": 2.0, "period": 7}}})
+    assert AppConfig.from_dict(cfg.to_dict()) == cfg
+    assert AppConfig.from_dict(cfg.to_dict()).fingerprint() == cfg.fingerprint()

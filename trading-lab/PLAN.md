@@ -190,11 +190,16 @@ average trade return.
 - Scripts: `scripts/run_backtest.py` (real or synthetic data, CSV export) and `scripts/show_runs.py`.
 - Tests: exact timing scenarios (next-bar fills, stops, gaps, same-bar stops, ignored and expired signals, liquidation, confidence-ordered entries), engine-level no-look-ahead (perturbing future candles leaves the past unchanged), determinism, invariants, SQLite round-trips, and metric values on hand-checked curves.
 
-### Stage 4: CLI and live paper trading
-- `trading-lab backtest --symbols ... --timeframe 1h --since ... --until ...`
-- `trading-lab paper` polls public data, acts on each newly closed candle, fills on the latest public price with the cost model, and persists state to SQLite so a restart resumes. Shuts down gracefully on Ctrl+C.
-- `trading-lab report --run-id ...`
-- Tests: CLI smoke tests with the synthetic provider, and a live-loop test with a fake clock and provider.
+### Stage 4: CLI and live paper trading ✅
+- `engine.TradingSession` holds the per-bar trading rules (fill scheduled orders at the open, stops, mark to market, signals, scheduling). The backtester and the live paper trader both drive this same object, so a live run follows exactly the backtest model. A test proves that a candle-by-candle live run produces the same fills as a backtest over the same period.
+- `live.LivePaperTrader`:
+  - Each cycle fetches the latest closed public candles and processes every bar closed since the last cycle, so it catches up after downtime.
+  - Orders scheduled at a close fill immediately at the open of the candle that just started (`provider.current_open`), at the same price a backtest uses.
+  - It persists records and state atomically, and sleeps until the next candle closes.
+  - Ctrl+C stops it cleanly. Data errors are reported and retried.
+- Resuming loads the run's stored config, replays the stored fills to rebuild the portfolio, and restores the scheduled orders, last prices and order counter. A test proves that a stopped and resumed run equals an uninterrupted one.
+- Storage: schema v2 (adds `run_state`) via the migration path, `atomic()` transactions, fill loading, and run status (`running` / `stopped` / `completed` / `failed`).
+- CLI (`trading-lab`, or `python -m trading_lab`): `backtest`, `paper` (with `--resume`, `--once`, `--max-cycles`, `--synthetic`), `report` and `signals`, plus global `--config` and `--db`. The scripts in `scripts/` are now shortcuts to these commands.
 
 ### Stage 5: Later (out of V1 scope)
 AI-agent signal sources, short positions, limit and stop orders, partial fills
