@@ -175,11 +175,20 @@ average trade return.
 - Config: new `[data]`, `[strategies.<name>]` (`enabled`, `weight` and strategy params) and `[voting]` sections.
 - Tests: indicators, strategy signals on crafted series, voting rules, data validation, the CCXT provider (with fake clients), cache behaviour and synthetic determinism.
 
-### Stage 3: Persistence, backtesting and metrics
-- SQLite schema (`runs`, `signals`, `decisions`, `orders`, `fills`, `equity_snapshots`, `closed_trades`) with `PRAGMA user_version` migrations. Each run stores the config JSON and fingerprint.
-- `BacktestEngine`: multi-symbol, bar-by-bar, next-bar-open execution, stop handling, end-of-run mark-to-market. Every decision is logged (including HOLDs and risk rejections).
-- `metrics`: the metrics listed above.
-- Tests: no-look-ahead check, deterministic re-runs (identical results), metric values on known equity curves and trades, SQLite round-trip.
+### Stage 3: Persistence, backtesting and metrics ✅
+- Strategies now have two layers: `IndicatorStrategy` computes causal indicator columns once and then decides per bar, giving an O(n) `generate_signals` for backtests. Tests prove it is identical to bar-by-bar `generate_signal`.
+- `storage.SQLiteStore`: tables `runs`, `signals`, `decisions`, `orders`, `fills`, `equity_snapshots`, `closed_trades` and `metrics`. The schema version is kept in `PRAGMA user_version` with an in-place migration path. Each run stores its full config JSON and fingerprint, and failed runs are marked as such with the error.
+- `backtest.BacktestEngine`: multi-symbol and bar-by-bar.
+  - Signals are computed at bar close and orders fill at the next bar's open.
+  - Exits are processed before entries, and entries in descending confidence.
+  - Entries are sized at fill time.
+  - Stop-losses trigger on the bar low and fill at the stop, or at the open after a gap.
+  - Optional liquidation at the end.
+  - Every signal, decision (including HOLD, IGNORED, REJECTED and EXPIRED), order and fill is recorded.
+- `metrics`: total and annualised return, max drawdown, annualised volatility, Sharpe and Sortino (365-day year, risk-free rate 0), trade count, win rate, profit factor, average win and loss, best and worst trade, fees, and exposure.
+- Config: `[backtest] liquidate_at_end` and `[storage] db_path`. `AppConfig.with_overrides()` changes settings from the command line.
+- Scripts: `scripts/run_backtest.py` (real or synthetic data, CSV export) and `scripts/show_runs.py`.
+- Tests: exact timing scenarios (next-bar fills, stops, gaps, same-bar stops, ignored and expired signals, liquidation, confidence-ordered entries), engine-level no-look-ahead (perturbing future candles leaves the past unchanged), determinism, invariants, SQLite round-trips, and metric values on hand-checked curves.
 
 ### Stage 4: CLI and live paper trading
 - `trading-lab backtest --symbols ... --timeframe 1h --since ... --until ...`

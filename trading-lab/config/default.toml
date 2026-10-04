@@ -54,3 +54,9 @@ num_std = 2.0
 buy_threshold = 0.15          # net weighted score needed to BUY
 sell_threshold = 0.15         # net weighted score needed to SELL
 min_agreeing = 1              # min number of strategies voting that way
+
+[backtest]
+liquidate_at_end = false      # true = sell open positions at the final close
+
+[storage]
+db_path = "data/trading_lab.db"   # SQLite history of runs, signals, decisions, trades

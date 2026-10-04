@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Mapping
 
 import pandas as pd
 
 from trading_lab.core.models import Direction
 from trading_lab.indicators import bollinger_bands
-from trading_lab.strategies.base import Strategy, finite_or_none, scaled_confidence
+from trading_lab.strategies.base import IndicatorStrategy, finite_or_none, scaled_confidence
 from trading_lab.strategies.registry import register_strategy
 from trading_lab.strategies.validation import check_int, check_range
 
 
 @register_strategy
-class BollingerMeanReversionStrategy(Strategy):
+class BollingerMeanReversionStrategy(IndicatorStrategy):
     """Mean reversion using %B, the close's position within the bands
     (0 = lower band, 0.5 = middle, 1 = upper).
 
@@ -42,15 +42,18 @@ class BollingerMeanReversionStrategy(Strategy):
     def params(self) -> dict[str, Any]:
         return {"period": self.period, "num_std": self.num_std, "exit_percent_b": self.exit_percent_b}
 
-    def _evaluate(self, candles: pd.DataFrame) -> tuple[Direction, float, dict[str, Any]]:
-        close = candles["close"]
-        bands = bollinger_bands(close, self.period, self.num_std).iloc[-1]
-        percent_b = float(bands["percent_b"])
+    def indicators(self, candles: pd.DataFrame) -> pd.DataFrame:
+        frame = bollinger_bands(candles["close"], self.period, self.num_std)
+        frame["close"] = candles["close"]
+        return frame
+
+    def _decide(self, row: Mapping[str, Any]) -> tuple[Direction, float, dict[str, Any]]:
+        percent_b = float(row["percent_b"])
         meta = {
-            "close": float(close.iloc[-1]),
-            "upper": finite_or_none(bands["upper"]),
-            "middle": finite_or_none(bands["middle"]),
-            "lower": finite_or_none(bands["lower"]),
+            "close": float(row["close"]),
+            "upper": finite_or_none(row["upper"]),
+            "middle": finite_or_none(row["middle"]),
+            "lower": finite_or_none(row["lower"]),
             "percent_b": finite_or_none(percent_b),
         }
         if math.isnan(percent_b):

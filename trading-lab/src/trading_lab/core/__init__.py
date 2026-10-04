@@ -10,6 +10,8 @@ from trading_lab.core.errors import (
 )
 from trading_lab.core.models import (
     ClosedTrade,
+    Decision,
+    DecisionAction,
     Direction,
     ExecutionReport,
     Fill,
@@ -28,6 +30,8 @@ __all__ = [
     "SUPPORTED_TIMEFRAMES",
     "ClosedTrade",
     "ConfigError",
+    "Decision",
+    "DecisionAction",
     "DataError",
     "Direction",
     "ExecutionReport",

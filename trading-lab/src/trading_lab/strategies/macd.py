@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Mapping
 
 import pandas as pd
 
 from trading_lab.core.models import Direction
 from trading_lab.indicators import macd
-from trading_lab.strategies.base import Strategy, finite_or_none, scaled_confidence
+from trading_lab.strategies.base import IndicatorStrategy, finite_or_none, scaled_confidence
 from trading_lab.strategies.registry import register_strategy
 from trading_lab.strategies.validation import check_int
 
 
 @register_strategy
-class MacdStrategy(Strategy):
+class MacdStrategy(IndicatorStrategy):
     """BUY on the bar where the MACD histogram crosses above zero (bullish
     crossover), SELL where it crosses below zero, and HOLD otherwise.
 
@@ -52,24 +52,28 @@ class MacdStrategy(Strategy):
             "normalization_window": self.normalization_window,
         }
 
-    def _evaluate(self, candles: pd.DataFrame) -> tuple[Direction, float, dict[str, Any]]:
+    def indicators(self, candles: pd.DataFrame) -> pd.DataFrame:
         frame = macd(candles["close"], self.fast, self.slow, self.signal)
-        last, prev = frame.iloc[-1], frame.iloc[-2]
-        hist, prev_hist = float(last["hist"]), float(prev["hist"])
+        frame["prev_hist"] = frame["hist"].shift(1)
+        frame["hist_std"] = (
+            frame["hist"].rolling(self.normalization_window, min_periods=2).std(ddof=0)
+        )
+        return frame
+
+    def _decide(self, row: Mapping[str, Any]) -> tuple[Direction, float, dict[str, Any]]:
+        hist, prev_hist = float(row["hist"]), float(row["prev_hist"])
+        scale = float(row["hist_std"])
         meta: dict[str, Any] = {
-            "macd": finite_or_none(last["macd"]),
-            "signal": finite_or_none(last["signal"]),
+            "macd": finite_or_none(row["macd"]),
+            "signal": finite_or_none(row["signal"]),
             "hist": finite_or_none(hist),
             "prev_hist": finite_or_none(prev_hist),
+            "hist_std": finite_or_none(scale),
             "crossover": None,
         }
         if math.isnan(hist) or math.isnan(prev_hist):
             return Direction.HOLD, 0.0, meta
-
-        history = frame["hist"].dropna().iloc[-self.normalization_window :]
-        scale = float(history.std(ddof=0)) if len(history) > 1 else 0.0
         strength = abs(hist - prev_hist) / scale if scale > 0 else 0.0
-        meta["hist_std"] = scale
 
         if prev_hist <= 0.0 < hist:
             meta["crossover"] = "bullish"

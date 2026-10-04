@@ -44,6 +44,21 @@ class OrderStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class DecisionAction(StrEnum):
+    """What the trading loop decided for a symbol at a point in time."""
+
+    HOLD = "hold"  # ensemble said HOLD
+    ENTER_SIGNAL = "enter_signal"  # BUY accepted; entry order scheduled for the next bar
+    EXIT_SIGNAL = "exit_signal"  # SELL accepted; exit order scheduled for the next bar
+    IGNORED = "ignored"  # signal not actionable (e.g. SELL without a position)
+    ENTER = "enter"  # entry filled
+    EXIT = "exit"  # signal exit filled
+    STOP_LOSS = "stop_loss"  # stop-loss exit filled
+    LIQUIDATE = "liquidate"  # position closed at the end of a backtest
+    REJECTED = "rejected"  # risk manager or executor refused the order
+    EXPIRED = "expired"  # scheduled order never executed (data ended)
+
+
 def _check_positive(name: str, value: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{name} must be a number, got {type(value).__name__}")
@@ -230,6 +245,7 @@ class ClosedTrade:
     pnl: float
     opened_at: datetime
     closed_at: datetime
+    exit_order_id: str = ""
 
     @property
     def return_pct(self) -> float:
@@ -252,3 +268,27 @@ class PortfolioSnapshot:
     unrealized_pnl: float
     fees_paid: float
     open_positions: int
+
+
+@dataclass(frozen=True, slots=True)
+class Decision:
+    """One entry in the decision audit trail."""
+
+    timestamp: datetime
+    symbol: str
+    action: DecisionAction
+    reason: str = ""
+    signal_direction: Direction | None = None
+    signal_confidence: float | None = None
+    quantity: float | None = None
+    reference_price: float | None = None
+    stop_price: float | None = None
+    order_id: str | None = None
+    details: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "timestamp", ensure_utc(self.timestamp))
+        object.__setattr__(self, "action", DecisionAction(self.action))
+        if self.signal_direction is not None:
+            object.__setattr__(self, "signal_direction", Direction(self.signal_direction))
+        object.__setattr__(self, "details", MappingProxyType(dict(self.details)))

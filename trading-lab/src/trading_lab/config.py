@@ -198,6 +198,27 @@ class VotingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class BacktestConfig:
+    liquidate_at_end: bool = False  # sell open positions at the final close?
+
+    def __post_init__(self) -> None:
+        _require(
+            isinstance(self.liquidate_at_end, bool), "backtest.liquidate_at_end must be true or false"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class StorageConfig:
+    db_path: str = "data/trading_lab.db"  # SQLite file; ":memory:" for no persistence
+
+    def __post_init__(self) -> None:
+        _require(
+            isinstance(self.db_path, str) and self.db_path.strip() != "",
+            "storage.db_path must be a non-empty path",
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
     market: MarketConfig = field(default_factory=MarketConfig)
@@ -206,6 +227,8 @@ class AppConfig:
     data: DataConfig = field(default_factory=DataConfig)
     strategies: tuple[StrategySpec, ...] = DEFAULT_STRATEGIES
     voting: VotingConfig = field(default_factory=VotingConfig)
+    backtest: BacktestConfig = field(default_factory=BacktestConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
 
     def __post_init__(self) -> None:
         for symbol in self.market.symbols:
@@ -253,6 +276,27 @@ class AppConfig:
         data["strategies"] = [asdict(s) for s in self.strategies]
         return data
 
+    def to_mapping(self) -> dict[str, Any]:
+        """TOML-shaped mapping; ``AppConfig.from_mapping(cfg.to_mapping()) == cfg``."""
+        data = self.to_dict()
+        data["strategies"] = {
+            s.name: {"enabled": s.enabled, "weight": s.weight, **s.params} for s in self.strategies
+        }
+        return data
+
+    def with_overrides(self, overrides: Mapping[str, Mapping[str, Any]]) -> AppConfig:
+        """Copy with selected keys replaced, e.g. ``{"market": {"timeframe": "15m"}}``.
+
+        The result is validated like any loaded config.
+        """
+        data = self.to_mapping()
+        for section, values in overrides.items():
+            _require(isinstance(values, Mapping), f"override for [{section}] must be a table")
+            target = data.setdefault(section, {})
+            _require(isinstance(target, dict), f"cannot override [{section}]")
+            target.update(values)
+        return AppConfig.from_mapping(data)
+
     def fingerprint(self) -> str:
         """SHA-256 of the canonical config, recorded with every run for reproducibility."""
         canonical = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
@@ -266,6 +310,8 @@ _SECTIONS: dict[str, type] = {
     "risk": RiskConfig,
     "data": DataConfig,
     "voting": VotingConfig,
+    "backtest": BacktestConfig,
+    "storage": StorageConfig,
 }
 
 
