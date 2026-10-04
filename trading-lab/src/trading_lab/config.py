@@ -276,6 +276,19 @@ class AppConfig:
         data["strategies"] = [asdict(s) for s in self.strategies]
         return data
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> AppConfig:
+        """Inverse of ``to_dict()``, e.g. to rebuild the config stored with a run."""
+        data = dict(data)
+        data.pop("strategy_override", None)
+        strategies = data.get("strategies")
+        if isinstance(strategies, list):
+            data["strategies"] = {
+                s["name"]: {"enabled": s["enabled"], "weight": s["weight"], **s["params"]}
+                for s in strategies
+            }
+        return cls.from_mapping(data)
+
     def to_mapping(self) -> dict[str, Any]:
         """TOML-shaped mapping; ``AppConfig.from_mapping(cfg.to_mapping()) == cfg``."""
         data = self.to_dict()

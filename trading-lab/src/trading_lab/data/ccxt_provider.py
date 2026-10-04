@@ -123,11 +123,22 @@ class CcxtPublicProvider(MarketDataProvider):
         in_range = (open_ms >= start_ms) & (open_ms < end_ms)
         return frame.loc[closed & in_range]
 
-    def _fetch_page(self, symbol: str, timeframe: str, since_ms: int) -> list[list[Any]]:
+    def current_open(self, symbol: str, timeframe: str, bar_open: datetime) -> float | None:
+        bar_ms = int(to_utc_timestamp(bar_open).timestamp() * 1000)
+        if bar_ms > int(to_utc_timestamp(self._clock()).timestamp() * 1000):
+            return None  # the candle has not started yet
+        for row in self._fetch_page(symbol, timeframe, bar_ms, limit=1):
+            if int(row[0]) == bar_ms and row[1] is not None:
+                return float(row[1])
+        return None
+
+    def _fetch_page(
+        self, symbol: str, timeframe: str, since_ms: int, limit: int | None = None
+    ) -> list[list[Any]]:
         for attempt in range(self._max_retries + 1):
             try:
                 return self._client.fetch_ohlcv(
-                    symbol, timeframe=timeframe, since=since_ms, limit=self._page_limit
+                    symbol, timeframe=timeframe, since=since_ms, limit=limit or self._page_limit
                 )
             except ccxt.NetworkError as exc:  # timeouts, rate limits, exchange unavailable
                 if attempt >= self._max_retries:

@@ -39,6 +39,15 @@ class MarketDataProvider(ABC):
     ) -> pd.DataFrame:
         """Closed candles with open time in ``[since, until)`` (``until=None`` means now)."""
 
+    def current_open(self, symbol: str, timeframe: str, bar_open: datetime) -> float | None:
+        """Open price of the candle that starts at ``bar_open``, once that candle has started.
+
+        A candle's open never changes after it starts, so live paper trading
+        can fill orders scheduled for this bar right away. Returns None when
+        the source cannot provide it; callers then wait for the bar to close.
+        """
+        return None
+
 
 def empty_ohlcv() -> pd.DataFrame:
     index = pd.DatetimeIndex([], tz="UTC", name="timestamp").as_unit("ns")

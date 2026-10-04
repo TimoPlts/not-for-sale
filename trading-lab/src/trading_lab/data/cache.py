@@ -39,6 +39,9 @@ class CachedProvider(MarketDataProvider):
     def name(self) -> str:
         return self._inner.name
 
+    def current_open(self, symbol: str, timeframe: str, bar_open: datetime) -> float | None:
+        return self._inner.current_open(symbol, timeframe, bar_open)
+
     def cache_path(self, symbol: str, timeframe: str) -> Path:
         return self._cache_dir / self.name / f"{symbol.replace('/', '-')}_{timeframe}.csv"
 
