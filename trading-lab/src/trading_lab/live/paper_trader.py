@@ -41,6 +41,7 @@ from trading_lab.core.timeutils import ensure_utc
 from trading_lab.data.base import MarketDataProvider, timeframe_delta
 from trading_lab.engine import Bar, Intent, TradingSession
 from trading_lab.portfolio import Portfolio
+from trading_lab.risk.breakers import BreakerState
 from trading_lab.reporting import run_metrics
 from trading_lab.storage import SQLiteStore
 from trading_lab.strategies import Strategy, build_strategies
@@ -145,6 +146,7 @@ class LivePaperTrader:
             order_sequence=state.get("order_sequence", self._store.count("orders", self.run_id)),
             pending={s: Intent.from_json(v) for s, v in state.get("pending", {}).items()},
             last_close=state.get("last_close", {}),
+            breaker_state=BreakerState.from_json(state["breakers"]) if "breakers" in state else None,
         )
         last = state.get("last_processed")
         self._last_processed = pd.Timestamp(last) if last else None
@@ -184,6 +186,7 @@ class LivePaperTrader:
             "pending": {s: intent.to_json() for s, intent in self._session.pending.items()},
             "last_close": dict(self._session.last_close),
             "order_sequence": self._session.executor.sequence,
+            "breakers": self._session.breakers.state.to_json(),
         }
 
     # ------------------------------------------------------------------ cycle

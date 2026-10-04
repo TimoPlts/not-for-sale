@@ -29,6 +29,7 @@ from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 from trading_lab.config import AppConfig
+from trading_lab.data.base import timeframe_delta
 from trading_lab.core.models import (
     Decision,
     DecisionAction,
@@ -41,6 +42,10 @@ from trading_lab.ensemble import VotingEngine
 from trading_lab.execution import CostModel, PaperExecutor
 from trading_lab.portfolio import Portfolio
 from trading_lab.risk import RiskManager
+from trading_lab.risk.breakers import BreakerState, CircuitBreakers
+
+
+PORTFOLIO = "PORTFOLIO"  # symbol used for portfolio-level decisions
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +120,7 @@ class TradingSession:
         order_sequence: int = 0,
         pending: Mapping[str, Intent] | None = None,
         last_close: Mapping[str, float] | None = None,
+        breaker_state: BreakerState | None = None,
     ) -> None:
         self.config = config
         self.voting = voting
@@ -130,6 +136,12 @@ class TradingSession:
             start_sequence=order_sequence,
         )
         self.risk = RiskManager(config.risk, costs, min_notional=config.execution.min_notional)
+        self.breakers = CircuitBreakers(
+            config.risk,
+            timeframe_delta(config.market.timeframe),
+            self.portfolio.initial_cash,
+            breaker_state,
+        )
         self.pending: dict[str, Intent] = dict(pending or {})
         self.last_close: dict[str, float] = dict(last_close or {})
         self.records = SessionRecords()
@@ -157,6 +169,13 @@ class TradingSession:
         )
         for sym in entry_syms:
             sig = self.pending.pop(sym).signal
+            blocked = self.breakers.entry_block_reason(sym, ts)
+            if blocked is not None:
+                self.records.decisions.append(
+                    Decision(ts, sym, DecisionAction.REJECTED, blocked, sig.direction,
+                             sig.confidence, reference_price=opens[sym])
+                )
+                continue
             decision = self.risk.evaluate_entry(sym, opens[sym], self.portfolio, marks)
             if not decision.approved:
                 self.records.decisions.append(
@@ -193,11 +212,21 @@ class TradingSession:
                     sym, min(bar.open, stop), ts, DecisionAction.STOP_LOSS,
                     f"stop {stop:.8g} hit (bar low {bar.low:.8g})",
                 )
+                self.breakers.on_stop_loss(sym, ts)
 
         for sym, bar in bars.items():
             self.last_close[sym] = bar.close
-        self.records.snapshots.append(self.portfolio.snapshot(self.last_close, ts))
+        snapshot = self.portfolio.snapshot(self.last_close, ts)
+        self.records.snapshots.append(snapshot)
         self.records.in_market.append(bool(self.portfolio.positions))
+
+        was_halted = self.breakers.halted
+        for event in self.breakers.on_bar_close(ts, snapshot.equity):
+            self.records.decisions.append(
+                Decision(ts, PORTFOLIO, DecisionAction.CIRCUIT_BREAKER, event)
+            )
+        if self.breakers.halted and not was_halted and self.config.risk.flatten_on_halt:
+            self._flatten(ts)
 
         for sym in sorted(bars, key=self._order.__getitem__):
             strat_sigs = list(strategy_signals[sym])
@@ -229,10 +258,23 @@ class TradingSession:
             self.records.in_market.append(bool(self.portfolio.positions))
 
     # --------------------------------------------------------------- helpers
+    def _flatten(self, ts: datetime) -> None:
+        """Schedule exits for every position at the next open (kill switch)."""
+        for sym in sorted(self.portfolio.positions, key=self._order.__getitem__):
+            signal = Signal("risk_manager", sym, Direction.SELL, 1.0, ts, {"reason": "kill switch"})
+            self.pending[sym] = Intent(DecisionAction.EXIT_SIGNAL, signal)
+            self.records.decisions.append(
+                Decision(ts, sym, DecisionAction.EXIT_SIGNAL, "kill switch: closing position",
+                         Direction.SELL, 1.0)
+            )
+
     def _schedule(self, sym: str, ts: datetime, ensemble: Signal) -> None:
         has_position = self.portfolio.position(sym) is not None
         d, c = ensemble.direction, ensemble.confidence
         decisions = self.records.decisions
+        existing = self.pending.get(sym)
+        if existing is not None and existing.signal.strategy == "risk_manager":
+            return  # a kill-switch exit is scheduled; strategies cannot override it
         if d is Direction.BUY:
             if has_position and not self.config.risk.allow_pyramiding:
                 decisions.append(Decision(ts, sym, DecisionAction.IGNORED,

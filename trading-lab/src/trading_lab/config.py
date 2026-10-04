@@ -98,8 +98,22 @@ class RiskConfig:
     max_open_positions: int = 4
     max_total_exposure_pct: float = 1.0
     allow_pyramiding: bool = False
+    # Circuit breakers (0 disables each one). They block new entries; exits stay allowed.
+    max_drawdown_pct: float = 0.25  # kill switch: equity this far below its peak
+    daily_loss_limit_pct: float = 0.05  # equity this far below the start of the UTC day
+    stop_loss_cooldown_bars: int = 3  # no re-entry into a symbol for N bars after a stop-out
+    flatten_on_halt: bool = False  # also close every position when the kill switch trips
 
     def __post_init__(self) -> None:
+        _number(self, "max_drawdown_pct", low=0.0, high=0.99)
+        _number(self, "daily_loss_limit_pct", low=0.0, high=0.99)
+        _require(
+            isinstance(self.stop_loss_cooldown_bars, int)
+            and not isinstance(self.stop_loss_cooldown_bars, bool)
+            and self.stop_loss_cooldown_bars >= 0,
+            f"risk.stop_loss_cooldown_bars must be an integer >= 0, got {self.stop_loss_cooldown_bars!r}",
+        )
+        _require(isinstance(self.flatten_on_halt, bool), "risk.flatten_on_halt must be true or false")
         _number(self, "max_position_pct", low=0.0, high=1.0, low_inclusive=False)
         _number(self, "risk_per_trade_pct", low=0.0, high=1.0, low_inclusive=False)
         _number(self, "stop_loss_pct", low=0.0, high=0.99, low_inclusive=False)

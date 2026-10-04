@@ -57,6 +57,7 @@ class DecisionAction(StrEnum):
     LIQUIDATE = "liquidate"  # position closed at the end of a backtest
     REJECTED = "rejected"  # risk manager or executor refused the order
     EXPIRED = "expired"  # scheduled order never executed (data ended)
+    CIRCUIT_BREAKER = "circuit_breaker"  # a portfolio-level risk limit tripped
 
 
 def _check_positive(name: str, value: float) -> float:
