@@ -117,3 +117,28 @@ class MyStrategy(Strategy):
     def _evaluate(self, candles):
         return Direction.HOLD, 0.0, {"note": "..."}
 ```
+
+## AI agents
+
+Agents are decision makers, rule-based today and an LLM later, that vote in the ensemble like any other strategy. They only produce **signals**: the risk manager, the circuit breakers and the paper executor always sit between an agent and any simulated trade.
+
+Enable the built-in example agent, an offline trend-following "analyst" that explains every answer, in `config/default.toml`:
+
+```toml
+[strategies.trend_analyst]
+weight = 1.0
+lookback = 30            # candles shown to the agent
+decision_interval = 1    # ask every N candles (limits cost for real LLMs)
+```
+
+Every answer is saved in `data/agent_cache.db`, and `[agents] mode` controls how that cache is used:
+
+| mode | behaviour |
+|------|-----------|
+| `record` (default) | reuse cached answers and ask the agent only for new situations |
+| `replay` | never call the agent; use cached answers only. The backtest is exactly reproducible even for a non-deterministic LLM |
+| `live` | always ask, cache nothing |
+
+Answers are keyed by agent, version, parameters, symbol, candle and a hash of the exact context the agent saw. Changing the agent, its prompt or the data therefore never reuses a stale answer. Rationales are stored with each signal in the run history.
+
+To connect an LLM later, pass any `complete(system_prompt, user_prompt) -> text` function to `LLMAgentStrategy`. It builds the prompt from the market context and strictly validates the JSON answer. Invalid answers and errors become HOLD signals and never crash a run. An LLM needs its own API key; exchange keys are never needed.

@@ -65,3 +65,7 @@ liquidate_at_end = false      # true = sell open positions at the final close
 
 [storage]
 db_path = "data/trading_lab.db"   # SQLite history of runs, signals, decisions, trades
+
+[agents]
+mode = "record"               # record | replay | live (see README: AI agents)
+cache_path = "data/agent_cache.db"

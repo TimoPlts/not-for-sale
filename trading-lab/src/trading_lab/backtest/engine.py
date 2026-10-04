@@ -46,7 +46,8 @@ from trading_lab.engine import Bar, TradingSession
 from trading_lab.ensemble import VotingEngine
 from trading_lab.metrics import PerformanceMetrics, compute_metrics
 from trading_lab.storage import SQLiteStore
-from trading_lab.strategies import Strategy, build_strategies
+from trading_lab.strategies import Strategy
+from trading_lab.strategy_factory import strategies_for
 
 SNAPSHOT_COLUMNS = (
     "cash",
@@ -113,7 +114,7 @@ class BacktestEngine:
         self._store = store
         self._strategy_override = strategies is not None
         self._strategies = (
-            list(strategies) if strategies is not None else build_strategies(config.enabled_strategies)
+            list(strategies) if strategies is not None else strategies_for(config)
         )
         self._voting = build_voting(config, self._strategies)
 

@@ -44,7 +44,8 @@ from trading_lab.portfolio import Portfolio
 from trading_lab.risk.breakers import BreakerState
 from trading_lab.reporting import run_metrics
 from trading_lab.storage import SQLiteStore
-from trading_lab.strategies import Strategy, build_strategies
+from trading_lab.strategies import Strategy
+from trading_lab.strategy_factory import strategies_for
 
 RUN_KIND = "paper"
 _GRACE = timedelta(seconds=5)  # wait a little after a candle closes before fetching it
@@ -83,7 +84,7 @@ class LivePaperTrader:
         self._store = store
         self._clock = clock
         self._strategies = (
-            list(strategies) if strategies is not None else build_strategies(config.enabled_strategies)
+            list(strategies) if strategies is not None else strategies_for(config)
         )
         self._voting = build_voting(config, self._strategies)
         self._step = timeframe_delta(config.market.timeframe)

@@ -263,14 +263,15 @@ def cmd_report(args: argparse.Namespace) -> int:
 # ----------------------------------------------------------------- signals
 def cmd_signals(args: argparse.Namespace) -> int:
     from trading_lab.ensemble import VotingEngine
-    from trading_lab.strategies import build_strategies
+    from trading_lab.strategy_factory import strategies_for
 
     cfg = _load_config(args)
     provider = _provider(cfg, args.synthetic)
-    strategies = build_strategies(cfg.enabled_strategies)
+    strategies = strategies_for(cfg)
     voting = VotingEngine.from_specs(cfg.strategies, cfg.voting)
     since = datetime.now(timezone.utc) - timedelta(days=args.days)
     keys = {"rsi": ["rsi"], "macd": ["hist", "crossover"], "bollinger": ["percent_b"]}
+    default_keys = ["rationale"]  # agent strategies explain themselves
 
     print(f"data={provider.name}  timeframe={cfg.market.timeframe}  history={args.days}d\n")
     for symbol in cfg.market.symbols:
@@ -284,7 +285,7 @@ def cmd_signals(args: argparse.Namespace) -> int:
         for sig in signals:
             shown = "  ".join(
                 f"{k}={v:.3f}" if isinstance(v, float) else f"{k}={v}"
-                for k, v in ((k, sig.metadata.get(k)) for k in keys.get(sig.strategy, []))
+                for k, v in ((k, sig.metadata.get(k)) for k in keys.get(sig.strategy, default_keys))
             )
             print(f"   {sig.strategy:<10} {sig.direction.value.upper():<5} conf={sig.confidence:.2f}   {shown}")
         ens = voting.combine(signals)

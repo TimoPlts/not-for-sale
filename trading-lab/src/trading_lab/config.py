@@ -232,6 +232,29 @@ class StorageConfig:
         )
 
 
+AGENT_MODES = ("live", "record", "replay")
+
+
+@dataclass(frozen=True, slots=True)
+class AgentsConfig:
+    """How AI-agent strategies are called (see ``trading_lab.agents``).
+
+    * ``record``: use a cached answer when there is one, otherwise ask the agent and cache it
+    * ``replay``: only use cached answers (never call the agent) for exact reproducibility
+    * ``live``: always ask the agent and cache nothing
+    """
+
+    mode: str = "record"
+    cache_path: str = "data/agent_cache.db"
+
+    def __post_init__(self) -> None:
+        _require(self.mode in AGENT_MODES, f"agents.mode must be one of {AGENT_MODES}, got {self.mode!r}")
+        _require(
+            isinstance(self.cache_path, str) and self.cache_path.strip() != "",
+            "agents.cache_path must be a non-empty path",
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
@@ -243,6 +266,7 @@ class AppConfig:
     voting: VotingConfig = field(default_factory=VotingConfig)
     backtest: BacktestConfig = field(default_factory=BacktestConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
+    agents: AgentsConfig = field(default_factory=AgentsConfig)
 
     def __post_init__(self) -> None:
         for symbol in self.market.symbols:
@@ -339,6 +363,7 @@ _SECTIONS: dict[str, type] = {
     "voting": VotingConfig,
     "backtest": BacktestConfig,
     "storage": StorageConfig,
+    "agents": AgentsConfig,
 }
 
 
