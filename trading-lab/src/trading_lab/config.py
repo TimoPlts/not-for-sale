@@ -126,6 +126,9 @@ class ExecutionConfig:
         _number(self, "maker_fee_rate", low=0.0, high=0.05)
 
 
+RISK_STATES = ("low", "moderate", "high", "extreme")  # labels of the qwen_risk agent
+
+
 @dataclass(frozen=True, slots=True)
 class RiskConfig:
     max_position_pct: float = 0.25
@@ -151,8 +154,28 @@ class RiskConfig:
     atr_stop_multiple: float = 2.0
     atr_stop_min_pct: float = 0.005
     atr_stop_max_pct: float = 0.25
+    # Entry filters: they only block NEW entries (never force an exit, never override breakers).
+    trend_filter_period: int = 0  # no new entry while the close is below its N-bar simple average (0 = off)
+    block_entries_on_risk_states: tuple[str, ...] = ()  # e.g. ("extreme",) or ("high", "extreme")
+    risk_state_max_age_bars: int = 8  # how long a reported risk_state stays in force
 
     def __post_init__(self) -> None:
+        _require(
+            isinstance(self.trend_filter_period, int) and not isinstance(self.trend_filter_period, bool)
+            and 0 <= self.trend_filter_period <= 2000,
+            f"risk.trend_filter_period must be an integer in [0, 2000], got {self.trend_filter_period!r}",
+        )
+        _require(isinstance(self.block_entries_on_risk_states, (list, tuple)),
+                 "risk.block_entries_on_risk_states must be a list")
+        states = tuple(self.block_entries_on_risk_states)
+        bad = [x for x in states if x not in RISK_STATES]
+        _require(not bad, f"risk.block_entries_on_risk_states: unknown state(s) {bad}; use {list(RISK_STATES)}")
+        object.__setattr__(self, "block_entries_on_risk_states", states)
+        _require(
+            isinstance(self.risk_state_max_age_bars, int) and not isinstance(self.risk_state_max_age_bars, bool)
+            and self.risk_state_max_age_bars >= 1,
+            f"risk.risk_state_max_age_bars must be an integer >= 1, got {self.risk_state_max_age_bars!r}",
+        )
         _require(self.stop_mode in ("percent", "atr"),
                  f"risk.stop_mode must be 'percent' or 'atr', got {self.stop_mode!r}")
         _require(
@@ -459,6 +482,7 @@ class AppConfig:
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["market"]["symbols"] = list(self.market.symbols)
+        data["risk"]["block_entries_on_risk_states"] = list(self.risk.block_entries_on_risk_states)
         data["strategies"] = [asdict(s) for s in self.strategies]
         return data
 

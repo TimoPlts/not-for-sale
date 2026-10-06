@@ -42,6 +42,7 @@ from trading_lab.core.models import Decision, DecisionAction, Fill
 from trading_lab.core.timeutils import ensure_utc
 from trading_lab.data.base import MarketDataProvider, timeframe_delta
 from trading_lab.engine import Bar, Intent, TradingSession
+from trading_lab.engine.filters import filter_columns
 from trading_lab.engine.session import RestingLimit
 from trading_lab.execution.costs import market_stats_frame, next_bar_stats, stats_series
 from trading_lab.alerts import AlertManager
@@ -103,7 +104,7 @@ class LivePaperTrader:
         )
         self._voting = build_voting(config, self._strategies)
         self._step = timeframe_delta(config.market.timeframe)
-        self._history = max(s.history_bars for s in self._strategies)
+        self._history = max(max(s.history_bars for s in self._strategies), config.risk.trend_filter_period + 1)
 
         existing = store.get_run(run_id) if run_id else None
         if existing is not None:
@@ -170,6 +171,7 @@ class LivePaperTrader:
             resting={s: RestingLimit.from_json(v) for s, v in state.get("resting", {}).items()},
             stop_events=[(datetime.fromisoformat(t), sym) for t, sym in state.get("stop_events", [])],
             trailing=state.get("trailing", {}),
+            risk_states={s: (datetime.fromisoformat(t), v) for s, (t, v) in state.get("risk_states", {}).items()},
         )
         last = state.get("last_processed")
         self._last_processed = pd.Timestamp(last) if last else None
@@ -214,6 +216,7 @@ class LivePaperTrader:
             "resting": {s: order.to_json() for s, order in self._session.resting.items()},
             "stop_events": [[t.isoformat(), sym] for t, sym in self._session.stop_events],
             "trailing": {s: dict(v) for s, v in self._session.trailing.items()},
+            "risk_states": {s: [t.isoformat(), v] for s, (t, v) in self._session.risk_states.items()},
             "alerts": {"last_summary_day": self._last_summary_day},
             "health": {
                 "last_cycle_at": ensure_utc(self._clock()).isoformat(),
@@ -281,6 +284,7 @@ class LivePaperTrader:
                 sym: stats_series(market_stats_frame(frame, lookback, cfg.risk.atr_period))
                 for sym, frame in candles.items()
             }
+            filters = {sym: filter_columns(frame, cfg.risk) for sym, frame in candles.items()}
             columns = ("open", "high", "low", "close", "volume")
             for t in new_bars:
                 ts = t.to_pydatetime()
@@ -290,7 +294,8 @@ class LivePaperTrader:
                 }
                 stats = {sym: market_stats[sym][i] for sym, i in idx.items()}
                 self._session.open_bar(ts, {sym: b.open for sym, b in bars.items()}, stats)
-                self._session.close_bar(ts, bars, {sym: sources(sym, i) for sym, i in idx.items()}, stats)
+                self._session.close_bar(ts, bars, {sym: sources(sym, i) for sym, i in idx.items()}, stats,
+                                        {sym: filters[sym][i] for sym, i in idx.items()})
                 self._last_processed = t
 
         # Fill freshly scheduled orders at the open of the candle that just started.

@@ -362,5 +362,10 @@ Trade-offs worth knowing:
 - CLI: `walkforward` and `experiment --walkforward` take `--adaptive-weights`, `--weight-horizon`, `--weight-min-votes` and `--weight-max`. `trading-lab agent-weights [RUN_ID]` prints suggested weights and a config snippet.
 - Tests: the rule's numbers, caps and floors; the all-off guard; fold weights equal to a separate training backtest's; changing the data after a training window leaves its weights unchanged (no look-ahead); fixed weights by default; the CLI.
 
+### Stage 12C: Entry filters ✅
+- `[risk] trend_filter_period` (simple moving average, `engine/filters.py`, identical in backtests and live; unknown means blocked), and `block_entries_on_risk_states` with `risk_state_max_age_bars`. The session remembers the latest `risk_state` reported per symbol (saved for resume).
+- `TradingSession.entry_filter_reason` is checked only when a BUY would be scheduled. A blocked BUY is recorded as IGNORED with the reason. Exits, stops, take-profits and breakers are unchanged, and engines load enough history for the average.
+- Tests: blocking below the average and unknown averages; the veto and its age limit; no forced exits, exits still working and breakers still applying; no backtest entry signalled below the average; live equal to the backtest with the filter; an agent veto surviving a resume; validation and round-trip.
+
 ### Later
 Short positions, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and more alert channels (e-mail).
