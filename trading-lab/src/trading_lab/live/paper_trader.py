@@ -161,6 +161,7 @@ class LivePaperTrader:
             breaker_state=BreakerState.from_json(state["breakers"]) if "breakers" in state else None,
             resting={s: RestingLimit.from_json(v) for s, v in state.get("resting", {}).items()},
             stop_events=[(datetime.fromisoformat(t), sym) for t, sym in state.get("stop_events", [])],
+            trailing=state.get("trailing", {}),
         )
         last = state.get("last_processed")
         self._last_processed = pd.Timestamp(last) if last else None
@@ -203,6 +204,7 @@ class LivePaperTrader:
             "breakers": self._session.breakers.state.to_json(),
             "resting": {s: order.to_json() for s, order in self._session.resting.items()},
             "stop_events": [[t.isoformat(), sym] for t, sym in self._session.stop_events],
+            "trailing": {s: dict(v) for s, v in self._session.trailing.items()},
             "health": {
                 "last_cycle_at": ensure_utc(self._clock()).isoformat(),
                 "consecutive_errors": self.consecutive_errors,

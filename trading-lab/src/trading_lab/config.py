@@ -139,8 +139,15 @@ class RiskConfig:
     daily_loss_limit_pct: float = 0.05  # equity this far below the start of the UTC day
     stop_loss_cooldown_bars: int = 3  # no re-entry into a symbol for N bars after a stop-out
     flatten_on_halt: bool = False  # also close every position when the kill switch trips
+    # Exits beyond the fixed stop (0 disables each one).
+    trailing_stop_pct: float = 0.0  # stop follows the highest high at this distance (raised at bar closes)
+    trailing_activation_pct: float = 0.0  # start trailing once the high is this far above the average cost
+    take_profit_pct: float = 0.0  # exit when the high reaches average cost x (1 + this)
 
     def __post_init__(self) -> None:
+        _number(self, "trailing_stop_pct", low=0.0, high=0.99)
+        _number(self, "trailing_activation_pct", low=0.0, high=10.0)
+        _number(self, "take_profit_pct", low=0.0, high=100.0)
         _number(self, "max_drawdown_pct", low=0.0, high=0.99)
         _number(self, "daily_loss_limit_pct", low=0.0, high=0.99)
         _require(

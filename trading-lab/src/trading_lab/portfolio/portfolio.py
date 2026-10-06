@@ -97,6 +97,15 @@ class Portfolio:
         self._fees_paid += fill.fee
         self._fills.append(fill)
 
+    def set_stop(self, symbol: str, stop_price: float) -> None:
+        """Move an open position's stop (e.g. a trailing stop). No cash or fill is involved."""
+        position = self._positions.get(symbol)
+        if position is None:
+            raise PositionError(f"no open position in {symbol}")
+        if not (isinstance(stop_price, (int, float)) and stop_price > 0):
+            raise ValueError(f"stop price must be positive, got {stop_price!r}")
+        self._positions[symbol] = replace(position, stop_price=float(stop_price))
+
     def _apply_buy(self, fill: Fill) -> None:
         cost = fill.notional + fill.fee
         if cost > self._cash + CASH_TOLERANCE:

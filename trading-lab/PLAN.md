@@ -325,5 +325,12 @@ Trade-offs worth knowing:
 - An LLM may have seen historical prices during training. Final out-of-sample claims need periods after the model's training cutoff, and ultimately the live paper run (see the protocol).
 - `weight = 0` now means a strategy does not take part at all. Before, a zero-weight vote still counted towards `min_agreeing`.
 
+### Stage 11A: Trailing stops and take-profit ✅
+- `[risk] trailing_stop_pct`, `trailing_activation_pct` and `take_profit_pct` (0 = off; the defaults leave behaviour unchanged).
+- `TradingSession` tracks each open position's highest high and raises its stop at bar closes, effective from the next bar (no look-ahead inside a bar). Stops only move up (`Portfolio.set_stop`). Take-profit exits at average cost × (1 + pct), or at the open after a gap up. When both the stop and the target are reached in one bar, the stop wins. There is a new `DecisionAction.TAKE_PROFIT`.
+- The stop-loss cooldown now follows only losing stop exits. With the default exits every stop exit is a loss, so nothing changes there.
+- Trailing state (`trailing`: highest high and raised stop) is saved with live runs and re-applied after the portfolio is rebuilt from fills on resume. The dashboard shows the current stop.
+- Tests: ratcheting and a profitable trailing exit without cooldown; a raised stop applying only from the next bar (gap rule); activation; take-profit with a gap; the stop winning a tie; unchanged defaults; validation; backtest equal to live with these exits; trailed stops surviving a resume; the dashboard stop.
+
 ### Later
-Short positions, trailing stops, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and alerting on breaker trips or long outages.
+Short positions, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and alerting on breaker trips or long outages.
