@@ -1,0 +1,41 @@
+# Live PAPER trading (simulated fills only; no orders are ever sent to an exchange).
+# Template: review the paths and user, then install it yourself (see docs/DEPLOYMENT.md):
+#   sudo cp deploy/systemd/trading-lab-paper.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now trading-lab-paper
+
+[Unit]
+Description=trading-lab live paper trading (simulation only)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=tradinglab
+Group=tradinglab
+WorkingDirectory=/opt/trading-lab/trading-lab
+# Qwen endpoint, model and token (mode 640, owned by root:tradinglab). Never committed.
+EnvironmentFile=/etc/trading-lab/trading-lab.env
+# --run-id makes restarts continue the same run (resume if it exists, start it otherwise).
+ExecStart=/opt/trading-lab/trading-lab/.venv/bin/trading-lab \
+    --config /opt/trading-lab/trading-lab/config/default.toml \
+    --log-file /var/log/trading-lab/paper.log \
+    paper --run-id vm-paper-1 --notes "VM paper run"
+# SIGTERM: the trader finishes the current cycle, saves everything and marks the run "stopped".
+KillSignal=SIGTERM
+TimeoutStopSec=300
+Restart=on-failure
+RestartSec=60
+# Unbuffered output so `journalctl -u trading-lab-paper -f` is live.
+Environment=PYTHONUNBUFFERED=1
+
+# Hardening: the service can only write its data and log directories.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ReadWritePaths=/opt/trading-lab/trading-lab/data /var/log/trading-lab
+
+[Install]
+WantedBy=multi-user.target

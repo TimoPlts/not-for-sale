@@ -74,6 +74,45 @@ liquidate_at_end = false      # true = sell open positions at the final close
 [storage]
 db_path = "data/trading_lab.db"   # SQLite history of runs, signals, decisions, trades
 
+# Qwen agents (one shared model, three roles; see README "Qwen agents").
+# weight = 0 switches an agent off completely: it is never called and casts no vote.
+# Set a positive weight to let it vote; QWEN_API_URL/QWEN_MODEL/QWEN_API_KEY must then be set.
+[strategies.qwen_trend]
+enabled = true
+weight = 0.0
+lookback = 40                 # candles shown to the model
+decision_interval = 4         # ask every N candles (HOLD in between)
+# portfolio_context = false   # true adds position status (answers then depend on the trade path)
+
+[strategies.qwen_momentum]
+enabled = true
+weight = 0.0
+lookback = 30
+decision_interval = 4
+
+[strategies.qwen_risk]
+enabled = true
+weight = 0.0
+lookback = 30
+decision_interval = 4
+# portfolio_context = true    # default: sees exposure, open positions, stop-outs, breakers
+
+# A general-purpose model analyst is also available:
+# [strategies.llm_analyst]
+# weight = 1.0
+# lookback = 30
+# decision_interval = 4
+
 [agents]
 mode = "record"               # record | replay | live (see README: AI agents)
 cache_path = "data/agent_cache.db"
+# LLM provider for model-backed agents. The endpoint, model and token come ONLY
+# from environment variables (QWEN_API_URL, QWEN_MODEL, QWEN_API_KEY), never this file.
+provider = "qwen"
+request_timeout_seconds = 30.0  # per request
+max_retries = 2               # retries after a timeout, network error, HTTP 429 or 5xx
+retry_backoff_seconds = 1.0   # wait before the first retry; doubles each time
+temperature = 0.0             # part of the cache key, like the model and the prompt
+max_output_tokens = 512       # raise this for models that think aloud before answering
+failure_threshold = 5         # after 5 failed calls in a row, stop calling the model ...
+failure_cooldown_seconds = 300.0  # ... for 5 minutes (agents vote HOLD meanwhile); 0 = never

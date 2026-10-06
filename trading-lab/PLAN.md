@@ -89,6 +89,11 @@ trading bot.
 | `metrics/`     | Performance metrics | 3 |
 | `live/`        | `LivePaperTrader` loop (public data, simulated fills, resumable state) | 4 |
 | `cli.py`       | `trading-lab backtest`, `trading-lab paper`, `trading-lab report` | 4 |
+| `agents/`      | Agent interface, context, record/replay cache, `AgentStrategy` adapter, LLM-backed and specialist (Trend/Momentum/Risk) strategies | 6, 9 |
+| `llm/`         | Provider-agnostic LLM clients (`LLMProvider`); Qwen via OpenAI-compatible chat completions | 9 |
+| `research/`    | Sweeps, walk-forward, agent attribution, baseline-vs-AI experiments, out-of-sample comparison | 7, 9, 10 |
+| `dashboard/`   | Read-only data layer over SQLite and the Streamlit app | 10 |
+| `smoke.py`     | `agent-test` connectivity and agent smoke tests | 9 |
 
 ### Key interfaces
 
@@ -225,5 +230,100 @@ average trade return.
 - A liquidity cap: maximum participation in recent bar volume, applied as a sizing limit.
 - Limit entry orders: price offset, time-to-live, maker fee, trade-through fill rule, and partial fills capped by bar volume with the remainder resting until expiry.
 
+### Stage 9A: Qwen LLM provider ✅
+- New `llm/` package, provider-agnostic: an `LLMProvider` ABC (`chat() -> Completion` with text, token usage when reported, latency and attempts; `complete()` is the Stage 6 `complete(system, user) -> text` interface) and a provider error hierarchy.
+- `OpenAICompatibleProvider`: a client for `/chat/completions` endpoints over a pluggable HTTP transport (standard-library `urllib`, so no new dependency). It reads `<PREFIX>_API_URL`, `<PREFIX>_API_KEY` and `<PREFIX>_MODEL` from the environment only. Timeouts, network errors, 429 and 5xx are retried with exponential backoff; other HTTP errors fail at once with a hint. The token is redacted from every message, log and `repr`. `QwenProvider` is this client with the `QWEN` prefix; adding OpenAI, Anthropic or Gemini means adding a provider class.
+- `[agents]` gains `provider`, `request_timeout_seconds`, `max_retries`, `retry_backoff_seconds`, `temperature` and `max_output_tokens`. These are non-secret, and old configs still load.
+- `LLMProviderStrategy` (the base for model-backed agents) and the registered `llm_analyst` strategy. `configure_agents` builds one shared provider and fails fast when variables are missing. In replay only `QWEN_MODEL` is required, and the model is never called.
+- Tests: missing variables, request and response format, malformed bodies and answers, timeouts, retries, client errors, failure → HOLD (including a whole backtest against a failing endpoint), record reuse, replay offline, live always asking, secret redaction, and a real local HTTP server for the transport and its timeout. New safety tests: no hard-coded tokens in the source, and no credential fields in the config.
+
+### Stage 9B: Specialist Qwen agents ✅
+- `agents/specialists.py`: `qwen_trend`, `qwen_momentum` and `qwen_risk` share the configured provider. Each has its own system prompt, its own causal feature frame and a strictly validated extra label (`regime`, `momentum_state` or `risk_state`). Answers missing the label, or with an unknown value, become HOLD.
+- Portfolio-aware agents: `Strategy.uses_portfolio`, `signal_at(…, portfolio)` and `generate_signals_at(…)`. `TradingSession.close_bar` accepts lazy signal sources and evaluates them after stops, marks and breakers, with a coarse, read-only `portfolio_view`: position, return, bars held, stop distance, exposure, open positions, drawdown, daily PnL, recent stop-outs, kill switch and entry block. Recent stop-outs are tracked in the session.
+- `qwen_risk` is portfolio-aware by default. The other two are market-only by default, so their cached answers are shared by all experiments; `portfolio_context = true` adds position status.
+- The backtester evaluates strategies only for bars inside the period, so agents are not asked about the warm-up history.
+- `weight = 0` means not taking part: the strategy is not built, not evaluated and casts no vote. The three agents ship in the default config with weight 0.
+- The ATR indicator (Wilder) is added, and `parse_agent_json` takes required labels.
+- Tests: config defaults and the environment, prompts, causal features, label validation, labels through the cache, the portfolio view, the risk agent unable to override the kill switch, three agents voting, in-period-only calls, record/replay with a portfolio-aware agent, and unchanged baseline results.
+
+### Stage 9C: Agent performance attribution ✅
+- `research/attribution.py`: per voter, the vote counts (BUY/SELL/HOLD/errors), average confidence, N-bar directional correctness, average outcome after BUY and SELL, calibration by confidence bucket, and trade attribution. Trade attribution links each closed trade to its entry signal and records agreed/disagreed/influenced/pivotal trades plus the PnL when the voter agreed or disagreed. It works on in-memory results (`attribute_result`) and stored runs (`attribute_run`). The definitions are documented in the module.
+- Storage schema v3: a `bars` table (the OHLCV each run traded on, written by backtests and live paper runs) and a `research_results` table (used by later stages). Older databases are upgraded in place.
+- CLI: `trading-lab agent-report [RUN_ID] [--horizon N] [--all]`.
+- Tests: a hand-computed scenario with exact numbers, determinism and in-memory equal to stored, the CLI, and the v2 → v3 migration.
+
+### Stage 9D: Baseline versus AI experiments ✅
+- `research/experiments.py`: named variants (`baseline`, `trend`, `momentum`, `risk`, `trend_momentum`, `all_agents`, `ai_only`) that change only strategy weights. `run_experiment` runs them over the same data, in backtest or walk-forward mode, with an optional in-sample grid.
+- `BacktestEngine`, `run_sweep` and `walk_forward` accept one shared `llm_provider`. `shared_llm_provider` checks the credentials once before any run, and all runs share the answer cache, so a market-only agent is asked about each bar once across all combinations.
+- CLI: `trading-lab experiment` (`--variants`, `--walkforward`, `--param`, `--save` to the `research_results` table, `--export` JSON). There is also a global `--agent-mode record|replay|live`. Sweep and walk-forward fail fast on missing Qwen variables.
+- Tests: variants change only weights; answers are shared across variants, sweep combinations and overlapping walk-forward windows; replay reproduces every variant offline; the off row equals the baseline; the CLI in both modes; the fail-fast check.
+
+### Stage 9E: Model usage accounting ✅
+- `llm/usage.py`: `CallRecord` (one call: provider, model, ok, latency, attempts, characters, tokens and whether they are estimated, error), `UsageStats` (calls, cache hits and misses, failures, invalid answers, retries, characters, tokens, latency) and `UsageTracker` (per agent, kept on each provider as `provider.usage`). Tokens are taken from the endpoint when it reports them; otherwise they are estimated conservatively as ceil(chars / 3) and flagged.
+- `ProviderAgent` records every call, successful or not, and `AgentStrategy` reports every cache lookup. Each call's record is stored in the signal metadata (`llm`), and `usage_from_signals` rebuilds the usage of stored runs.
+- The CLI prints usage after `backtest`, `sweep`, `walkforward` and `experiment`, and in `agent-report`.
+- Tests: hits and misses across runs, latency with a fake clock, reported versus estimated tokens, failures, retries and invalid answers, stored usage equal to the tracker, and the CLI output.
+
+### Stage 9F: Agent smoke test ✅
+- `smoke.py` plus `trading-lab agent-test [qwen | qwen_trend | qwen_momentum | qwen_risk | llm_analyst]`. It shows which environment variables are set (the token is never shown), sends one tiny prompt, validates the structured answer and prints the model, latency, attempts and tokens. Agent tests ask the real agent about the latest closed candle (public or `--synthetic` data); the risk agent sees a flat simulated portfolio. Live mode, a throw-away cache, no database, no orders.
+- Tests (mocked credentials): success, missing variables, malformed, unauthorised and non-JSON answers, each agent, unknown targets. Any attempt to submit an order fails the test.
+
+### Stage 9G: Qwen agents in live paper trading ✅
+- `LivePaperTrader` evaluates strategies only for the candles that closed since the last cycle (`generate_signals_at`). Portfolio-aware agents are evaluated inside the session with the live portfolio view, and the trader accepts a shared `llm_provider`.
+- The session state persists recent stop-outs (`stop_events`) next to the breakers, working limit orders, scheduled orders and last prices, so the risk agent's context is identical after `--resume`.
+- Tests: live with three mocked agents equals the backtest and asks only about traded bars on decision bars; stop and resume equals an uninterrupted run (fills, every decision, breakers, working limits, stop-outs, no repeated question), with market and limit entries; a crash after the agents answered leaves nothing behind, and the restart reuses the cached answers and duplicates no order; model failures become HOLD while trading continues; live mode never re-asks processed bars across a resume.
+
+### Stage 10A: Dashboard data layer ✅
+- `dashboard/data.py`, `DashboardData`: a read-only facade over the SQLite history covering the overview (equity, cash, realized/unrealized PnL, current and max drawdown, daily PnL, exposure, breakers from saved state or decisions), open positions rebuilt from fills, working orders, equity curve with drawdown and a buy & hold benchmark computed from stored bars, recent trades, fills and signals, the latest decision (every vote, the ensemble, the actions taken), latest agent rationales, attribution, model usage, and research results. Everything is JSON-safe, and `snapshot()` returns it all at once.
+- `SQLiteStore(readonly=True)` uses SQLite's read-only URI mode and never migrates. Stores now wait up to 30 s for locks, and signal queries can be filtered by time and strategy.
+- CLI: `trading-lab dashboard-data [RUN_ID] [--json]`.
+- Tests: the snapshot matches the run (equity, return, drawdown, positions, benchmark, votes, rationales, attribution, usage); the paper-run state, breakers and working orders; reading leaves the file byte-identical; writes fail; old databases are read without migrating; the dashboard source contains no write or order paths.
+
+### Stage 10B: Read-only web dashboard ✅
+- `dashboard/app.py` (Streamlit, the optional `[dashboard]` extra) is built only on `DashboardData`. Sections: portfolio tiles with breaker banners, equity versus buy & hold, drawdown, open positions and working orders, the latest decision with every vote and the ensemble, AI rationale cards, the agent performance leaderboard, research (metrics and saved experiments), Qwen usage, recent trades and signals. Auto-refresh uses a Streamlit fragment, and the sidebar holds view controls only.
+- CLI: `trading-lab dashboard [--host 127.0.0.1] [--port 8501]` launches Streamlit with `TRADING_LAB_DB` set.
+- Tests (Streamlit AppTest, headless): every section renders; the database is byte-identical afterwards; no buttons or inputs exist; the kill-switch banner shows; empty and missing databases are handled; the launcher's command and environment are correct.
+
+### Stage 10C: VM-friendly 24/7 operation ✅
+- `deploy/systemd/trading-lab-paper.service` (loads `/etc/trading-lab/trading-lab.env`, `paper --run-id`, SIGTERM, restart on failure, hardened, writes only data and logs) and `trading-lab-dashboard.service` (no secrets, 127.0.0.1, read-only paths). These are templates; nothing is installed automatically.
+- `deploy/trading-lab.env.example` holds placeholders only. `.env`, `*.env` and `.env.*` are git-ignored, except the examples.
+- `paper --run-id NAME` resumes the run or starts it. The global `--log-file` and `--log-level` write a rotating log file that mirrors paper activity. `run_forever(stop_event=…)` and a SIGTERM handler let the current cycle finish, save and mark the run `stopped`.
+- `docs/DEPLOYMENT.md`: install, secrets, agent-test, configuration, the services, the SSH tunnel for the dashboard, file locations, stopping/restarting/resuming, backups and updates, and a security checklist.
+- Tests: named runs, run-id validation, the log file, the stop event, SIGTERM through the CLI, the unit templates, placeholder-only secrets, git-ignore rules, and guide coverage.
+
+### Stage 10D: Failure recovery ✅
+- Model endpoint circuit breaker (`[agents] failure_threshold`, `failure_cooldown_seconds`). After N failed calls in a row, calls are paused (`ProviderUnavailableError`, no request sent, agents vote HOLD at once), then a single probe call is made. Usage reports count paused calls as `skipped`.
+- Live trader: exchange or network outages (`DataError`, `OSError`) leave the state untouched and are retried with exponential back-off (at most 15 minutes). If a cycle's transaction fails with an SQLite operational error, the trader reloads its state from the database and retries the same bars, reusing cached answers. Each cycle records `health` (last check, consecutive errors, last error) in the run state. `CycleReport.agent_errors` counts HOLDs caused by failures.
+- The CLI reports retries and agent failures; the dashboard shows the last check time and an outage warning.
+- `docs/FAILURE_RECOVERY.md` lists every failure, what happens, and whether it is recovered or stops the process.
+- Tests: the breaker opens, probes, recovers and can be disabled; paused agents vote HOLD and count as skipped; data outages back off (DataError, connection reset, timeout) and recover; the back-off cap; a locked database mid-cycle gives no lost or duplicate orders or decisions and no repeated question; health in the dashboard; guide coverage.
+
+### Stage 10E: Reproducible AI experiment protocol ✅
+- `docs/EXPERIMENT_PROTOCOL.md` covers:
+  - the hypotheses and experiments A–D (baseline, + Trend, + Trend + Momentum, + all three) on identical periods, costs, liquidity, breakers and voting;
+  - a record-then-replay walk-forward procedure and the metrics to report;
+  - a decision rule fixed in advance (majority of folds with a sign test, a higher compounded out-of-sample return, a drawdown limit, a minimum number of trades, a second period, and a Bonferroni correction);
+  - the pitfalls, including look-ahead through the model's training data.
+- `research/protocol.py`: `summarize` (per variant: compounded out-of-sample return, benchmark, worst-window drawdown, mean Sharpe and profit factor, trades, exposure, folds won against the baseline) and `sign_test_p`. `experiment --walkforward` prints them and saves or exports them.
+- Tests: the sign-test values quoted in the protocol, fold-by-fold comparison (ties and undefined values skipped, infinite profit factors not averaged), CLI output, saved and exported comparisons, and document coverage.
+
+## 4. Stage 9/10 status summary
+
+The Stage 6 agent framework is now a multi-agent paper-trading research system on the teacher's Qwen endpoint. The architecture is provider-agnostic: a new provider is one `LLMProvider` subclass.
+
+| | |
+|---|---|
+| Provider | `llm/`: OpenAI-compatible client. URL, model and token from environment variables only. Timeouts, retries, a circuit breaker, redaction, usage tracking |
+| Agents | `qwen_trend`, `qwen_momentum` (market-only, so answers are shared across experiments), `qwen_risk` (portfolio-aware). Strict JSON with labels; anything else is HOLD; signals only |
+| Integration | Backtests, sweeps, walk-forward, experiments and live paper trading. Record, replay and live modes. Agents are asked only about traded bars, decision bars and new candles |
+| Measurement | `agent-report` (attribution), `experiment` (baseline versus AI, out-of-sample comparison and sign test), usage accounting |
+| Operations | `agent-test`, read-only data layer and Streamlit dashboard, systemd templates, environment file, `--run-id`, log file, SIGTERM, failure recovery |
+| Safety | The voting engine, breakers, risk manager and paper executor sit between every agent and every simulated trade. No exchange keys or private endpoints (the safety scans still pass). No hard-coded tokens. The dashboard cannot write |
+
+Trade-offs worth knowing:
+- `qwen_risk`'s answers depend on the trading path, so each experiment variant asks it new questions. The other two agents can be made portfolio-aware with `portfolio_context = true`, at the same cost.
+- An LLM may have seen historical prices during training. Final out-of-sample claims need periods after the model's training cutoff, and ultimately the live paper run (see the protocol).
+- `weight = 0` now means a strategy does not take part at all. Before, a zero-weight vote still counted towards `min_agreeing`.
+
 ### Later
-Short positions, trailing stops, an LLM-backed agent (needs an LLM API key, never exchange keys), order-book data, and dashboards.
+Short positions, trailing stops, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and alerting on breaker trips or long outages.

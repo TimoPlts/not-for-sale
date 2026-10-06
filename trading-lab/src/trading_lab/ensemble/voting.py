@@ -41,7 +41,7 @@ class VotingEngine:
 
     @classmethod
     def from_specs(cls, specs: Iterable[StrategySpec], config: VotingConfig) -> VotingEngine:
-        return cls({s.name: s.weight for s in specs if s.enabled}, config)
+        return cls({s.name: s.weight for s in specs if s.enabled and s.weight > 0}, config)
 
     @property
     def weights(self) -> Mapping[str, float]:

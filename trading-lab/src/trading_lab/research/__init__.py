@@ -1,5 +1,23 @@
-"""Research tools: parameter sweeps and walk-forward evaluation."""
+"""Research tools: parameter sweeps, walk-forward evaluation and agent attribution."""
 
+from trading_lab.research.attribution import (
+    Attribution,
+    CalibrationBucket,
+    attribute,
+    attribute_result,
+    attribute_run,
+    format_attribution,
+)
+from trading_lab.research.experiments import (
+    AGENT_STRATEGIES,
+    DEFAULT_VARIANTS,
+    VARIANTS,
+    ExperimentRow,
+    run_experiment,
+    variant_config,
+    variant_overrides,
+)
+from trading_lab.research.protocol import VariantSummary, sign_test_p, summarize
 from trading_lab.research.sweep import (
     MemoizedProvider,
     SweepResult,
@@ -16,6 +34,22 @@ from trading_lab.research.walkforward import (
 )
 
 __all__ = [
+    "VariantSummary",
+    "sign_test_p",
+    "summarize",
+    "AGENT_STRATEGIES",
+    "DEFAULT_VARIANTS",
+    "VARIANTS",
+    "ExperimentRow",
+    "run_experiment",
+    "variant_config",
+    "variant_overrides",
+    "Attribution",
+    "CalibrationBucket",
+    "attribute",
+    "attribute_result",
+    "attribute_run",
+    "format_attribution",
     "MemoizedProvider",
     "SweepResult",
     "WalkForwardFold",

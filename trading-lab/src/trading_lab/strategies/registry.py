@@ -29,6 +29,10 @@ def available_strategies() -> tuple[str, ...]:
     return tuple(sorted(_REGISTRY))
 
 
+def strategy_class(name: str) -> type[Strategy] | None:
+    return _REGISTRY.get(name)
+
+
 def create_strategy(name: str, params: Mapping[str, Any] | None = None) -> Strategy:
     try:
         cls = _REGISTRY[name]

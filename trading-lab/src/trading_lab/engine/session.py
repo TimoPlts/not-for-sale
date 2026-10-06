@@ -31,13 +31,20 @@ period:
 ``open_bar`` only touches scheduled orders, so calling it again for the same
 bar is harmless. Every output (signals, decisions, execution reports,
 snapshots) is appended to lists that callers can read or ``drain()``.
+
+Signals passed to ``close_bar`` are either ready ``Signal`` objects or
+callables ``f(portfolio_view) -> Signal`` for strategies that look at the
+portfolio (``Strategy.uses_portfolio``). Callables are evaluated after stops,
+marks and circuit breakers for the bar, with a read-only, JSON-safe view of
+the simulated portfolio (``portfolio_view``). They can only return a signal;
+the voting engine, breakers, risk manager and executor decide the rest.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence, Union
 
 from trading_lab.config import AppConfig
 from trading_lab.core.models import (
@@ -61,6 +68,10 @@ from trading_lab.risk.breakers import BreakerState, CircuitBreakers
 
 PORTFOLIO = "PORTFOLIO"  # symbol used for portfolio-level decisions
 _DUST = 1e-12
+RECENT_STOP_BARS = 24  # window for "recent stop-outs" in the portfolio view
+
+# A ready signal, or a function of the portfolio view that returns one.
+SignalSource = Union[Signal, Callable[[Mapping[str, Any]], Signal]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +161,7 @@ class SessionRecords:
     reports: list[ExecutionReport] = field(default_factory=list)
     snapshots: list[PortfolioSnapshot] = field(default_factory=list)
     in_market: list[bool] = field(default_factory=list)
+    bars: list[tuple[datetime, str, Bar]] = field(default_factory=list)  # every closed bar seen
 
 
 class TradingSession:
@@ -165,6 +177,7 @@ class TradingSession:
         last_close: Mapping[str, float] | None = None,
         breaker_state: BreakerState | None = None,
         resting: Mapping[str, RestingLimit] | None = None,
+        stop_events: Sequence[tuple[datetime, str]] | None = None,
     ) -> None:
         self.config = config
         self.voting = voting
@@ -188,6 +201,8 @@ class TradingSession:
         self.pending: dict[str, Intent] = dict(pending or {})
         self.resting: dict[str, RestingLimit] = dict(resting or {})
         self.last_close: dict[str, float] = dict(last_close or {})
+        self.stop_events: list[tuple[datetime, str]] = list(stop_events or [])
+        self._bar = timeframe_delta(config.market.timeframe)
         self.records = SessionRecords()
         self._order = {s: i for i, s in enumerate(config.market.symbols)}
 
@@ -236,7 +251,7 @@ class TradingSession:
         self,
         ts: datetime,
         bars: Mapping[str, Bar],
-        strategy_signals: Mapping[str, Sequence[Signal]],
+        strategy_signals: Mapping[str, Sequence[SignalSource]],
         stats: Mapping[str, MarketStats | None] | None = None,
     ) -> None:
         """Limit fills, stop-losses, mark to market, circuit breakers, new signals."""
@@ -256,9 +271,13 @@ class TradingSession:
                     f"stop {stop:.8g} hit (bar low {bar.low:.8g})", None, stats.get(sym),
                 )
                 self.breakers.on_stop_loss(sym, ts)
+                self.stop_events.append((ts, sym))
+        horizon = ts - RECENT_STOP_BARS * self._bar
+        self.stop_events = [(t, s) for t, s in self.stop_events if t > horizon]
 
-        for sym, bar in bars.items():
-            self.last_close[sym] = bar.close
+        for sym in self._sorted(bars):
+            self.last_close[sym] = bars[sym].close
+            self.records.bars.append((ts, sym, bars[sym]))
         snapshot = self.portfolio.snapshot(self.last_close, ts)
         self.records.snapshots.append(snapshot)
         self.records.in_market.append(bool(self.portfolio.positions))
@@ -273,11 +292,54 @@ class TradingSession:
                 self._flatten(ts)
 
         for sym in self._sorted(bars):
-            strat_sigs = list(strategy_signals[sym])
+            sources = strategy_signals[sym]
+            view = (
+                self.portfolio_view(sym, ts) if any(not isinstance(s, Signal) for s in sources) else None
+            )
+            strat_sigs = [s if isinstance(s, Signal) else s(view) for s in sources]  # type: ignore[arg-type]
             ensemble = self.voting.combine(strat_sigs)
             self.records.signals.extend(strat_sigs)
             self.records.signals.append(ensemble)
             self._schedule(sym, ts, ensemble)
+
+    def portfolio_view(self, sym: str, ts: datetime) -> dict[str, Any]:
+        """Read-only, rounded summary of the simulated portfolio at the close of bar ``ts``.
+
+        Values are rounded coarsely so that agents asked about similar
+        situations get identical contexts (and cache keys).
+        """
+        snapshot = self.portfolio.snapshot(self.last_close, ts)
+        equity = snapshot.equity
+        state = self.breakers.state
+        position = self.portfolio.position(sym)
+        view: dict[str, Any] = {"position": "long" if position is not None else "flat"}
+        if position is not None:
+            price = self.last_close.get(sym, position.avg_entry_price)
+            view["position_return_pct"] = round(position.unrealized_pnl(price) / position.cost_basis * 100, 1)
+            view["position_bars_held"] = max(0, int((ts - position.opened_at) / self._bar) + 1)
+            if position.stop_price is not None and price > 0:
+                view["stop_distance_pct"] = round((price - position.stop_price) / price * 100, 1)
+        blocked = self.breakers.entry_block_reason(sym, ts + self._bar)
+        view.update({
+            "exposure_pct": round(snapshot.positions_value / equity * 100) if equity > 0 else 0,
+            "open_positions": snapshot.open_positions,
+            "max_open_positions": self.config.risk.max_open_positions,
+            "drawdown_pct": round(max(0.0, 1.0 - equity / state.peak_equity) * 100, 1)
+            if state.peak_equity > 0 else 0.0,
+            "daily_pnl_pct": round((equity / state.day_start_equity - 1.0) * 100, 1)
+            if state.day_start_equity > 0 else 0.0,
+            f"stop_outs_last_{RECENT_STOP_BARS}_bars": len(self.stop_events),
+            f"symbol_stop_outs_last_{RECENT_STOP_BARS}_bars": sum(s == sym for _, s in self.stop_events),
+            "kill_switch_active": self.breakers.halted,
+            "new_entries_blocked": blocked is not None,
+        })
+        if blocked is not None:
+            view["block_reason"] = (
+                "daily loss limit" if blocked.startswith("circuit breaker: daily")
+                else "kill switch" if blocked.startswith("circuit breaker")
+                else "stop-loss cooldown"
+            )
+        return view
 
     def expire_pending(self, ts: datetime) -> None:
         for sym in self._sorted(self.pending):

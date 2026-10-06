@@ -98,4 +98,27 @@ def bollinger_bands(close: pd.Series, period: int = 20, num_std: float = 2.0) ->
     )
 
 
-__all__ = ["bollinger_bands", "ema", "macd", "rsi"]
+def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
+    """Average True Range with Wilder's smoothing.
+
+    True range = max(high - low, |high - previous close|, |low - previous close|).
+    The first value (at bar ``period - 1``) is the simple mean of the first
+    ``period`` true ranges; after that ``atr = (prev * (period - 1) + tr) / period``.
+    """
+    _check_period("period", period)
+    prev_close = close.shift(1)
+    true_range = pd.concat(
+        [high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1
+    ).max(axis=1, skipna=True)
+    values = true_range.to_numpy(dtype="float64")
+    out = np.full(values.size, np.nan)
+    if values.size >= period:
+        current = values[:period].mean()
+        out[period - 1] = current
+        for i in range(period, values.size):
+            current = (current * (period - 1) + values[i]) / period
+            out[i] = current
+    return pd.Series(out, index=close.index, name="atr")
+
+
+__all__ = ["atr", "bollinger_bands", "ema", "macd", "rsi"]

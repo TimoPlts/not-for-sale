@@ -46,6 +46,7 @@ from trading_lab.engine import Bar, TradingSession
 from trading_lab.ensemble import VotingEngine
 from trading_lab.execution import CostModel
 from trading_lab.execution.costs import market_stats_frame, stats_series
+from trading_lab.llm import LLMProvider
 from trading_lab.metrics import PerformanceMetrics, compute_metrics
 from trading_lab.metrics.benchmark import buy_and_hold_equity
 from trading_lab.storage import SQLiteStore
@@ -79,6 +80,14 @@ class BacktestResult:
     signals: tuple[Signal, ...]
     benchmark: PerformanceMetrics | None = None  # equal-weight buy and hold, same costs
     benchmark_curve: pd.Series | None = None
+    bars: tuple[tuple[datetime, str, Bar], ...] = ()  # (open time, symbol, OHLCV) inside the period
+
+    def closes(self) -> dict[str, pd.Series]:
+        """Close price per symbol over the period, indexed by candle open time."""
+        out: dict[str, dict[pd.Timestamp, float]] = {}
+        for ts, sym, bar in self.bars:
+            out.setdefault(sym, {})[pd.Timestamp(ts)] = bar.close
+        return {sym: pd.Series(values, name=sym).sort_index() for sym, values in sorted(out.items())}
 
     def stored_metrics(self) -> dict:
         data = self.metrics.to_dict()
@@ -119,15 +128,21 @@ class BacktestEngine:
         *,
         strategies: Sequence[Strategy] | None = None,
         store: SQLiteStore | None = None,
+        llm_provider: LLMProvider | None = None,
     ) -> None:
         self._config = config
         self._provider = provider
         self._store = store
         self._strategy_override = strategies is not None
         self._strategies = (
-            list(strategies) if strategies is not None else strategies_for(config)
+            list(strategies) if strategies is not None
+            else strategies_for(config, llm_provider=llm_provider)
         )
         self._voting = build_voting(config, self._strategies)
+
+    @property
+    def strategies(self) -> tuple[Strategy, ...]:
+        return tuple(self._strategies)
 
     # ------------------------------------------------------------------ data
     def _load(self, start: datetime, end: datetime) -> dict[str, pd.DataFrame]:
@@ -190,6 +205,7 @@ class BacktestEngine:
             store.add_execution_reports(run_id, result.reports)
             store.add_snapshots(run_id, result.snapshots)
             store.add_closed_trades(run_id, result.trades)
+            store.add_bars(run_id, result.bars)
             store.save_metrics(run_id, result.stored_metrics())
 
     def _simulate(self, start: datetime, end: datetime, run_id: str | None) -> BacktestResult:
@@ -197,14 +213,34 @@ class BacktestEngine:
         symbols = list(cfg.market.symbols)
         candles = self._load(start, end)
 
-        # Signals are computed in one vectorised pass per strategy. This is
-        # equivalent to bar-by-bar evaluation because indicators are causal
-        # (enforced by tests).
-        strategy_signals = {
-            sym: [s.generate_signals(sym, candles[sym]) for s in self._strategies]
+        start_ts = pd.Timestamp(start)
+        position = {sym: {ts: i for i, ts in enumerate(candles[sym].index)} for sym in symbols}
+        # Signals of pure strategies are computed in one vectorised pass per
+        # strategy, only for bars inside the period (agents are never asked about
+        # the warm-up history). This is equivalent to bar-by-bar evaluation because
+        # indicators are causal (enforced by tests). Strategies that look at the
+        # portfolio are evaluated bar by bar inside the session instead.
+        in_period = {
+            sym: [i for ts, i in position[sym].items() if ts >= start_ts] for sym in symbols
+        }
+        precomputed = {
+            sym: [
+                None if s.uses_portfolio
+                else dict(zip(in_period[sym], s.generate_signals_at(sym, candles[sym], in_period[sym])))
+                for s in self._strategies
+            ]
             for sym in symbols
         }
-        position = {sym: {ts: i for i, ts in enumerate(candles[sym].index)} for sym in symbols}
+
+        def sources(sym: str, i: int) -> list:  # type: ignore[type-arg]
+            out = []
+            for strategy, signals in zip(self._strategies, precomputed[sym]):
+                if signals is None:
+                    out.append(lambda view, s=strategy: s.signal_at(sym, candles[sym], i, view))
+                else:
+                    out.append(signals[i])
+            return out
+
         ohlcv = {
             sym: tuple(frame[c].to_numpy() for c in ("open", "high", "low", "close", "volume"))
             for sym, frame in candles.items()
@@ -214,7 +250,6 @@ class BacktestEngine:
             sym: stats_series(market_stats_frame(frame, lookback)) for sym, frame in candles.items()
         }
 
-        start_ts = pd.Timestamp(start)
         timeline = sorted(
             set().union(*(frame.index[frame.index >= start_ts] for frame in candles.values()))
         )
@@ -235,10 +270,7 @@ class BacktestEngine:
             bars = {sym: Bar(*(float(col[i]) for col in ohlcv[sym])) for sym, i in idx.items()}
             stats = {sym: market_stats[sym][i] for sym, i in idx.items()}
             session.open_bar(ts, {sym: bar.open for sym, bar in bars.items()}, stats)
-            session.close_bar(
-                ts, bars, {sym: [per_bar[i] for per_bar in strategy_signals[sym]] for sym, i in idx.items()},
-                stats,
-            )
+            session.close_bar(ts, bars, {sym: sources(sym, i) for sym, i in idx.items()}, stats)
 
         last_ts = timeline[-1].to_pydatetime()
         session.expire_pending(last_ts)
@@ -279,4 +311,5 @@ class BacktestEngine:
             signals=tuple(records.signals),
             benchmark=benchmark,
             benchmark_curve=benchmark_curve,
+            bars=tuple(records.bars),
         )

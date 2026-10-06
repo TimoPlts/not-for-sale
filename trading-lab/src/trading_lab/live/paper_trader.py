@@ -25,6 +25,8 @@ carries on.
 
 from __future__ import annotations
 
+import sqlite3
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -42,6 +44,7 @@ from trading_lab.data.base import MarketDataProvider, timeframe_delta
 from trading_lab.engine import Bar, Intent, TradingSession
 from trading_lab.engine.session import RestingLimit
 from trading_lab.execution.costs import market_stats_frame, next_bar_stats, stats_series
+from trading_lab.llm import LLMProvider
 from trading_lab.portfolio import Portfolio
 from trading_lab.risk.breakers import BreakerState
 from trading_lab.reporting import run_metrics
@@ -51,6 +54,7 @@ from trading_lab.strategy_factory import strategies_for
 
 RUN_KIND = "paper"
 _GRACE = timedelta(seconds=5)  # wait a little after a candle closes before fetching it
+MAX_ERROR_BACKOFF_SECONDS = 900.0  # longest wait between retries during an outage
 
 
 def _utcnow() -> datetime:
@@ -67,6 +71,7 @@ class CycleReport:
     equity: float | None
     error: str | None = None
     warning: str | None = None
+    agent_errors: int = 0  # agent decisions in this cycle without a usable answer (voted HOLD)
 
 
 class LivePaperTrader:
@@ -80,13 +85,15 @@ class LivePaperTrader:
         clock: Callable[[], datetime] = _utcnow,
         run_id: str | None = None,
         notes: str = "",
+        llm_provider: LLMProvider | None = None,
     ) -> None:
         self._config = config
         self._provider = provider
         self._store = store
         self._clock = clock
         self._strategies = (
-            list(strategies) if strategies is not None else strategies_for(config)
+            list(strategies) if strategies is not None
+            else strategies_for(config, llm_provider=llm_provider)
         )
         self._voting = build_voting(config, self._strategies)
         self._step = timeframe_delta(config.market.timeframe)
@@ -111,6 +118,8 @@ class LivePaperTrader:
             self._session = TradingSession(config, self._voting, id_prefix="pp")
             self._last_processed: pd.Timestamp | None = None
             self._persisted_trades = 0
+        self.consecutive_errors = 0
+        self._last_error: str | None = None
 
     # ------------------------------------------------------------ lifecycle
     @classmethod
@@ -151,6 +160,7 @@ class LivePaperTrader:
             last_close=state.get("last_close", {}),
             breaker_state=BreakerState.from_json(state["breakers"]) if "breakers" in state else None,
             resting={s: RestingLimit.from_json(v) for s, v in state.get("resting", {}).items()},
+            stop_events=[(datetime.fromisoformat(t), sym) for t, sym in state.get("stop_events", [])],
         )
         last = state.get("last_processed")
         self._last_processed = pd.Timestamp(last) if last else None
@@ -192,6 +202,12 @@ class LivePaperTrader:
             "order_sequence": self._session.executor.sequence,
             "breakers": self._session.breakers.state.to_json(),
             "resting": {s: order.to_json() for s, order in self._session.resting.items()},
+            "stop_events": [[t.isoformat(), sym] for t, sym in self._session.stop_events],
+            "health": {
+                "last_cycle_at": ensure_utc(self._clock()).isoformat(),
+                "consecutive_errors": self.consecutive_errors,
+                "last_error": self._last_error,
+            },
         }
 
     # ------------------------------------------------------------------ cycle
@@ -205,12 +221,12 @@ class LivePaperTrader:
 
         try:
             candles = {sym: self._provider.fetch_ohlcv(sym, tf, since) for sym in cfg.market.symbols}
-        except DataError as exc:
-            return CycleReport(now, 0, self.last_processed, (), (), self._equity(), error=str(exc))
+        except (DataError, OSError) as exc:  # exchange or network outage: nothing processed, retry later
+            return self._failed_cycle(now, f"market data unavailable: {exc}")
 
         timeline = sorted(set().union(*(frame.index for frame in candles.values())))
         if not timeline:
-            return CycleReport(now, 0, None, (), (), self._equity(), error="no closed candles available")
+            return self._failed_cycle(now, "no closed candles available")
         if self._last_processed is None:
             new_bars = timeline[-1:]  # start trading from the most recent closed candle
         else:
@@ -222,11 +238,32 @@ class LivePaperTrader:
 
         fills_before = len(self.portfolio.fills)
         if new_bars:
-            signals = {
-                sym: [s.generate_signals(sym, candles[sym]) for s in self._strategies]
+            position = {sym: {ts: i for i, ts in enumerate(candles[sym].index)} for sym in candles}
+            # Strategies are evaluated for the new bars only: an AI agent is never asked
+            # again about bars processed in earlier cycles (or before a resume).
+            # Portfolio-aware strategies are evaluated inside the session, bar by bar.
+            new_positions = {
+                sym: [i for t in new_bars if (i := position[sym].get(t)) is not None]
                 for sym in cfg.market.symbols
             }
-            position = {sym: {ts: i for i, ts in enumerate(candles[sym].index)} for sym in candles}
+            precomputed = {
+                sym: [
+                    None if s.uses_portfolio
+                    else dict(zip(new_positions[sym], s.generate_signals_at(sym, candles[sym], new_positions[sym])))
+                    for s in self._strategies
+                ]
+                for sym in cfg.market.symbols
+            }
+
+            def sources(sym: str, i: int) -> list:  # type: ignore[type-arg]
+                out = []
+                for strategy, ready in zip(self._strategies, precomputed[sym]):
+                    if ready is None:
+                        out.append(lambda view, s=strategy: s.signal_at(sym, candles[sym], i, view))
+                    else:
+                        out.append(ready[i])
+                return out
+
             lookback = cfg.execution.volume_lookback
             market_stats = {
                 sym: stats_series(market_stats_frame(frame, lookback)) for sym, frame in candles.items()
@@ -240,10 +277,7 @@ class LivePaperTrader:
                 }
                 stats = {sym: market_stats[sym][i] for sym, i in idx.items()}
                 self._session.open_bar(ts, {sym: b.open for sym, b in bars.items()}, stats)
-                self._session.close_bar(
-                    ts, bars, {sym: [per_bar[i] for per_bar in signals[sym]] for sym, i in idx.items()},
-                    stats,
-                )
+                self._session.close_bar(ts, bars, {sym: sources(sym, i) for sym, i in idx.items()}, stats)
                 self._last_processed = t
 
         # Fill freshly scheduled orders at the open of the candle that just started.
@@ -258,7 +292,7 @@ class LivePaperTrader:
             for sym in cfg.market.symbols:
                 try:
                     price = self._provider.current_open(sym, tf, next_bar.to_pydatetime())
-                except DataError:
+                except (DataError, OSError):
                     price = None
                 if price is not None:
                     opens[sym] = price
@@ -269,15 +303,34 @@ class LivePaperTrader:
 
         records = self._session.drain()
         new_trades = self.portfolio.closed_trades[self._persisted_trades :]
-        with self._store.atomic():
-            self._store.add_signals(self.run_id, records.signals)
-            self._store.add_decisions(self.run_id, records.decisions)
-            self._store.add_execution_reports(self.run_id, records.reports)
-            self._store.add_snapshots(self.run_id, records.snapshots)
-            self._store.add_closed_trades(self.run_id, new_trades)
-            self._store.save_state(self.run_id, self._state())
+        errors_before = (self.consecutive_errors, self._last_error)
+        self.consecutive_errors, self._last_error = 0, None
+        try:
+            with self._store.atomic():
+                self._store.add_signals(self.run_id, records.signals)
+                self._store.add_decisions(self.run_id, records.decisions)
+                self._store.add_execution_reports(self.run_id, records.reports)
+                self._store.add_snapshots(self.run_id, records.snapshots)
+                self._store.add_closed_trades(self.run_id, new_trades)
+                self._store.add_bars(self.run_id, records.bars)
+                self._store.save_state(self.run_id, self._state())
+        except sqlite3.OperationalError as exc:
+            # Nothing of this cycle was saved (one transaction), but the in-memory
+            # session already moved on. Never continue from a state the database does
+            # not have: reload it, so the same bars are processed again next cycle.
+            self.consecutive_errors, self._last_error = errors_before
+            self._reload()
+            return self._failed_cycle(now, f"database error, state reloaded and bars will be retried: {exc}",
+                                      save_health=False)
+        except BaseException:
+            self.consecutive_errors, self._last_error = errors_before
+            raise
         self._persisted_trades += len(new_trades)
 
+        agent_errors = sum(
+            1 for sig in records.signals
+            if "error" in sig.metadata and "agent" in (sig.metadata.get("params") or {})
+        )
         return CycleReport(
             checked_at=now,
             new_bars=len(new_bars),
@@ -286,7 +339,26 @@ class LivePaperTrader:
             decisions=tuple(d for d in records.decisions if d.action is not DecisionAction.HOLD),
             equity=self._equity(),
             warning=warning,
+            agent_errors=agent_errors,
         )
+
+    def _failed_cycle(self, now: datetime, error: str, *, save_health: bool = True) -> CycleReport:
+        """A cycle that processed nothing; the trader state is unchanged and is retried later."""
+        self.consecutive_errors += 1
+        self._last_error = error
+        if save_health:
+            try:
+                self._store.save_state(self.run_id, self._state())
+            except sqlite3.OperationalError:
+                pass  # health is best effort; the trading state itself did not change
+        return CycleReport(now, 0, self.last_processed, (), (), self._equity(), error=error)
+
+    def _reload(self) -> None:
+        """Rebuild the trader from the database (after a failed save)."""
+        run = self._store.get_run(self.run_id)
+        if run is None:
+            raise RuntimeError(f"run {self.run_id} disappeared from the database")
+        self._restore(run)
 
     def _equity(self) -> float | None:
         try:
@@ -311,21 +383,35 @@ class LivePaperTrader:
         sleep: Callable[[float], None] = time.sleep,
         on_cycle: Callable[[CycleReport], None] | None = None,
         on_wait: Callable[[float], None] | None = None,
+        stop_event: threading.Event | None = None,
     ) -> int:
-        """Run cycles until ``max_cycles`` or Ctrl+C. Always leaves the run resumable."""
+        """Run cycles until ``max_cycles``, Ctrl+C or ``stop_event``. Always leaves the run resumable.
+
+        Setting ``stop_event`` (e.g. from a SIGTERM handler) lets the current
+        cycle finish and save, ends any wait at once, and stops the run cleanly.
+        """
         cycles = 0
         try:
-            while max_cycles is None or cycles < max_cycles:
+            while (max_cycles is None or cycles < max_cycles) and not (stop_event and stop_event.is_set()):
                 report = self.run_cycle()
                 cycles += 1
                 if on_cycle is not None:
                     on_cycle(report)
                 if max_cycles is not None and cycles >= max_cycles:
                     break
-                wait = poll_seconds if report.error else self.seconds_until_next_check(poll_seconds)
+                if report.error:  # outage: back off exponentially, up to 15 minutes
+                    wait = min(poll_seconds * 2 ** (self.consecutive_errors - 1), MAX_ERROR_BACKOFF_SECONDS)
+                    wait = max(wait, poll_seconds)
+                else:
+                    wait = self.seconds_until_next_check(poll_seconds)
+                if stop_event is not None and stop_event.is_set():
+                    break
                 if on_wait is not None:
                     on_wait(wait)
-                sleep(wait)
+                if stop_event is not None:
+                    stop_event.wait(wait)
+                else:
+                    sleep(wait)
         except KeyboardInterrupt:
             pass
         finally:

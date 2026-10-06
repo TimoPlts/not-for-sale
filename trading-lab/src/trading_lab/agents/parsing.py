@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Mapping, Sequence
 
 from trading_lab.agents.base import AgentResponse, AgentResponseError
 
@@ -18,12 +19,16 @@ Use "hold" with confidence 0 when the situation is unclear."""
 _FENCED = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
 
-def parse_agent_json(text: str) -> AgentResponse:
+def parse_agent_json(text: str, labels: Mapping[str, Sequence[str]] | None = None) -> AgentResponse:
     """Parse ``{"direction", "confidence", "rationale"}`` from model output.
 
     The JSON may be wrapped in a ```json fence, or surrounded by text as long
     as exactly one top-level object is present. Anything else raises
     ``AgentResponseError``. Nothing is guessed or repaired.
+
+    ``labels`` names extra required fields and their allowed values, e.g.
+    ``{"regime": ("bullish_trend", "sideways", ...)}``. They are matched
+    case-insensitively and returned in ``AgentResponse.extra``.
     """
     if not isinstance(text, str) or not text.strip():
         raise AgentResponseError("empty response")
@@ -40,10 +45,18 @@ def parse_agent_json(text: str) -> AgentResponse:
         raise AgentResponseError(f"invalid JSON: {exc}") from None
     if not isinstance(data, dict):
         raise AgentResponseError("response JSON must be an object")
-    missing = {"direction", "confidence"} - set(data)
+    required = {"direction", "confidence", *(labels or {})}
+    missing = required - set(data)
     if missing:
         raise AgentResponseError(f"response is missing {sorted(missing)}")
     direction = data["direction"]
     if isinstance(direction, str):
         direction = direction.strip().lower()
-    return AgentResponse(direction, data["confidence"], str(data.get("rationale", "")))
+    extra: dict[str, str] = {}
+    for field, allowed in (labels or {}).items():
+        value = data[field]
+        normalized = value.strip().lower() if isinstance(value, str) else value
+        if normalized not in allowed:
+            raise AgentResponseError(f"{field} must be one of {list(allowed)}, got {value!r}")
+        extra[field] = normalized
+    return AgentResponse(direction, data["confidence"], str(data.get("rationale", "")), extra)

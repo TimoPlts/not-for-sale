@@ -5,22 +5,57 @@ from __future__ import annotations
 from typing import Sequence
 
 import trading_lab.agents  # noqa: F401  (registers agent strategies)
-from trading_lab.agents import AgentStrategy, SQLiteResponseCache
+from trading_lab.agents import AgentStrategy, LLMProviderStrategy, SQLiteResponseCache
 from trading_lab.config import AppConfig
+from trading_lab.llm import LLMProvider, build_llm_provider
 from trading_lab.strategies import Strategy, build_strategies
+from trading_lab.strategies.registry import strategy_class
 
 
-def configure_agents(strategies: Sequence[Strategy], config: AppConfig) -> None:
-    """Give agent strategies the configured mode, timeframe and shared answer cache."""
+def configure_agents(
+    strategies: Sequence[Strategy], config: AppConfig, *, llm_provider: LLMProvider | None = None
+) -> None:
+    """Give agent strategies the configured mode, timeframe and shared answer cache.
+
+    LLM-backed strategies also share one provider, built from ``[agents]`` and
+    the environment unless ``llm_provider`` is given. Missing environment
+    variables fail here, before any run starts. In replay mode the model is
+    never called, so only the model name (part of the cache key) is required.
+    """
     agent_strategies = [s for s in strategies if isinstance(s, AgentStrategy)]
     if not agent_strategies:
         return
+    llm_strategies = [s for s in agent_strategies if isinstance(s, LLMProviderStrategy)]
+    if llm_strategies:
+        provider = llm_provider if llm_provider is not None else build_llm_provider(config.agents)
+        provider.check_ready(need_credentials=config.agents.mode != "replay")
+        for strategy in llm_strategies:
+            strategy.attach_provider(provider)
     cache = SQLiteResponseCache(config.agents.cache_path)
     for strategy in agent_strategies:
         strategy.configure(mode=config.agents.mode, cache=cache, timeframe=config.market.timeframe)
 
 
-def strategies_for(config: AppConfig) -> list[Strategy]:
+def strategies_for(config: AppConfig, *, llm_provider: LLMProvider | None = None) -> list[Strategy]:
     strategies = build_strategies(config.enabled_strategies)
-    configure_agents(strategies, config)
+    configure_agents(strategies, config, llm_provider=llm_provider)
     return strategies
+
+
+def needs_llm(config: AppConfig) -> bool:
+    """True if any strategy taking part is answered by the configured LLM provider."""
+    for spec in config.enabled_strategies:
+        cls = strategy_class(spec.name)
+        if cls is not None and issubclass(cls, LLMProviderStrategy):
+            return True
+    return False
+
+
+def shared_llm_provider(configs: Sequence[AppConfig]) -> LLMProvider | None:
+    """One provider for a series of runs (sweeps, experiments), checked before any run starts."""
+    using = [c for c in configs if needs_llm(c)]
+    if not using:
+        return None
+    provider = build_llm_provider(using[0].agents)
+    provider.check_ready(need_credentials=any(c.agents.mode != "replay" for c in using))
+    return provider

@@ -7,8 +7,14 @@
     trading-lab sweep    --param strategies.rsi.period=7,14,21 [--param ...] [--start/--end] [--metric M]
     trading-lab walkforward --param ... [--train-days 90] [--test-days 30]
     trading-lab compare  RUN_ID RUN_ID ...
+    trading-lab agent-report [RUN_ID] [--horizon N] [--all]
+    trading-lab experiment [--variants baseline,trend,...] [--walkforward] [--param ...]
+    trading-lab agent-test [qwen | qwen_trend | qwen_momentum | qwen_risk] [--synthetic SEED]
+    trading-lab dashboard-data [RUN_ID] [--json]
+    trading-lab dashboard [--host 127.0.0.1] [--port 8501]
 
-Global options (before the command): ``--config PATH`` and ``--db PATH``.
+Global options (before the command): ``--config PATH``, ``--db PATH`` and
+``--agent-mode record|replay|live``.
 
 Everything is simulated: market data comes from public endpoints and no
 order is ever sent to an exchange.
@@ -17,7 +23,11 @@ order is ever sent to an exchange.
 from __future__ import annotations
 
 import argparse
+import logging
+import re
+import signal
 import sys
+import threading
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -31,6 +41,43 @@ from trading_lab.core.models import DecisionAction
 from trading_lab.data import MarketDataProvider, SyntheticProvider, build_provider
 
 DEFAULT_CONFIG = "config/default.toml"
+RUN_ID_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+log = logging.getLogger("trading_lab.cli")
+
+
+def _configure_logging(level: str, log_file: str | None) -> None:
+    """Warnings (e.g. model retries) go to stderr; with --log-file, everything at ``level``
+    and above also goes to a size-rotated file (10 MB x 5)."""
+    import logging.handlers
+
+    root = logging.getLogger("trading_lab")
+    for handler in [h for h in root.handlers if getattr(h, "_trading_lab_cli", False)]:
+        root.removeHandler(handler)
+        handler.close()
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    console = logging.StreamHandler(sys.stderr)
+    console.setLevel(logging.WARNING)
+    console.setFormatter(fmt)
+    handlers: list[logging.Handler] = [console]
+    if log_file:
+        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file, maxBytes=10_000_000, backupCount=5, encoding="utf-8"
+        )
+        file_handler.setLevel(getattr(logging, level))
+        file_handler.setFormatter(fmt)
+        handlers.append(file_handler)
+    for handler in handlers:
+        handler._trading_lab_cli = True  # type: ignore[attr-defined]
+        root.addHandler(handler)
+    root.setLevel(min(logging.WARNING, getattr(logging, level)))
+
+
+def _say(message: str = "") -> None:
+    """Print to stdout and record it in the log file (if one is configured)."""
+    print(message)
+    if message.strip():
+        log.info(message.strip())
 
 
 # ----------------------------------------------------------------- helpers
@@ -57,6 +104,8 @@ def _load_config(args: argparse.Namespace) -> AppConfig:
         overrides["backtest"] = {"liquidate_at_end": True}
     if args.db:
         overrides["storage"] = {"db_path": args.db}
+    if getattr(args, "agent_mode", None):
+        overrides["agents"] = {"mode": args.agent_mode}
     return cfg.with_overrides(overrides) if overrides else cfg
 
 
@@ -76,6 +125,35 @@ def _fmt_num(value: Any) -> str:
 
 def _fmt_dd(value: Any) -> str:
     return "n/a" if value is None else f"{-value:.1%}"
+
+
+def _usage_title(provider_name: str | None, model: str | None = None) -> str:
+    name = (provider_name or "model").capitalize()
+    return f"{name} usage" + (f" ({model})" if model else "")
+
+
+def _print_signal_usage(signals: Any) -> None:
+    """Model usage per agent from signals (in memory or from a stored run)."""
+    from trading_lab.llm import usage_from_signals
+
+    pairs = [(s.strategy, s.metadata) for s in signals]
+    per_agent = usage_from_signals(pairs)
+    if not per_agent:
+        return
+    providers = {m["llm"].get("provider") for _, m in pairs if isinstance(m.get("llm"), dict)}
+    from trading_lab.llm import format_usage
+
+    print()
+    print(format_usage(per_agent, _usage_title(next(iter(providers)) if len(providers) == 1 else None)))
+
+
+def _print_provider_usage(llm: Any) -> None:
+    if llm is None or not llm.usage.per_agent:
+        return
+    from trading_lab.llm import format_usage
+
+    print()
+    print(format_usage(llm.usage.per_agent, _usage_title(llm.name, llm.model)))
 
 
 # ---------------------------------------------------------------- backtest
@@ -117,6 +195,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         print(f"({open_positions} position(s) still open at the end; counted in equity, not in trades)")
     print("\n=== Decisions ===")
     print(", ".join(f"{k}={v}" for k, v in sorted(result.actions().items())))
+    _print_signal_usage(result.signals)
 
     if args.export:
         out = Path(args.export)
@@ -146,11 +225,18 @@ def cmd_paper(args: argparse.Namespace) -> int:
     from trading_lab.storage import SQLiteStore
 
     cfg = _load_config(args)
+    if args.run_id is not None and not re.fullmatch(RUN_ID_PATTERN, args.run_id):
+        raise TradingLabError("--run-id may only contain letters, digits, '.', '_' and '-' (max 64)")
+    if args.run_id and args.resume:
+        raise TradingLabError("use either --run-id or --resume, not both")
     store = SQLiteStore(cfg.storage.db_path)
     try:
+        if args.run_id and store.get_run(args.run_id) is not None:
+            args.resume = args.run_id  # restart of a named run: continue it
         if args.resume:
             if args.symbols or args.timeframe:
-                raise TradingLabError("--symbols/--timeframe cannot be changed when resuming a run")
+                raise TradingLabError("--symbols/--timeframe cannot be changed when resuming a run "
+                                      "(the run keeps the config it was started with)")
             run = store.get_run(args.resume)
             if run is None:
                 raise TradingLabError(f"unknown run id {args.resume}")
@@ -161,10 +247,11 @@ def cmd_paper(args: argparse.Namespace) -> int:
                 seed = int(run["exchange"].split("-", 1)[1])
             stored_cfg = AppConfig.from_dict(run["config"])
             trader = LivePaperTrader.resume(store, args.resume, _provider(stored_cfg, seed))
-            print(f"Resuming paper run {trader.run_id}")
+            _say(f"Resuming paper run {trader.run_id}")
         else:
-            trader = LivePaperTrader(cfg, _provider(cfg, args.synthetic), store, notes=args.notes)
-            print(f"Started paper run {trader.run_id}")
+            trader = LivePaperTrader(cfg, _provider(cfg, args.synthetic), store, notes=args.notes,
+                                     run_id=args.run_id)
+            _say(f"Started paper run {trader.run_id}")
         tcfg = trader.config
         print(f"{tcfg.market.timeframe} candles | {', '.join(tcfg.market.symbols)} | "
               f"starting cash {tcfg.portfolio.initial_cash:,.2f} USDT | simulated fills only")
@@ -174,10 +261,13 @@ def cmd_paper(args: argparse.Namespace) -> int:
         def on_cycle(report: CycleReport) -> None:
             stamp = f"[{report.checked_at:%Y-%m-%d %H:%M:%S} UTC]"
             if report.error:
-                print(f"{stamp} data error, will retry: {report.error}")
+                _say(f"{stamp} cycle not processed, will retry (attempt {trader.consecutive_errors}): "
+                     f"{report.error}")
                 return
+            if report.agent_errors:
+                _say(f"{stamp} {report.agent_errors} agent answer(s) unavailable this cycle; they voted HOLD")
             if report.warning:
-                print(f"{stamp} warning: {report.warning}")
+                _say(f"{stamp} warning: {report.warning}")
             for d in report.decisions:
                 if d.action in (DecisionAction.ENTER, DecisionAction.EXIT, DecisionAction.STOP_LOSS,
                                 DecisionAction.REJECTED, DecisionAction.ENTER_SIGNAL,
@@ -187,26 +277,37 @@ def cmd_paper(args: argparse.Namespace) -> int:
                         detail = f" qty={d.quantity:.8g} @ ~{d.reference_price:,.6g}"
                     if d.stop_price is not None:
                         detail += f" stop={d.stop_price:,.6g}"
-                    print(f"{stamp} {d.timestamp:%m-%d %H:%M} {d.symbol:<10} "
+                    _say(f"{stamp} {d.timestamp:%m-%d %H:%M} {d.symbol:<10} "
                           f"{d.action.value.upper():<12}{detail}  ({d.reason})")
             p = trader.portfolio
             held = ", ".join(f"{s} {pos.quantity:.6g}" for s, pos in p.positions.items()) or "none"
             equity = "n/a" if report.equity is None else f"{report.equity:,.2f}"
             last = "-" if report.last_bar is None else f"{report.last_bar:%Y-%m-%d %H:%M}"
-            print(f"{stamp} new candles={report.new_bars} last={last} | equity {equity} | "
+            _say(f"{stamp} new candles={report.new_bars} last={last} | equity {equity} | "
                   f"cash {p.cash:,.2f} | positions: {held}")
 
         def on_wait(seconds: float) -> None:
             wake = datetime.now(timezone.utc) + timedelta(seconds=seconds)
             print(f"   next check at {wake:%H:%M:%S} UTC")
 
-        trader.run_forever(
-            poll_seconds=args.poll,
-            max_cycles=1 if args.once else args.max_cycles,
-            on_cycle=on_cycle,
-            on_wait=on_wait,
-        )
-        print(f"\nPaper run {trader.run_id} stopped. Resume with: trading-lab paper --resume {trader.run_id}")
+        stop_event = threading.Event()
+
+        def request_stop(signum: int, frame: Any) -> None:
+            _say(f"received signal {signum}: finishing the current cycle, then stopping")
+            stop_event.set()
+
+        previous = signal.signal(signal.SIGTERM, request_stop)  # systemctl stop / kill
+        try:
+            trader.run_forever(
+                poll_seconds=args.poll,
+                max_cycles=1 if args.once else args.max_cycles,
+                on_cycle=on_cycle,
+                on_wait=on_wait,
+                stop_event=stop_event,
+            )
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+        _say(f"\nPaper run {trader.run_id} stopped. Resume with: trading-lab paper --resume {trader.run_id}")
         print(f"Report:  trading-lab report {trader.run_id}")
     finally:
         store.close()
@@ -346,6 +447,14 @@ def _period(args: argparse.Namespace, default_days: int) -> tuple[datetime, date
     return start, end
 
 
+def _grid_llm(cfg: AppConfig, grid: dict[str, list[Any]]) -> Any:
+    """One LLM provider for every combination, checked before the first backtest."""
+    from trading_lab.research import apply_params, expand_grid
+    from trading_lab.strategy_factory import shared_llm_provider
+
+    return shared_llm_provider([apply_params(cfg, params) for params in expand_grid(grid)])
+
+
 def _short(params: dict[str, Any]) -> str:
     return " ".join(f"{k.split('.', 1)[-1]}={v}" for k, v in params.items())
 
@@ -364,10 +473,11 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     print(f"Sweep: {combos} backtests | {start:%Y-%m-%d} -> {end:%Y-%m-%d} | {cfg.market.timeframe} | "
           f"ranked by {args.metric} | data: {provider.name}")
 
+    llm = _grid_llm(cfg, grid)
     store = SQLiteStore(cfg.storage.db_path) if args.save else None
     try:
         results = run_sweep(
-            cfg, provider, start, end, grid, metric=args.metric, store=store,
+            cfg, provider, start, end, grid, metric=args.metric, store=store, llm_provider=llm,
             progress=lambda n, total, params: print(f"  [{n}/{total}] {_short(params)}"),
         )
     finally:
@@ -385,6 +495,7 @@ def cmd_sweep(args: argparse.Namespace) -> int:
         print(f"\nBuy & hold over the same period: {bench.total_return:+.2%} "
               f"(max drawdown {-bench.max_drawdown:.1%})")
     print("\nNote: the best in-sample row is optimistic by construction; use walkforward to check it.")
+    _print_provider_usage(llm)
     if args.export:
         rows = [{**r.params, **r.metrics.to_dict(), "run_id": r.run_id} for r in results]
         Path(args.export).parent.mkdir(parents=True, exist_ok=True)
@@ -405,7 +516,7 @@ def cmd_walkforward(args: argparse.Namespace) -> int:
     result = walk_forward(
         cfg, provider, start, end, grid,
         train=timedelta(days=args.train_days), test=timedelta(days=args.test_days),
-        metric=args.metric, progress=lambda msg: print(f"  {msg}"),
+        metric=args.metric, progress=lambda msg: print(f"  {msg}"), llm_provider=(llm := _grid_llm(cfg, grid)),
     )
     metric = args.metric
     print(f"\n{'test window':<25} {'in-sample':>10} {'out-of-sample':>14} "
@@ -423,7 +534,214 @@ def cmd_walkforward(args: argparse.Namespace) -> int:
           + ("" if bench is None else f" vs buy & hold {bench:+.2%}"))
     if is_mean is not None and oos_mean is not None and oos_mean < is_mean:
         print("Out-of-sample is worse than in-sample: expect live results closer to the out-of-sample numbers.")
+    _print_provider_usage(llm)
     return 0
+
+
+def _latest_run_id(store: Any) -> str:
+    runs = store.list_runs(1)
+    if not runs:
+        raise TradingLabError("no runs stored yet")
+    return str(runs[0]["run_id"])
+
+
+def cmd_agent_report(args: argparse.Namespace) -> int:
+    from trading_lab.research import attribute_run, format_attribution
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    with SQLiteStore(cfg.storage.db_path) as store:
+        run_id = args.run_id or _latest_run_id(store)
+        run = store.get_run(run_id)
+        if run is None:
+            raise TradingLabError(f"unknown run id {run_id}")
+        results = attribute_run(store, run_id, horizon=args.horizon)
+        has_bars = store.count("bars", run_id) > 0
+        stored_signals = _stored_signals(store, run_id)
+    shown = [a for a in results.values() if a.is_agent or args.all]
+    print(f"Run {run_id} ({run['kind']}, {run['timeframe']}) | {len(shown)} "
+          f"{'voter(s)' if args.all else 'agent(s)'} | horizon {args.horizon} bars")
+    if not has_bars:
+        print("(no stored prices for this run: outcome statistics are n/a; re-run it to get them)")
+    if not shown:
+        print("No AI agents voted in this run. Use --all to see the deterministic strategies.")
+    for a in shown:
+        print()
+        print(format_attribution(a))
+    _print_signal_usage(stored_signals)
+    return 0
+
+
+def _stored_signals(store: Any, run_id: str) -> list[Any]:
+    import json as _json
+    from types import SimpleNamespace
+
+    rows = store.load_signals(run_id)
+    return [SimpleNamespace(strategy=r.strategy, metadata=_json.loads(r.metadata_json))
+            for r in rows.itertuples(index=False) if r.strategy != "ensemble"]
+
+
+def cmd_experiment(args: argparse.Namespace) -> int:
+    from trading_lab.research import VARIANTS, run_experiment, summarize, variant_config
+    from trading_lab.storage import SQLiteStore
+    from trading_lab.strategy_factory import shared_llm_provider
+
+    cfg = _load_config(args)
+    variants = [v.strip() for v in args.variants.split(",") if v.strip()]
+    unknown = [v for v in variants if v not in VARIANTS]
+    if unknown:
+        raise TradingLabError(f"unknown variant(s) {unknown}; available: {', '.join(VARIANTS)}")
+    grid = _grid(args) if (args.param or args.grid) else {}
+    start, end = _period(args, args.days)
+    provider = _provider(cfg, args.synthetic)
+    llm = shared_llm_provider([variant_config(cfg, v) for v in variants])
+    mode = "walk-forward" if args.walkforward else "backtest"
+    print(f"Experiment ({mode}) | {start:%Y-%m-%d} -> {end:%Y-%m-%d} | {cfg.market.timeframe} | "
+          f"agents mode {cfg.agents.mode} | data: {provider.name}")
+
+    store = SQLiteStore(cfg.storage.db_path) if args.save else None
+    try:
+        rows = run_experiment(
+            cfg, provider, start, end, variants, walkforward=args.walkforward, grid=grid,
+            train=timedelta(days=args.train_days), test=timedelta(days=args.test_days),
+            metric=args.metric, store=store if not args.walkforward else None, llm_provider=llm,
+            progress=lambda msg: print(f"  running {msg}"),
+        )
+        summaries = summarize(rows, metric=args.metric) if args.walkforward else []
+        if store is not None:
+            label = f"{mode} {','.join(variants)} {start:%Y-%m-%d}..{end:%Y-%m-%d}"
+            store.add_research_result("experiment", label, {
+                "mode": mode, "start": start, "end": end, "timeframe": cfg.market.timeframe,
+                "symbols": list(cfg.market.symbols), "agents_mode": cfg.agents.mode, "grid": grid,
+                "metric": args.metric, "rows": [r.summary() for r in rows],
+                "comparison": [v.to_dict() for v in summaries],
+            })
+    finally:
+        if store is not None:
+            store.close()
+
+    if args.walkforward:
+        print(f"\n{'variant':<16} {'OOS return':>10} {'buy&hold':>9} {'IS ' + args.metric:>18} "
+              f"{'OOS ' + args.metric:>18} {'folds':>5}  description")
+        for r in rows:
+            wf = r.walkforward
+            assert wf is not None
+            bench = "n/a" if wf.benchmark_return is None else f"{wf.benchmark_return:+.2%}"
+            print(f"{r.variant:<16} {wf.out_of_sample_return:>+10.2%} {bench:>9} "
+                  f"{_fmt_num(wf.mean_metric('in_sample')):>18} {_fmt_num(wf.mean_metric('out_of_sample')):>18} "
+                  f"{len(wf.folds):>5}  {r.description}")
+        print("\nOut-of-sample, per variant (see docs/EXPERIMENT_PROTOCOL.md):")
+        print(f"{'variant':<16} {'worst DD':>8} {'sharpe':>7} {'PF':>6} {'trades':>6} {'exposure':>8} "
+              f"{'beats baseline':>15} {'sign p':>7}")
+        for v in summaries:
+            vs = "-" if v.variant == "baseline" or not v.compared else f"{v.wins}/{v.compared} folds"
+            exposure = "n/a" if v.mean_exposure is None else f"{v.mean_exposure:.0%}"
+            p_value = "n/a" if v.sign_test_p is None else f"{v.sign_test_p:.3f}"
+            print(f"{v.variant:<16} {-v.worst_fold_drawdown:>8.1%} {_fmt_num(v.mean_sharpe):>7} "
+                  f"{_fmt_num(v.mean_profit_factor):>6} {v.total_trades:>6} {exposure:>8} {vs:>15} {p_value:>7}")
+    else:
+        print(f"\n{'variant':<16} {'return':>8} {'buy&hold':>9} {'max dd':>7} {'sharpe':>7} {'PF':>6} "
+              f"{'trades':>6} {'exposure':>8}  description")
+        for r in rows:
+            m, b = r.metrics, r.benchmark
+            assert m is not None
+            exposure = "n/a" if m.exposure is None else f"{m.exposure:.0%}"
+            print(f"{r.variant:<16} {m.total_return:>+8.2%} {_fmt_pct(None if b is None else b.total_return):>9} "
+                  f"{-m.max_drawdown:>7.1%} {_fmt_num(m.sharpe_ratio):>7} {_fmt_num(m.profit_factor):>6} "
+                  f"{m.num_trades:>6} {exposure:>8}  {r.description}")
+        print("\nA single backtest proves nothing: compare variants with --walkforward (out-of-sample).")
+    _print_provider_usage(llm)
+    if args.export:
+        import json as _json
+
+        Path(args.export).parent.mkdir(parents=True, exist_ok=True)
+        export = [r.summary() for r in rows]
+        if summaries:
+            export = {"rows": export, "comparison": [v.to_dict() for v in summaries]}  # type: ignore[assignment]
+        Path(args.export).write_text(_json.dumps(export, indent=2, default=str))
+        print(f"Results written to {Path(args.export).resolve()}")
+    return 0
+
+
+def cmd_agent_test(args: argparse.Namespace) -> int:
+    from trading_lab.llm import PROVIDERS
+    from trading_lab.smoke import agent_smoke_test, provider_smoke_test
+
+    cfg = _load_config(args)
+    target = args.target or cfg.agents.provider
+    print(f"agent-test {target}: one model call, no trades, no database writes, no exchange keys")
+    if target in PROVIDERS:
+        if target != cfg.agents.provider:
+            cfg = cfg.with_overrides({"agents": {"provider": target}})
+        result = provider_smoke_test(cfg)
+    else:
+        symbol = args.symbol or cfg.market.symbols[0]
+        result = agent_smoke_test(cfg, target, _provider(cfg, args.synthetic), symbol)
+    for line in result.lines:
+        print(f"  {line}")
+    if result.ok:
+        print("OK")
+        return 0
+    print(f"FAILED: {result.error}", file=sys.stderr)
+    return 1
+
+
+def cmd_dashboard_data(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.dashboard import DashboardData
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    with DashboardData(cfg.storage.db_path) as data:
+        snap = data.snapshot(args.run_id, horizon=args.horizon)
+    if args.json:
+        print(_json.dumps(snap, indent=2, default=str))
+        return 0
+    if snap["run_id"] is None:
+        print("No runs stored yet.")
+        return 0
+    o = snap["overview"]
+    print(f"Run {o['run_id']} ({o['kind']}, {o['status']}) | {o['timeframe']} | {', '.join(o['symbols'])} | "
+          f"last bar {o.get('last_bar') or '-'}")
+    if o.get("equity") is not None:
+        b = o["breakers"]
+        print(f"Equity {o['equity']:,.2f}  cash {o['cash']:,.2f}  return {o['total_return']:+.2%}  "
+              f"drawdown {o['drawdown']:.2%}  daily PnL {o['daily_pnl']:+,.2f}  exposure {o['exposure_pct']:.0%}")
+        print(f"Breakers: kill switch {'ACTIVE' if b['kill_switch_active'] else 'off'}"
+              + (f" ({b['halted_reason']})" if b.get("halted_reason") else "")
+              + (f", daily limit hit {b['daily_blocked_day']}" if b.get("daily_blocked_day") else ""))
+    for p in snap["open_positions"]:
+        print(f"  {p['symbol']:<10} qty {p['quantity']:.6g} entry {p['entry_price']:.6g} "
+              f"now {p['current_price']:.6g} unrealized {p['unrealized_pnl']:+,.2f}")
+    for sym, d in snap["latest_decision"].get("symbols", {}).items():
+        votes = ", ".join(f"{v['strategy']}={v['direction'].upper()}" for v in d["votes"])
+        ens = d["ensemble"] or {}
+        print(f"  {sym:<10} {votes} -> {str(ens.get('direction', '-')).upper()}")
+    usage = snap["usage"]["total"]
+    if usage:
+        print(f"Model usage: {usage['calls']} calls, {usage['cache_hits']} cache hits, {usage['failures']} failures")
+    return 0
+
+
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    import importlib.util
+    import os
+    import subprocess
+
+    cfg = _load_config(args)
+    if importlib.util.find_spec("streamlit") is None:
+        raise TradingLabError('the dashboard needs Streamlit: pip install -e ".[dashboard]"')
+    db = Path(cfg.storage.db_path).resolve()
+    app = Path(__file__).resolve().parent / "dashboard" / "app.py"
+    print(f"Dashboard (read-only) for {db} on http://{args.host}:{args.port}  (Ctrl+C to stop)")
+    command = [
+        sys.executable, "-m", "streamlit", "run", str(app),
+        "--server.address", args.host, "--server.port", str(args.port),
+        "--server.headless", "true", "--browser.gatherUsageStats", "false",
+    ]
+    return subprocess.call(command, env={**os.environ, "TRADING_LAB_DB": str(db)})
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
@@ -471,6 +789,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", default=DEFAULT_CONFIG, help=f"TOML config (default {DEFAULT_CONFIG})")
     parser.add_argument("--db", help="SQLite file (overrides [storage] db_path)")
+    parser.add_argument("--log-file", help="also write a rotating log file (e.g. /var/log/trading-lab/paper.log)")
+    parser.add_argument("--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR"),
+                        help="level for --log-file (default INFO)")
+    parser.add_argument("--agent-mode", choices=("record", "replay", "live"),
+                        help="override [agents] mode (replay = fully offline, cached answers only)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     def market_options(p: argparse.ArgumentParser) -> None:
@@ -492,6 +815,8 @@ def build_parser() -> argparse.ArgumentParser:
     pp = sub.add_parser("paper", help="live paper trading on public real-time data")
     market_options(pp)
     pp.add_argument("--resume", metavar="RUN_ID", help="continue a stopped paper run")
+    pp.add_argument("--run-id", metavar="ID",
+                    help="named run: start it if it does not exist, otherwise resume it (for services)")
     pp.add_argument("--once", action="store_true", help="run one cycle and exit")
     pp.add_argument("--max-cycles", type=int, help="stop after N cycles")
     pp.add_argument("--poll", type=float, default=30.0, help="seconds between retries (default 30)")
@@ -531,6 +856,46 @@ def build_parser() -> argparse.ArgumentParser:
     wf.add_argument("--test-days", type=int, default=30)
     wf.set_defaults(func=cmd_walkforward)
 
+    ar = sub.add_parser("agent-report", help="per-agent votes, correctness and trade attribution")
+    ar.add_argument("run_id", nargs="?", help="default: the most recent run")
+    ar.add_argument("--horizon", type=int, default=4, help="bars ahead for outcome statistics (default 4)")
+    ar.add_argument("--all", action="store_true", help="also show the deterministic strategies")
+    ar.set_defaults(func=cmd_agent_report)
+
+    ex = sub.add_parser("experiment", help="compare baseline and AI-agent variants on the same data")
+    research_options(ex, 180)
+    ex.add_argument("--variants", default="baseline,trend,trend_momentum,all_agents",
+                    help="comma-separated: baseline, trend, momentum, risk, trend_momentum, all_agents, ai_only")
+    ex.add_argument("--walkforward", action="store_true",
+                    help="walk-forward per variant (out-of-sample); --param grids are tuned in-sample")
+    ex.add_argument("--train-days", type=int, default=90)
+    ex.add_argument("--test-days", type=int, default=30)
+    ex.add_argument("--save", action="store_true",
+                    help="store the summary (and, in backtest mode, every run) in the database")
+    ex.add_argument("--export", metavar="JSON", help="write the full results to a JSON file")
+    ex.set_defaults(func=cmd_experiment)
+
+    at = sub.add_parser("agent-test", help="check the model connection or one agent (no trading)")
+    at.add_argument("target", nargs="?",
+                    help="provider (qwen) or agent (qwen_trend, qwen_momentum, qwen_risk, llm_analyst); "
+                         "default: the configured provider")
+    at.add_argument("--symbol", help="symbol for agent tests (default: the first configured)")
+    at.add_argument("--timeframe", help="e.g. 1h")
+    at.add_argument("--synthetic", type=int, metavar="SEED", help="offline synthetic data for agent tests")
+    at.set_defaults(func=cmd_agent_test)
+
+    dd = sub.add_parser("dashboard-data", help="read-only snapshot of a run (what the dashboard shows)")
+    dd.add_argument("run_id", nargs="?", help="default: the running paper run, else the latest run")
+    dd.add_argument("--json", action="store_true", help="print the full snapshot as JSON")
+    dd.add_argument("--horizon", type=int, default=4, help="bars ahead for agent outcome statistics")
+    dd.set_defaults(func=cmd_dashboard_data)
+
+    db_ = sub.add_parser("dashboard", help="read-only web dashboard (Streamlit)")
+    db_.add_argument("--host", default="127.0.0.1",
+                     help="address to listen on (default 127.0.0.1; use an SSH tunnel to view it remotely)")
+    db_.add_argument("--port", type=int, default=8501)
+    db_.set_defaults(func=cmd_dashboard)
+
     cp = sub.add_parser("compare", help="compare stored runs side by side")
     cp.add_argument("run_ids", nargs="+")
     cp.set_defaults(func=cmd_compare)
@@ -540,6 +905,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    _configure_logging(args.log_level, args.log_file)
     try:
         return int(args.func(args))
     except TradingLabError as exc:

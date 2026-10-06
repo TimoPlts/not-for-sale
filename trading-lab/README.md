@@ -19,8 +19,60 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 6 (complete):** the AI-agent framework, with record and replay of agent answers for reproducible backtests.
 - **Stage 7 (complete):** research tools: a buy & hold benchmark, parameter sweeps, walk-forward evaluation and run comparison.
 - **Stage 8 (complete):** execution realism: volume-aware slippage, a liquidity cap, and limit entries with partial fills.
+- **Stage 9A (complete):** a real LLM provider for agents. Qwen is the first, through any OpenAI-compatible chat-completions endpoint, with timeouts, retries and HOLD on any failure.
+- **Stage 9B (complete):** three specialist Qwen agents (Trend, Momentum, Risk/Regime) that vote in the ensemble.
+- **Stage 9C (complete):** agent performance attribution (`trading-lab agent-report`).
+- **Stage 9D (complete):** baseline versus AI experiments (`trading-lab experiment`), with agents usable in sweeps and walk-forward.
+- **Stage 9E (complete):** model usage accounting: calls, cache hits and misses, failures, retries, latency, and tokens (reported or estimated).
+- **Stage 9F (complete):** `trading-lab agent-test`: a connectivity and agent smoke test that never trades.
+- **Stage 9G (complete):** the Qwen agents in live paper trading, resumable, asking only about newly closed candles.
+- **Stage 10A (complete):** a read-only dashboard data layer (`trading_lab.dashboard.DashboardData`, `trading-lab dashboard-data`).
+- **Stage 10B (complete):** a lightweight, read-only web dashboard (Streamlit, `trading-lab dashboard`).
+- **Stage 10C (complete):** 24/7 operation on a Linux VM: systemd templates, environment files, named runs (`--run-id`), log files and graceful SIGTERM shutdown. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- **Stage 10D (complete):** failure recovery for overnight use: a circuit breaker for the model endpoint, back-off during data outages, database-error recovery and health reporting. See [docs/FAILURE_RECOVERY.md](docs/FAILURE_RECOVERY.md).
+- **Stage 10E (complete):** a reproducible protocol for "does Qwen improve out-of-sample performance?", with the variant comparison (folds won, sign test) computed by `experiment --walkforward`. See [docs/EXPERIMENT_PROTOCOL.md](docs/EXPERIMENT_PROTOCOL.md).
+
+### Stage 9/10 summary
+
+The agent framework is now a multi-agent research system powered by the Qwen endpoint, and it stays **paper trading only**:
+
+```
+Qwen model (provider-agnostic client; settings and token from environment variables only)
+├── qwen_trend     ─┐
+├── qwen_momentum  ─┼─ structured votes (direction, confidence, rationale, label)
+└── qwen_risk      ─┘        │
+RSI · MACD · Bollinger ──────┤
+                             ▼
+      VotingEngine → circuit breakers → RiskManager → PaperExecutor (simulated fills)
+```
+
+* **Agents only vote.** They cannot place, size or cancel orders, change the portfolio, or override breakers. Every failure, timeout or malformed answer is a HOLD.
+* **Reproducible:** answers are recorded once (`record`) and replayed offline (`replay`). Market-only agents' answers are shared by every backtest, sweep, walk-forward and experiment variant over the same bars.
+* **Measured:**
+  * `agent-report` gives each agent's votes, directional correctness, calibration, trades influenced, pivotal trades and PnL when it agreed or disagreed;
+  * `experiment` compares the baseline with one, two or three agents, and with the agents alone, out-of-sample;
+  * usage accounting tracks calls, cache hits, failures, latency and tokens.
+* **Operable 24/7:**
+  * `agent-test` checks the connection without trading;
+  * live paper trading with agents is resumable, asks only about new candles and never re-asks;
+  * the read-only dashboard shows everything in one page;
+  * systemd templates, environment files, graceful shutdown and documented failure recovery cover unattended operation.
+* **Safety checks still enforced:** no exchange private endpoints, no exchange or credential fields, no hard-coded tokens, and Qwen secrets only from the environment. Tests check all of these.
 
 ## Quick start
+
+On Linux or macOS the command is `.venv/bin/trading-lab` (or just `trading-lab` after `source .venv/bin/activate`). The examples below use the Windows path. The AI and dashboard commands:
+
+```bash
+trading-lab agent-test qwen                    # check the Qwen connection (no trading)
+trading-lab backtest --start 2025-01-01 --end 2025-07-01        # with agents enabled in the config
+trading-lab agent-report                       # what each agent contributed to the last run
+trading-lab experiment --walkforward --train-days 90 --test-days 30 --start 2024-07-01 --end 2025-07-01
+trading-lab --agent-mode replay experiment ... # the same, fully offline from recorded answers
+trading-lab paper --run-id my-paper-run        # start or resume a named live paper run
+trading-lab dashboard                          # read-only web dashboard (pip install -e ".[dashboard]")
+trading-lab dashboard-data --json              # the same data for scripts
+```
 
 Run these from this folder in PowerShell. The `trading-lab` command lives in the project's virtual environment:
 
@@ -35,12 +87,75 @@ Run these from this folder in PowerShell. The `trading-lab` command lives in the
 .venv/Scripts/trading-lab paper --resume <run id>       # continue a stopped paper run
 .venv/Scripts/trading-lab report                        # list all runs
 .venv/Scripts/trading-lab report <run id>               # details of one run
-.venv/Scripts/python -m pytest                          # run all tests
+.venv/Scripts/python -m pytest                          # run all tests (pip install -e ".[dev,dashboard]")
 ```
 
 To type just `trading-lab`, activate the environment first with `.venv\Scripts\Activate.ps1`.
 
 **How paper trading works:** the trader acts once per *closed* candle. It computes signals at the close and fills any resulting order at the open price of the candle that just started, with fees and slippage. Stops are checked against candle lows. These are the same rules as the backtester, so paper results are directly comparable with backtests. Every signal, decision, fill and equity value is saved to `data/trading_lab.db`, and a stopped run continues exactly where it left off with `--resume`. No orders are ever sent to an exchange.
+
+## Dashboard (read-only)
+
+```bash
+pip install -e ".[dashboard]"          # Streamlit, optional
+trading-lab dashboard                  # http://127.0.0.1:8501 ; --host/--port to change
+```
+
+One page, refreshed automatically (every 60 s by default):
+
+* **Portfolio:** equity, daily PnL, drawdown, exposure, realized/unrealized PnL, breaker status (with a banner when the kill switch or daily limit is active).
+* **Equity curve** against equal-weight buy & hold, and the **drawdown** chart.
+* **Open positions** (entry, current price, size, unrealized PnL, stop) and working simulated orders.
+* **Latest decision:** every vote (RSI, MACD, Bollinger, Qwen Trend, Momentum, Risk) with confidence, weight and label, the ensemble result and the actions taken.
+* **AI rationales:** one card per agent and symbol.
+* **Agent performance** leaderboard: votes, confidence, correctness, trades influenced, pivotal trades, PnL when agreed or disagreed.
+* **Research:** strategy versus buy & hold return, max drawdown, Sharpe and profit factor, plus saved experiments and walk-forward results.
+* **Qwen usage:** calls, cache hits, failures, retries, latency and tokens.
+* **Recent trades and signals.**
+
+The sidebar only chooses what to *view*: run, outcome horizon and refresh interval. There are no buttons or forms, and the database is opened read-only. The dashboard listens on 127.0.0.1 by default. To see it from another machine, use an SSH tunnel (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)) rather than exposing it.
+
+### Dashboard data layer
+
+`trading_lab.dashboard.DashboardData` reads the SQLite history and returns plain dicts and DataFrames:
+
+* the portfolio: equity, cash, realized and unrealized PnL, drawdown, daily PnL, exposure, open positions, working orders and breaker state;
+* the equity curve with drawdown and the buy & hold benchmark;
+* recent signals, the latest ensemble decision with every vote, and the latest agent rationales;
+* per-agent performance (attribution), model usage, recent trades, and research results (metrics, benchmark, saved experiments).
+
+It opens the database in SQLite's **read-only** mode, so it cannot write anything, and it has no order code at all. Tests check both.
+
+```bash
+trading-lab dashboard-data            # summary of the running paper run (or the latest run)
+trading-lab dashboard-data <run id> --json
+```
+
+## Running on a Linux VM
+
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) covers the whole setup:
+
+* the venv and installation;
+* the Qwen environment file (`/etc/trading-lab/trading-lab.env`, never committed; `deploy/trading-lab.env.example` is the template);
+* systemd templates for the paper trader and the dashboard (`deploy/systemd/`, not installed automatically);
+* log and SQLite locations, safe shutdown, resuming, backups and updates.
+
+The pieces that make unattended operation work:
+
+* `trading-lab paper --run-id NAME` starts the named run, or resumes it if it already exists. Restarts therefore always continue the same run.
+* SIGTERM (`systemctl stop`) finishes the current cycle, saves it and marks the run `stopped`.
+* `--log-file PATH` (global option) writes a rotating log (10 MB × 5) of all paper activity and warnings. `--log-level` controls its detail.
+
+### When things fail
+
+Failures prefer **HOLD / no new trade** over guessing:
+
+* Model timeouts, errors and malformed answers make that agent vote HOLD.
+* After 5 failures in a row the model is not called for 5 minutes (`failure_threshold`, `failure_cooldown_seconds`), so a dead endpoint never stalls a cycle.
+* Exchange or network outages leave the trader untouched and are retried with back-off of up to 15 minutes. Missed candles are then caught up in order.
+* A cycle that cannot be saved is rolled back, and the trader reloads its state from the database before retrying.
+
+Only a broken database or a bug stops the process; systemd then restarts it and the run resumes. The full table is in [docs/FAILURE_RECOVERY.md](docs/FAILURE_RECOVERY.md).
 
 ## Setup (Windows / PowerShell)
 
@@ -145,7 +260,125 @@ Every answer is saved in `data/agent_cache.db`, and `[agents] mode` controls how
 
 Answers are keyed by agent, version, parameters, symbol, candle and a hash of the exact context the agent saw. Changing the agent, its prompt or the data therefore never reuses a stale answer. Rationales are stored with each signal in the run history.
 
-To connect an LLM later, pass any `complete(system_prompt, user_prompt) -> text` function to `LLMAgentStrategy`. It builds the prompt from the market context and strictly validates the JSON answer. Invalid answers and errors become HOLD signals and never crash a run. An LLM needs its own API key; exchange keys are never needed.
+You can also pass any `complete(system_prompt, user_prompt) -> text` function to `LLMAgentStrategy` from code. It builds the prompt from the market context and strictly validates the JSON answer. Invalid answers and errors become HOLD signals and never crash a run.
+
+### Qwen (LLM provider)
+
+Model-backed agents use the provider named in `[agents] provider` (today: `qwen`). The endpoint must speak the OpenAI-compatible `/chat/completions` API. Its address, model and token come **only from environment variables**. They are never read from the config, stored or printed:
+
+```bash
+export QWEN_API_URL="https://<host>/v1"      # or the full .../v1/chat/completions URL
+export QWEN_MODEL="<model name>"
+export QWEN_API_KEY="<token>"                # never commit this; *.env files are git-ignored
+```
+
+On Windows PowerShell, use `$env:QWEN_API_URL = "..."` and so on.
+
+Check the connection before anything else. Each command makes **one** model call and never trades, never writes to the database or the answer cache, and never needs exchange keys:
+
+```bash
+trading-lab agent-test qwen                           # env vars, one tiny prompt, structured answer, model, latency
+trading-lab agent-test qwen_trend                     # one real agent decision on the latest closed candle
+trading-lab agent-test qwen_risk --symbol ETH/USDT    # (the risk agent sees a flat simulated portfolio)
+trading-lab agent-test qwen_momentum --synthetic 1    # offline market data
+```
+
+Then enable the general-purpose `llm_analyst` agent in your config:
+
+```toml
+[strategies.llm_analyst]
+weight = 1.0
+lookback = 30            # candles shown to the model
+decision_interval = 4    # ask every 4 candles
+```
+
+The rest of the `[agents]` settings (`request_timeout_seconds`, `max_retries`, `retry_backoff_seconds`, `temperature`, `max_output_tokens`) are documented in `config/default.toml`. The record/replay/live modes work exactly as above:
+
+* **record** asks Qwen only when no answer is cached for the exact context.
+* **replay** never contacts Qwen. It needs only `QWEN_MODEL`, which is part of the cache key, so a replay is fully offline.
+* **live** asks every time.
+
+The provider, model, temperature, output limit and prompt are all part of the cache key, so switching the model never reuses another model's answers. Missing variables stop a run before it starts, with a message naming them.
+
+Failures never stop a backtest or a paper run. Timeouts, network errors, HTTP 429 and 5xx are retried with exponential backoff. If the call still fails, or the answer is malformed, the agent votes HOLD for that bar and the error is saved with the signal. Failed answers are not cached, so `record` mode asks again next time. Reasoning models that "think aloud" (`<think>...</think>`) are supported, because the thinking is stripped before the JSON is parsed.
+
+### Qwen agents: Trend, Momentum and Risk/Regime
+
+Three specialist agents share the configured model but have their own role, prompt and data. They ship switched off (`weight = 0.0` in `config/default.toml`). Give one a positive weight to let it vote:
+
+| strategy | role | sees | extra answer field |
+|----------|------|------|--------------------|
+| `qwen_trend` | direction and trend strength | EMA 20/50/200, 5/20/50-bar returns, RSI, MACD, volume trend, candles | `regime`: bullish_trend, bearish_trend, sideways, uncertain |
+| `qwen_momentum` | does momentum support acting now? | RSI and MACD changes, return acceleration, volume change, last-candle structure | `momentum_state`: strengthening, weakening, neutral |
+| `qwen_risk` | is it too risky for new exposure? | ATR, volatility and its baseline, range expansion, drawdown from highs, liquidity, **plus the simulated portfolio**: exposure, open positions, recent stop-outs, breaker status | `risk_state`: low, moderate, high, extreme |
+
+```toml
+[strategies.qwen_trend]
+weight = 1.0
+lookback = 40            # candles shown to the model
+decision_interval = 4    # ask every 4 candles; HOLD in between
+```
+
+Every answer must be JSON with `direction` (BUY/SELL/HOLD), `confidence` (0–1), `rationale` and the agent's own label. Anything else becomes HOLD. The label and rationale are saved with each signal. Agents only vote:
+
+* A SELL from an agent is an opinion. The portfolio stays long-only.
+* The risk agent cannot override circuit breakers. When new entries are blocked, it is told so, but the breakers decide.
+* A weight of 0 switches an agent off completely. It is never called and casts no vote, so it cannot count towards `min_agreeing` either. This now applies to every strategy.
+
+**Market-only versus portfolio context.** `qwen_trend` and `qwen_momentum` see only market data by default. Their answers depend only on the candles, so one recorded answer is reused by every backtest, sweep and experiment over the same bars. `qwen_risk` sees the simulated portfolio by default (`portfolio_context = true`), because judging exposure is its job. Its answers depend on the trading path, so different experiments ask it different questions. Set `portfolio_context = true` on the other two to include position status too, at the cost of fewer cache hits.
+
+Backtests only ask agents about bars inside the backtest period, never about the warm-up history before it.
+
+**Live paper trading with agents.** `trading-lab paper` uses the same agents, with the same rules as a backtest:
+
+* An agent is asked only once a candle has closed, and only on its decision bars. Each cycle evaluates the newly closed candles only, never the history window again.
+* The risk agent sees the live simulated portfolio, including breakers and recent stop-outs.
+* Any model failure is a HOLD for that bar.
+* On `--resume`, the portfolio, breakers, working limit orders and recent stop-outs are restored from the database. Bars already processed are never re-asked. In `record` mode, a bar re-processed after a crash gets its answers from the cache, so the model is not called twice for the same context and no paper order is duplicated.
+
+### Does an agent add value? (`agent-report`)
+
+```bash
+.venv/bin/trading-lab agent-report                 # most recent run
+.venv/bin/trading-lab agent-report <run id> --horizon 6 --all
+```
+
+```
+Agent: qwen_trend
+  Votes: 1832   BUY: 524   SELL: 391   HOLD: 917
+  Avg confidence (BUY/SELL): 0.67
+  Directional correctness (4-bar horizon): 54.8% of 903 measurable votes
+  Avg outcome after BUY: +0.21%   after SELL: -0.08%
+  Trades influenced: 61 of 140 (agreed 52, disagreed 9, pivotal 17)
+  PnL when agreed: +12.40% (+1,240.00 USDT)   when disagreed: -3.80% (-380.00 USDT)
+  Calibration:  confidence   votes  correct  mean signed return
+```
+
+(The numbers above are only an illustration of the layout.)
+
+The definitions are exact and deterministic. They are spelled out in `src/trading_lab/research/attribution.py`:
+
+* **Votes** count decision bars only. Warm-up bars and bars skipped by `decision_interval` are not votes. Failed or invalid answers are counted as `errors`.
+* **Directional correctness:** did the price move the voted way over the next N bars (`--horizon`, default 4)? Raw prices are used, without fees.
+* **Avg outcome after BUY/SELL:** the mean N-bar forward return after each kind of vote.
+* **Trades influenced:** each closed trade is linked to the ensemble's entry signal. An agent *agreed* (voted BUY), *disagreed* (SELL) or abstained at that bar. It was *pivotal* if the entry would not have happened without its vote.
+* **PnL when agreed/disagreed:** the realised PnL of those trades, fees included, as a share of the initial cash.
+* **Calibration:** correctness and mean signed return per confidence bucket. A well-calibrated agent is right more often when it is more confident.
+
+Every run now also stores the candles it traded on (schema v3 `bars` table), which the outcome statistics need. Older runs show `n/a` for them.
+
+### Model usage and cost
+
+The Qwen endpoint is free today, but every call is accounted for, so paid models can be budgeted later. `backtest`, `sweep`, `walkforward`, `experiment` and `agent-report` end with a block like this:
+
+```
+Qwen usage (qwen2.5-7b-instruct):
+  calls: 482   cache hits: 1204   cache misses: 482   failures: 3   invalid answers: 1   retries: 5
+  avg latency: 1.80s   total latency: 14m 28s
+  input tokens: 612,140 (estimated)   output tokens: 31,200 (estimated)   (input chars ..., output chars ...)
+```
+
+With several agents, the block also has a per-agent table. Token counts are the endpoint's own `usage` numbers when it reports them. Otherwise they are estimated as characters ÷ 3, which errs on the high side (real text is closer to 3.5–4 characters per token) and is marked `(estimated)`. Each model call's details (latency, attempts, characters, tokens, error) are saved in the signal's metadata under `llm`. Stored runs therefore keep their usage, and `agent-report` rebuilds it from the database.
 
 ## Research tools
 
@@ -161,6 +394,38 @@ Every backtest now reports an equal-weight **buy & hold benchmark** over the sam
 ```
 
 `--param` takes any dotted config key, such as `risk.stop_loss_pct=0.03,0.05` or `strategies.trend_analyst.weight=0,1`. A sweep's best row is optimistic by construction, so judge it by the walk-forward **out-of-sample** results.
+
+### Baseline versus AI experiments
+
+`trading-lab experiment` runs named *variants* over the same period, with identical fees, slippage, liquidity, breakers and voting thresholds. Only the voters differ:
+
+| variant | voters |
+|---------|--------|
+| `baseline` | RSI + MACD + Bollinger |
+| `trend` / `momentum` / `risk` | baseline + one Qwen agent |
+| `trend_momentum` | baseline + Qwen Trend + Momentum |
+| `all_agents` | baseline + all 3 Qwen agents |
+| `ai_only` | the 3 Qwen agents only (same risk manager, breakers and executor) |
+
+```bash
+# One backtest per variant (quick look; proves nothing on its own):
+trading-lab experiment --variants baseline,trend,all_agents,ai_only --start 2025-01-01 --end 2025-07-01
+# The real comparison: walk-forward, out-of-sample, per variant (optionally tuning a grid in-sample):
+trading-lab experiment --walkforward --train-days 90 --test-days 30 --start 2024-07-01 --end 2025-07-01 \
+    --param voting.min_agreeing=1,2 --save --export results/experiment.json
+# Re-run exactly, fully offline, from the recorded answers:
+trading-lab --agent-mode replay experiment --walkforward --train-days 90 --test-days 30 --start 2024-07-01 --end 2025-07-01
+```
+
+Agents also work in plain sweeps and walk-forwards, because `weight = 0` switches a voter off completely:
+
+```bash
+trading-lab sweep --param strategies.qwen_trend.weight=0,1 --start 2025-01-01 --end 2025-07-01
+trading-lab walkforward --param strategies.qwen_trend.weight=0,1 --param strategies.qwen_momentum.weight=0,1 \
+    --train-days 90 --test-days 30 --start 2024-07-01
+```
+
+All runs in a sweep, walk-forward or experiment share one model provider and the answer cache. In `record` mode a market-only agent is asked about each bar **once**, and every variant, combination and overlapping training window reuses that answer. The comparison therefore measures the ensemble, not the model's randomness, and later replays are free. `qwen_risk` sees the portfolio, so it is asked again wherever the trades differ. Missing Qwen environment variables stop the command before the first backtest. The global `--agent-mode record|replay|live` option overrides `[agents] mode` for any command.
 
 ## Execution realism
 
