@@ -42,6 +42,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 13B (complete):** an optional correlation limit, so the bot does not stack positions in coins that move together.
 - **Stage 13C (complete):** `trading-lab robustness`: bootstrap ranges that show how much of a run's result could be luck (also in the HTML report).
 - **Stage 13D (complete):** performance relative to buy & hold: excess return, alpha, beta, correlation and information ratio.
+- **Stage 14A (complete):** `trading-lab reconcile`: checks that a live paper run did exactly what its backtest does on the same candles.
 
 ### Stage 9/10 summary
 
@@ -207,6 +208,20 @@ A short Markdown report covering:
 * model usage, plus a health warning if cycles are failing.
 
 It only reads the database (opened read-only) and works on backtests and live runs alike.
+
+## Did the live run do what the backtest does? (`reconcile`)
+
+```bash
+trading-lab reconcile vm-paper-1
+trading-lab reconcile pp-1a2b3c4d5e6f --synthetic 4   # a run on offline synthetic data
+```
+
+A paper run follows exactly the backtest's rules. `reconcile` backs that up for one run:
+
+* **Market data:** the candles the run stored are compared with what the exchange returns now. A revised candle explains any difference that follows from it.
+* **Trades and decisions:** a backtest over the run's own period, with the run's stored config, is compared fill by fill and decision by decision with what the run recorded. Agents are replayed from the answer cache, so the model is never called. An answer missing from the cache is counted and replayed as HOLD.
+
+Fills at the open of the candle after the run's last processed bar are left out, because a backtest of those bars cannot have them yet. The database is only read. The exit code is 0 when everything matches and 1 otherwise, so it can run in a script or a timer.
 
 ## Alerts
 

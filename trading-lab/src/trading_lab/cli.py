@@ -17,6 +17,7 @@
     trading-lab agent-weights [RUN_ID]
     trading-lab doctor [--online]
     trading-lab robustness [RUN_ID] [--samples 5000] [--seed 7]
+    trading-lab reconcile PAPER_RUN_ID [--synthetic SEED]
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -875,6 +876,35 @@ def cmd_robustness(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_provider(run: dict[str, Any], cfg: AppConfig, seed: int | None) -> MarketDataProvider:
+    """The data source a stored run used (synthetic runs record their seed in the exchange name)."""
+    if seed is None and str(run["exchange"]).startswith("synthetic-"):
+        seed = int(str(run["exchange"]).split("-", 1)[1])
+    return _provider(cfg, seed)
+
+
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    from trading_lab.research import format_reconciliation, reconcile
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        run = store.get_run(args.run_id)
+        if run is None:
+            raise TradingLabError(f"unknown run id {args.run_id}")
+        stored_cfg = AppConfig.from_dict(run["config"])
+        print(f"Reconciling paper run {args.run_id} with a backtest of the same bars "
+              "(agents replayed from the cache; nothing is written)")
+        try:
+            result = reconcile(store, args.run_id, _run_provider(run, stored_cfg, args.synthetic))
+        except ValueError as exc:
+            raise TradingLabError(str(exc)) from None
+    print(format_reconciliation(result, limit=args.limit))
+    return 0 if result.ok else 1
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from trading_lab.reporting import run_metrics
     from trading_lab.storage import SQLiteStore
@@ -1065,6 +1095,12 @@ def build_parser() -> argparse.ArgumentParser:
     rb.add_argument("--samples", type=int, default=5000)
     rb.add_argument("--seed", type=int, default=7)
     rb.set_defaults(func=cmd_robustness)
+
+    rc = sub.add_parser("reconcile", help="check a paper run against a backtest of the same bars")
+    rc.add_argument("run_id")
+    rc.add_argument("--synthetic", type=int, metavar="SEED", help="data source seed (default: the run's own)")
+    rc.add_argument("--limit", type=int, default=10, help="differences to list (default 10)")
+    rc.set_defaults(func=cmd_reconcile)
 
     cp = sub.add_parser("compare", help="compare stored runs side by side")
     cp.add_argument("run_ids", nargs="+")

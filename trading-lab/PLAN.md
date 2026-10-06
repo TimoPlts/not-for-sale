@@ -397,6 +397,12 @@ Trade-offs worth knowing:
 - `BacktestResult.relative` (also stored in the run's metrics as `relative`), printed by `backtest` and `report`. Paper runs get it from stored bars through `DashboardData.research`. It also appears in the dashboard, the HTML report tiles and `experiment` summaries.
 - Tests: hand-made curves (identical, half exposure, constant extra return, cash, invalid input); the backtest stored and printed values and their agreement with the metrics; paper runs from bars; experiment summaries.
 
+### Stage 14A: Paper-run reconciliation ✅
+- `research/reconcile.py`: `reconcile(store, run_id, market)` takes a paper run's stored bars and config, compares the stored candles with fresh ones (revised or missing bars), then backtests the same period with agents in replay mode and end liquidation off. It compares fills (time, symbol, side, quantity, price) and non-HOLD decisions as multisets. The live fills after the last processed bar and the backtest's own "data ended" expiries are left out.
+- CLI: `trading-lab reconcile RUN_ID [--synthetic SEED] [--limit N]` opens the database read-only, takes the seed of a synthetic run from its exchange name, and exits 1 on any difference.
+- **Fix it found:** the Trend agent's EMA 200 depended in the 5th digit on where the data window started, so a live run (sliding window) and its backtest (growing window) could show the model different numbers and miss each other's cached answers. `indicators.windowed_ema` computes it over exactly the last 1000 bars, which does not depend on the window. Values move by about 1e-5 at most, and only `qwen_trend` cache keys change.
+- Tests: a live run matches its backtest (fills, decisions, bars); late fills left out; other market data and a tampered fill are reported; backtests, unknown runs and runs without bars; agents replayed without model calls, and missing cached answers counted; end liquidation; the CLI (exit codes, the database byte-identical); `windowed_ema` (equal to a restarted EMA, independent of the data start, causal, validated).
+
 ## 5. Stage 11–13 status summary
 
 On top of the Stage 9/10 system:

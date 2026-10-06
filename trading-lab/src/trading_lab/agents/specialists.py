@@ -28,7 +28,7 @@ import pandas as pd
 
 from trading_lab.agents.base import Agent
 from trading_lab.agents.llm import LLMProviderStrategy, ProviderAgent
-from trading_lab.indicators import atr, ema, macd, rsi
+from trading_lab.indicators import atr, ema, macd, rsi, windowed_ema
 from trading_lab.strategies.registry import register_strategy
 
 _COMMON_RULES = """\
@@ -49,6 +49,9 @@ def _system_prompt(role: str, task: str, label: str, values: tuple[str, ...]) ->
         f'"rationale": "<one or two sentences citing the data>", "{label}": {choices}}}'
     )
     return f"You are the {role}.\n{task}\n\n{_COMMON_RULES}{schema}"
+
+
+EMA_200_WINDOW = 1000
 
 
 def _pct(series: pd.Series) -> pd.Series:
@@ -95,11 +98,13 @@ class QwenTrendStrategy(SpecialistStrategy):
 
     @property
     def history_bars(self) -> int:
-        return max(super().history_bars, 1000)  # lets EMA 200 converge in every data window
+        return max(super().history_bars, EMA_200_WINDOW)
 
     def context_frame(self, candles: pd.DataFrame) -> pd.DataFrame:
         close, volume = candles["close"], candles["volume"]
-        ema20, ema50, ema200 = ema(close, 20), ema(close, 50), ema(close, 200)
+        # EMA 200 over a fixed window: a plain one still differs in the 5th digit after
+        # 1000 bars depending on where the data starts (live versus backtest windows).
+        ema20, ema50, ema200 = ema(close, 20), ema(close, 50), windowed_ema(close, 200, EMA_200_WINDOW)
         m = macd(close)
         f = pd.DataFrame(index=candles.index)
         f["close"] = close
