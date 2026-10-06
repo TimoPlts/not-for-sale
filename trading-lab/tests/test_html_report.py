@@ -102,3 +102,11 @@ def test_empty_runs_and_cli(tmp_path, capsys, run):
     run_db, result = run
     assert main(["--db", str(run_db), "report", result.run_id, "--html", str(out), "--horizon", "6"]) == 0
     assert "Voters (6-bar outcome horizon)" in out.read_text()
+
+
+def test_text_metrics_are_shown_as_text():
+    from trading_lab.html_report import _num, _pct
+
+    assert _num("inf") == "inf" and _pct("inf") == "inf"  # profit factor of a run without losses
+    assert _num("<b>") == "&lt;b&gt;"
+    assert _num(None) == _pct(float("nan")) == "n/a" and _num(1234.5) == "1,234.50"

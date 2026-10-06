@@ -102,3 +102,16 @@ def test_dashboard_command_launches_streamlit_read_only(monkeypatch, tmp_path, c
     assert command[command.index("--server.address") + 1] == "127.0.0.1"
     assert env["TRADING_LAB_DB"] == str((tmp_path / "h.db").resolve())
     assert "read-only" in capsys.readouterr().out
+
+
+def test_text_metrics_render(monkeypatch, tmp_path):
+    from trading_lab.dashboard.data import DashboardData
+    from trading_lab.demo import build_demo
+
+    # This short paper run has no losing trade, so its profit factor is the text "inf".
+    result = build_demo(tmp_path / "d", days=5, paper_bars=12, seed=8,
+                        now=datetime(2025, 3, 10, 14, 37, tzinfo=UTC))
+    with DashboardData(str(result.db_path)) as data:
+        assert data.research(result.paper_run)["metrics"]["profit_factor"] == "inf"
+    at = render(monkeypatch, result.db_path)  # the paper run is the latest, shown by default
+    assert "inf" in [m.value for m in at.metric]

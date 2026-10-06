@@ -1,5 +1,6 @@
 """``trading-lab`` command-line interface.
 
+    trading-lab demo     [DIR]   (offline sample: a backtest, a paper run and HTML reports)
     trading-lab backtest [--start DATE] [--end DATE] [--symbols ...] [--timeframe TF] [--synthetic SEED]
     trading-lab paper    [--symbols ...] [--timeframe TF] [--resume RUN_ID] [--once] [--synthetic SEED]
     trading-lab report   [RUN_ID] [--limit N] [--html FILE]
@@ -982,6 +983,28 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_demo(args: argparse.Namespace) -> int:
+    from trading_lab.demo import build_demo, next_steps
+
+    print(f"Building an offline demo in {Path(args.directory).resolve()} (synthetic prices, no keys needed)...")
+    try:
+        result = build_demo(args.directory, seed=args.seed, days=args.days, paper_bars=args.paper_bars)
+    except ValueError as exc:
+        raise TradingLabError(str(exc)) from None
+    bench = "" if result.benchmark_return is None else f" (buy & hold {result.benchmark_return:+.2%})"
+    print(f"\n  backtest  {result.backtest_run}: {args.days} days, return {result.backtest_return:+.2%}{bench}")
+    print(f"  paper     {result.paper_run}: {args.paper_bars} simulated hours, {result.paper_fills} fill(s), "
+          f"equity {result.paper_equity:,.2f} USDT")
+    print(f"  reconcile {'OK: the paper run matches its backtest' if result.reconciled else 'DIFFERENT (a bug?)'}")
+    print(f"\nOpen in a browser:\n  {(result.directory / 'backtest-report.html').resolve()}"
+          f"\n  {(result.directory / 'paper-report.html').resolve()}")
+    print("\nThe prices are a random walk, so these results say nothing about real markets.")
+    print("\nNext:")
+    for what, command in next_steps(result):
+        print(f"  # {what}\n  {command}")
+    return 0 if result.reconciled else 1
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from trading_lab.reporting import run_metrics
     from trading_lab.storage import SQLiteStore
@@ -1038,6 +1061,13 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--symbols", nargs="+", help="e.g. BTC/USDT ETH/USDT")
         p.add_argument("--timeframe", help="e.g. 15m, 1h, 4h, 1d")
         p.add_argument("--synthetic", type=int, metavar="SEED", help="offline synthetic data")
+
+    dm = sub.add_parser("demo", help="offline sample: a backtest, a paper run and HTML reports (start here)")
+    dm.add_argument("directory", nargs="?", default="demo", help="a new or empty directory (default ./demo)")
+    dm.add_argument("--seed", type=int, default=7, help="synthetic market seed (default 7)")
+    dm.add_argument("--days", type=int, default=60, help="backtest length (default 60)")
+    dm.add_argument("--paper-bars", type=int, default=72, help="simulated paper-trading hours (default 72)")
+    dm.set_defaults(func=cmd_demo)
 
     bt = sub.add_parser("backtest", help="simulate a strategy set over historical data")
     market_options(bt)

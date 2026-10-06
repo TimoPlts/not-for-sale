@@ -8,6 +8,7 @@ form or code path that can place, cancel or change a (simulated) order.
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -22,13 +23,19 @@ DEFAULT_DB = "data/trading_lab.db"
 
 
 def _pct(value: Any, signed: bool = True) -> str:
-    if value is None:
+    if isinstance(value, str):  # e.g. a profit factor of "inf" when nothing was lost
+        return value
+    if value is None or (isinstance(value, float) and not math.isfinite(value)):
         return "n/a"
     return f"{value:+.2%}" if signed else f"{value:.1%}"
 
 
 def _num(value: Any, digits: int = 2) -> str:
-    return "n/a" if value is None else f"{value:,.{digits}f}"
+    if isinstance(value, str):
+        return value
+    if value is None or (isinstance(value, float) and not math.isfinite(value)):
+        return "n/a"
+    return f"{value:,.{digits}f}"
 
 
 def _breaker_label(breakers: dict[str, Any]) -> str:

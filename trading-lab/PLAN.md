@@ -420,6 +420,12 @@ Trade-offs worth knowing:
 - CLI: `trading-lab export RUN_ID DIR [--holds] [--force]` (read-only).
 - Tests: backtest export (files, rows, checksums, metrics, equity); identical to `backtest --export`; HOLDs on request; a paper run; agent votes readable and the API key never written; directory protection (non-empty, a file, unknown run, `overwrite` keeps foreign files); the CLI (exit codes, the database byte-identical).
 
+### Stage 15A: Offline demo ✅
+- `demo.py`: `build_demo(dir, seed=7, days=60, paper_bars=72, now=None)` works in a new or empty directory with the built-in defaults (agents off, no CSV cache). It runs a backtest on synthetic candles, then a paper run (`demo-paper`) of the latest synthetic hours driven by a simulated clock, and reconciles that paper run with its backtest. It writes `demo.db`, `backtest-report.html` and `paper-report.html`. `next_steps` lists commands pointing at the demo database.
+- CLI: `trading-lab demo [DIR] [--seed S] [--days N] [--paper-bars N]`. It exits 1 if the reconciliation differs.
+- **Bug it found:** a run without losing trades stores its profit factor as the text `"inf"`, which crashed the HTML report and the dashboard formatters. They now show text values as text, escaped in HTML.
+- Tests: a complete sample (files, runs, paper bars ending at the last closed candle, reports); deterministic per time and seed; existing files never touched; next steps; the CLI (writes only the demo directory, and the result reconciles from the command line); text metrics in the HTML report and the dashboard.
+
 ## 5. Stage 11–14 status summary
 
 On top of the Stage 9/10 system:
