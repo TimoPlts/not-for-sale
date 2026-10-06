@@ -325,5 +325,30 @@ Trade-offs worth knowing:
 - An LLM may have seen historical prices during training. Final out-of-sample claims need periods after the model's training cutoff, and ultimately the live paper run (see the protocol).
 - `weight = 0` now means a strategy does not take part at all. Before, a zero-weight vote still counted towards `min_agreeing`.
 
+### Stage 11A: Trailing stops and take-profit ✅
+- `[risk] trailing_stop_pct`, `trailing_activation_pct` and `take_profit_pct` (0 = off; the defaults leave behaviour unchanged).
+- `TradingSession` tracks each open position's highest high and raises its stop at bar closes, effective from the next bar (no look-ahead inside a bar). Stops only move up (`Portfolio.set_stop`). Take-profit exits at average cost × (1 + pct), or at the open after a gap up. When both the stop and the target are reached in one bar, the stop wins. There is a new `DecisionAction.TAKE_PROFIT`.
+- The stop-loss cooldown now follows only losing stop exits. With the default exits every stop exit is a loss, so nothing changes there.
+- Trailing state (`trailing`: highest high and raised stop) is saved with live runs and re-applied after the portfolio is rebuilt from fills on resume. The dashboard shows the current stop.
+- Tests: ratcheting and a profitable trailing exit without cooldown; a raised stop applying only from the next bar (gap rule); activation; take-profit with a gap; the stop winning a tie; unchanged defaults; validation; backtest equal to live with these exits; trailed stops surviving a resume; the dashboard stop.
+
+### Stage 11B: Run summaries ✅
+- `summary.py`: `build_summary(store, run_id, hours=24)` (equity and its change in the window, return since start, current and in-window drawdown, the market's equal-weight move, closed trades, open positions, decision counts, breaker trips, per-agent votes and latest rationale, model usage, health) and `format_summary` (Markdown). It uses reads only.
+- CLI: `trading-lab summary [RUN_ID] [--hours N]`, which opens the database read-only.
+- Tests: the whole-run summary equals the backtest result; window filtering of trades, equity change and votes; the Markdown content; breaker, health and empty runs; the database byte-identical after the command.
+
+### Stage 11C: Alerts ✅
+- `alerts.py`: `WebhookNotifier` (ntfy, Slack, Discord or JSON; URL only from `TRADING_LAB_ALERT_URL`, never logged, errors name only the host), `AlertManager` (level filter, per-key repeat suppression, never raises), and `build_alerts`. `[alerts]` holds enabled, format, min_level, daily_summary, outage_after_cycles and repeat_after_minutes.
+- `LivePaperTrader(alerts=...)`:
+  - breaker trips (critical for the kill switch, warning for the daily limit);
+  - entries, exits, stops, take-profits and closed trades (info);
+  - model calls paused and recovered;
+  - repeated failed cycles and their recovery;
+  - database rollbacks;
+  - a daily summary once per UTC day, persisted across resume.
+- The CLI sends run start, stop and crash alerts and fails fast if alerts are enabled without the URL. There is a new `trading-lab alert-test`. Alert settings come from the current config.
+- Bug fix: resuming compares configs by value instead of by fingerprint. Before this, every new config setting since 9A would have stopped runs saved by older versions from resuming.
+- Tests: each format; no URL leaks; config and environment checks; levels and repeats; breaker, outage, model-pause and recovery alerts from real trader runs; the daily summary across midnight and a resume; failing alerts not changing any fill; the CLI; resuming a run saved by an older version.
+
 ### Later
-Short positions, trailing stops, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and alerting on breaker trips or long outages.
+Short positions, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and more alert channels (e-mail).

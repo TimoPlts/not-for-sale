@@ -54,7 +54,8 @@ class DecisionAction(StrEnum):
     IGNORED = "ignored"  # signal not actionable (e.g. SELL without a position)
     ENTER = "enter"  # entry filled
     EXIT = "exit"  # signal exit filled
-    STOP_LOSS = "stop_loss"  # stop-loss exit filled
+    STOP_LOSS = "stop_loss"  # stop-loss (fixed or trailing) exit filled
+    TAKE_PROFIT = "take_profit"  # take-profit exit filled
     LIQUIDATE = "liquidate"  # position closed at the end of a backtest
     REJECTED = "rejected"  # risk manager or executor refused the order
     EXPIRED = "expired"  # scheduled order never executed (data ended)

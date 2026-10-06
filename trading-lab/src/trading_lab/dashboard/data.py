@@ -137,6 +137,7 @@ class DashboardData:
         _, config = self._run(run_id)
         portfolio = self._portfolio(run_id, config)
         prices = self._last_prices(run_id)
+        trailing = (self.store.load_state(run_id) or {}).get("trailing", {})
         out = []
         for sym, pos in sorted(portfolio.positions.items()):
             price = prices.get(sym)
@@ -149,7 +150,8 @@ class DashboardData:
                 "value": None if price is None else pos.quantity * price,
                 "unrealized_pnl": unrealized,
                 "unrealized_pct": None if unrealized is None else unrealized / pos.cost_basis,
-                "stop_price": pos.stop_price,
+                "stop_price": trailing.get(sym, {}).get("stop", pos.stop_price),
+                "trailing": "stop" in trailing.get(sym, {}),
                 "opened_at": pos.opened_at,
             }))
         return out

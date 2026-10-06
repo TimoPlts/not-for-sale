@@ -31,6 +31,9 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 10C (complete):** 24/7 operation on a Linux VM: systemd templates, environment files, named runs (`--run-id`), log files and graceful SIGTERM shutdown. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 - **Stage 10D (complete):** failure recovery for overnight use: a circuit breaker for the model endpoint, back-off during data outages, database-error recovery and health reporting. See [docs/FAILURE_RECOVERY.md](docs/FAILURE_RECOVERY.md).
 - **Stage 10E (complete):** a reproducible protocol for "does Qwen improve out-of-sample performance?", with the variant comparison (folds won, sign test) computed by `experiment --walkforward`. See [docs/EXPERIMENT_PROTOCOL.md](docs/EXPERIMENT_PROTOCOL.md).
+- **Stage 11A (complete):** optional trailing stops and take-profit exits (long-only, no look-ahead, identical in backtests and live, kept across resume).
+- **Stage 11B (complete):** `trading-lab summary`: what a run did over the last N hours, in Markdown.
+- **Stage 11C (complete):** push alerts (ntfy, Slack, Discord or JSON webhook) for breaker trips, outages, model pauses, crashes and a daily summary.
 
 ### Stage 9/10 summary
 
@@ -130,6 +133,46 @@ It opens the database in SQLite's **read-only** mode, so it cannot write anythin
 trading-lab dashboard-data            # summary of the running paper run (or the latest run)
 trading-lab dashboard-data <run id> --json
 ```
+
+## Run summary
+
+```bash
+trading-lab summary                    # the latest run, last 24 hours
+trading-lab summary vm-paper-1 --hours 168
+```
+
+A short Markdown report covering:
+
+* equity and its change over the window, return since start, current and worst drawdown, and the market's move;
+* the closed trades (wins, realized PnL, best and worst);
+* open positions and the count of each decision type;
+* circuit-breaker trips;
+* each agent's BUY/SELL/HOLD votes with its latest rationale;
+* model usage, plus a health warning if cycles are failing.
+
+It only reads the database (opened read-only) and works on backtests and live runs alike.
+
+## Alerts
+
+```toml
+[alerts]
+enabled = true
+format = "ntfy"          # ntfy | slack | discord | json
+min_level = "warning"    # "info" also reports every entry and exit
+daily_summary = true
+```
+
+```bash
+export TRADING_LAB_ALERT_URL="https://ntfy.sh/<a long random topic>"   # secret: environment only
+trading-lab alert-test
+```
+
+Live paper runs then push:
+* **critical:** kill switch trips and trader crashes;
+* **warning:** daily-limit trips, model calls paused, repeated failed cycles, and database rollbacks;
+* **every day:** a summary (`trading-lab summary`).
+
+Recoveries are reported too, and repeats of the same alert are suppressed for an hour. Alert settings come from the current config, even when resuming an older run. A webhook that fails never affects trading, and its URL is never logged.
 
 ## Running on a Linux VM
 
@@ -426,6 +469,18 @@ trading-lab walkforward --param strategies.qwen_trend.weight=0,1 --param strateg
 ```
 
 All runs in a sweep, walk-forward or experiment share one model provider and the answer cache. In `record` mode a market-only agent is asked about each bar **once**, and every variant, combination and overlapping training window reuses that answer. The comparison therefore measures the ensemble, not the model's randomness, and later replays are free. `qwen_risk` sees the portfolio, so it is asked again wherever the trades differ. Missing Qwen environment variables stop the command before the first backtest. The global `--agent-mode record|replay|live` option overrides `[agents] mode` for any command.
+
+## Trailing stops and take-profit
+
+Optional exits in `[risk]` (0 = off, the default):
+
+| setting | effect |
+|---------|--------|
+| `trailing_stop_pct = 0.04` | after each bar closes, the stop is raised to `highest high since entry × (1 − 4%)`. Stops only move up. A raised stop applies from the **next** bar, so the unknown order of the high and the low inside a bar can never help. |
+| `trailing_activation_pct = 0.02` | only start trailing once the high is 2% above the average cost (fees included) |
+| `take_profit_pct = 0.10` | exit when a bar's high reaches average cost × 1.10, at that price, or at the open if the bar gapped above it |
+
+If the stop and the target are both reached in the same bar, the stop is assumed to come first, which is the conservative choice. Take-profit exits are recorded as `take_profit` decisions, and trailing-stop exits as `stop_loss` with "trailing stop" in the reason. The stop-loss cooldown now follows only stop exits that **lost** money: a trailing stop that locks in a gain does not block re-entry. Raised stops are saved with a live run, so they survive `--resume`, and the dashboard shows the current stop.
 
 ## Execution realism
 

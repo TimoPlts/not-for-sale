@@ -27,6 +27,15 @@ period:
       - An exit signal or the kill switch cancels a resting order.
   * A stop-loss triggers when a bar's low reaches the stop. It fills at the
     stop price, or at the open if the bar gapped below it.
+  * Optional take-profit (``risk.take_profit_pct``): when a bar's high reaches
+    average cost x (1 + pct), the position exits at that price (or at the open
+    if the bar gapped above it). If the stop and the target are both reached in
+    one bar, the stop is assumed to come first (the conservative choice).
+  * Optional trailing stop (``risk.trailing_stop_pct``): after each bar
+    closes, the stop is raised to ``highest high since entry x (1 - pct)``
+    (once the high is ``trailing_activation_pct`` above the average cost).
+    Stops only move up, and a raised stop applies from the next bar on.
+  * The stop-loss cooldown only follows stop exits that lost money.
 
 ``open_bar`` only touches scheduled orders, so calling it again for the same
 bar is harmless. Every output (signals, decisions, execution reports,
@@ -178,6 +187,7 @@ class TradingSession:
         breaker_state: BreakerState | None = None,
         resting: Mapping[str, RestingLimit] | None = None,
         stop_events: Sequence[tuple[datetime, str]] | None = None,
+        trailing: Mapping[str, Mapping[str, float]] | None = None,
     ) -> None:
         self.config = config
         self.voting = voting
@@ -202,6 +212,11 @@ class TradingSession:
         self.resting: dict[str, RestingLimit] = dict(resting or {})
         self.last_close: dict[str, float] = dict(last_close or {})
         self.stop_events: list[tuple[datetime, str]] = list(stop_events or [])
+        # Per open position: {"high": highest high since entry, "stop": raised stop (if any)}.
+        self.trailing: dict[str, dict[str, float]] = {k: dict(v) for k, v in (trailing or {}).items()}
+        for sym, info in self.trailing.items():  # re-apply raised stops (positions are rebuilt from fills)
+            if "stop" in info and self.portfolio.position(sym) is not None:
+                self.portfolio.set_stop(sym, info["stop"])
         self._bar = timeframe_delta(config.market.timeframe)
         self.records = SessionRecords()
         self._order = {s: i for i, s in enumerate(config.market.symbols)}
@@ -259,19 +274,33 @@ class TradingSession:
         for sym in self._sorted(s for s in self.resting if s in bars):
             self._match_limit(sym, bars[sym], ts)
 
+        risk_cfg = self.config.risk
         for sym in self._sorted(bars):
             bar = bars[sym]
             position = self.portfolio.position(sym)
             if position is not None and self.risk.stop_triggered(position, bar.low):
                 stop = position.stop_price
                 assert stop is not None
+                kind = "trailing stop" if "stop" in self.trailing.get(sym, {}) else "stop"
                 self._cancel_resting(sym, ts, "cancelled: stop-loss hit")
+                trades_before = len(self.portfolio.closed_trades)
                 self._exit(
                     sym, min(bar.open, stop), ts, DecisionAction.STOP_LOSS,
-                    f"stop {stop:.8g} hit (bar low {bar.low:.8g})", None, stats.get(sym),
+                    f"{kind} {stop:.8g} hit (bar low {bar.low:.8g})", None, stats.get(sym),
                 )
-                self.breakers.on_stop_loss(sym, ts)
+                closed = self.portfolio.closed_trades[trades_before:]
+                if not closed or closed[-1].pnl < 0:  # no cooldown after a profitable trailing exit
+                    self.breakers.on_stop_loss(sym, ts)
                 self.stop_events.append((ts, sym))
+            elif position is not None and risk_cfg.take_profit_pct > 0:
+                target = position.avg_entry_price * (1.0 + risk_cfg.take_profit_pct)
+                if bar.high >= target:
+                    self._cancel_resting(sym, ts, "cancelled: take-profit hit")
+                    self._exit(
+                        sym, max(bar.open, target), ts, DecisionAction.TAKE_PROFIT,
+                        f"take-profit {target:.8g} reached (bar high {bar.high:.8g})", None, stats.get(sym),
+                    )
+        self._update_trailing(bars)
         horizon = ts - RECENT_STOP_BARS * self._bar
         self.stop_events = [(t, s) for t, s in self.stop_events if t > horizon]
 
@@ -301,6 +330,27 @@ class TradingSession:
             self.records.signals.extend(strat_sigs)
             self.records.signals.append(ensemble)
             self._schedule(sym, ts, ensemble)
+
+    def _update_trailing(self, bars: Mapping[str, Bar]) -> None:
+        """Track the highest high of each open position and raise trailing stops (from the next bar)."""
+        for sym in list(self.trailing):
+            if self.portfolio.position(sym) is None:
+                del self.trailing[sym]
+        cfg = self.config.risk
+        for sym in self._sorted(bars):
+            position = self.portfolio.position(sym)
+            if position is None:
+                continue
+            info = self.trailing.setdefault(sym, {"high": bars[sym].high})
+            info["high"] = max(info["high"], bars[sym].high)
+            if cfg.trailing_stop_pct <= 0:
+                continue
+            if info["high"] < position.avg_entry_price * (1.0 + cfg.trailing_activation_pct):
+                continue
+            candidate = info["high"] * (1.0 - cfg.trailing_stop_pct)
+            if position.stop_price is None or candidate > position.stop_price:
+                self.portfolio.set_stop(sym, candidate)
+                info["stop"] = candidate
 
     def portfolio_view(self, sym: str, ts: datetime) -> dict[str, Any]:
         """Read-only, rounded summary of the simulated portfolio at the close of bar ``ts``.
