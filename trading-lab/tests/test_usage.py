@@ -22,7 +22,6 @@ from trading_lab.llm import (
     usage_from_signals,
 )
 from trading_lab.storage import SQLiteStore
-from trading_lab.strategy_factory import strategies_for
 
 UTC = timezone.utc
 START, END = datetime(2024, 2, 1, tzinfo=UTC), datetime(2024, 2, 4, tzinfo=UTC)

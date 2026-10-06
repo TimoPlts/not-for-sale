@@ -17,6 +17,7 @@ from trading_lab.research.experiments import (
     variant_config,
     variant_overrides,
 )
+from trading_lab.research.protocol import VariantSummary, sign_test_p, summarize
 from trading_lab.research.sweep import (
     MemoizedProvider,
     SweepResult,
@@ -33,6 +34,9 @@ from trading_lab.research.walkforward import (
 )
 
 __all__ = [
+    "VariantSummary",
+    "sign_test_p",
+    "summarize",
     "AGENT_STRATEGIES",
     "DEFAULT_VARIANTS",
     "VARIANTS",

@@ -9,7 +9,7 @@ import pytest
 from test_specialists import RoleTransport, agents_config, provider
 from trading_lab.backtest import BacktestEngine
 from trading_lab.cli import main
-from trading_lab.config import AppConfig, VotingConfig
+from trading_lab.config import VotingConfig
 from trading_lab.core.models import ClosedTrade, Decision, DecisionAction, Direction, Signal
 from trading_lab.data import SyntheticProvider
 from trading_lab.research import attribute, attribute_result, attribute_run, format_attribution

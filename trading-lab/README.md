@@ -30,8 +30,49 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 10B (complete):** a lightweight, read-only web dashboard (Streamlit, `trading-lab dashboard`).
 - **Stage 10C (complete):** 24/7 operation on a Linux VM: systemd templates, environment files, named runs (`--run-id`), log files and graceful SIGTERM shutdown. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 - **Stage 10D (complete):** failure recovery for overnight use: a circuit breaker for the model endpoint, back-off during data outages, database-error recovery and health reporting. See [docs/FAILURE_RECOVERY.md](docs/FAILURE_RECOVERY.md).
+- **Stage 10E (complete):** a reproducible protocol for "does Qwen improve out-of-sample performance?", with the variant comparison (folds won, sign test) computed by `experiment --walkforward`. See [docs/EXPERIMENT_PROTOCOL.md](docs/EXPERIMENT_PROTOCOL.md).
+
+### Stage 9/10 summary
+
+The agent framework is now a multi-agent research system powered by the Qwen endpoint, and it stays **paper trading only**:
+
+```
+Qwen model (provider-agnostic client; settings and token from environment variables only)
+├── qwen_trend     ─┐
+├── qwen_momentum  ─┼─ structured votes (direction, confidence, rationale, label)
+└── qwen_risk      ─┘        │
+RSI · MACD · Bollinger ──────┤
+                             ▼
+      VotingEngine → circuit breakers → RiskManager → PaperExecutor (simulated fills)
+```
+
+* **Agents only vote.** They cannot place, size or cancel orders, change the portfolio, or override breakers. Every failure, timeout or malformed answer is a HOLD.
+* **Reproducible:** answers are recorded once (`record`) and replayed offline (`replay`). Market-only agents' answers are shared by every backtest, sweep, walk-forward and experiment variant over the same bars.
+* **Measured:**
+  * `agent-report` gives each agent's votes, directional correctness, calibration, trades influenced, pivotal trades and PnL when it agreed or disagreed;
+  * `experiment` compares the baseline with one, two or three agents, and with the agents alone, out-of-sample;
+  * usage accounting tracks calls, cache hits, failures, latency and tokens.
+* **Operable 24/7:**
+  * `agent-test` checks the connection without trading;
+  * live paper trading with agents is resumable, asks only about new candles and never re-asks;
+  * the read-only dashboard shows everything in one page;
+  * systemd templates, environment files, graceful shutdown and documented failure recovery cover unattended operation.
+* **Safety checks still enforced:** no exchange private endpoints, no exchange or credential fields, no hard-coded tokens, and Qwen secrets only from the environment. Tests check all of these.
 
 ## Quick start
+
+On Linux or macOS the command is `.venv/bin/trading-lab` (or just `trading-lab` after `source .venv/bin/activate`). The examples below use the Windows path. The AI and dashboard commands:
+
+```bash
+trading-lab agent-test qwen                    # check the Qwen connection (no trading)
+trading-lab backtest --start 2025-01-01 --end 2025-07-01        # with agents enabled in the config
+trading-lab agent-report                       # what each agent contributed to the last run
+trading-lab experiment --walkforward --train-days 90 --test-days 30 --start 2024-07-01 --end 2025-07-01
+trading-lab --agent-mode replay experiment ... # the same, fully offline from recorded answers
+trading-lab paper --run-id my-paper-run        # start or resume a named live paper run
+trading-lab dashboard                          # read-only web dashboard (pip install -e ".[dashboard]")
+trading-lab dashboard-data --json              # the same data for scripts
+```
 
 Run these from this folder in PowerShell. The `trading-lab` command lives in the project's virtual environment:
 
@@ -46,7 +87,7 @@ Run these from this folder in PowerShell. The `trading-lab` command lives in the
 .venv/Scripts/trading-lab paper --resume <run id>       # continue a stopped paper run
 .venv/Scripts/trading-lab report                        # list all runs
 .venv/Scripts/trading-lab report <run id>               # details of one run
-.venv/Scripts/python -m pytest                          # run all tests
+.venv/Scripts/python -m pytest                          # run all tests (pip install -e ".[dev,dashboard]")
 ```
 
 To type just `trading-lab`, activate the environment first with `.venv\Scripts\Activate.ps1`.

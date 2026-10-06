@@ -582,7 +582,7 @@ def _stored_signals(store: Any, run_id: str) -> list[Any]:
 
 
 def cmd_experiment(args: argparse.Namespace) -> int:
-    from trading_lab.research import VARIANTS, run_experiment, variant_config
+    from trading_lab.research import VARIANTS, run_experiment, summarize, variant_config
     from trading_lab.storage import SQLiteStore
     from trading_lab.strategy_factory import shared_llm_provider
 
@@ -607,12 +607,14 @@ def cmd_experiment(args: argparse.Namespace) -> int:
             metric=args.metric, store=store if not args.walkforward else None, llm_provider=llm,
             progress=lambda msg: print(f"  running {msg}"),
         )
+        summaries = summarize(rows, metric=args.metric) if args.walkforward else []
         if store is not None:
             label = f"{mode} {','.join(variants)} {start:%Y-%m-%d}..{end:%Y-%m-%d}"
             store.add_research_result("experiment", label, {
                 "mode": mode, "start": start, "end": end, "timeframe": cfg.market.timeframe,
                 "symbols": list(cfg.market.symbols), "agents_mode": cfg.agents.mode, "grid": grid,
-                "rows": [r.summary() for r in rows],
+                "metric": args.metric, "rows": [r.summary() for r in rows],
+                "comparison": [v.to_dict() for v in summaries],
             })
     finally:
         if store is not None:
@@ -628,6 +630,15 @@ def cmd_experiment(args: argparse.Namespace) -> int:
             print(f"{r.variant:<16} {wf.out_of_sample_return:>+10.2%} {bench:>9} "
                   f"{_fmt_num(wf.mean_metric('in_sample')):>18} {_fmt_num(wf.mean_metric('out_of_sample')):>18} "
                   f"{len(wf.folds):>5}  {r.description}")
+        print("\nOut-of-sample, per variant (see docs/EXPERIMENT_PROTOCOL.md):")
+        print(f"{'variant':<16} {'worst DD':>8} {'sharpe':>7} {'PF':>6} {'trades':>6} {'exposure':>8} "
+              f"{'beats baseline':>15} {'sign p':>7}")
+        for v in summaries:
+            vs = "-" if v.variant == "baseline" or not v.compared else f"{v.wins}/{v.compared} folds"
+            exposure = "n/a" if v.mean_exposure is None else f"{v.mean_exposure:.0%}"
+            p_value = "n/a" if v.sign_test_p is None else f"{v.sign_test_p:.3f}"
+            print(f"{v.variant:<16} {-v.worst_fold_drawdown:>8.1%} {_fmt_num(v.mean_sharpe):>7} "
+                  f"{_fmt_num(v.mean_profit_factor):>6} {v.total_trades:>6} {exposure:>8} {vs:>15} {p_value:>7}")
     else:
         print(f"\n{'variant':<16} {'return':>8} {'buy&hold':>9} {'max dd':>7} {'sharpe':>7} {'PF':>6} "
               f"{'trades':>6} {'exposure':>8}  description")
@@ -644,7 +655,10 @@ def cmd_experiment(args: argparse.Namespace) -> int:
         import json as _json
 
         Path(args.export).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.export).write_text(_json.dumps([r.summary() for r in rows], indent=2, default=str))
+        export = [r.summary() for r in rows]
+        if summaries:
+            export = {"rows": export, "comparison": [v.to_dict() for v in summaries]}  # type: ignore[assignment]
+        Path(args.export).write_text(_json.dumps(export, indent=2, default=str))
         print(f"Results written to {Path(args.export).resolve()}")
     return 0
 

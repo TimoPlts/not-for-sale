@@ -91,6 +91,9 @@ trading bot.
 | `cli.py`       | `trading-lab backtest`, `trading-lab paper`, `trading-lab report` | 4 |
 | `agents/`      | Agent interface, context, record/replay cache, `AgentStrategy` adapter, LLM-backed and specialist (Trend/Momentum/Risk) strategies | 6, 9 |
 | `llm/`         | Provider-agnostic LLM clients (`LLMProvider`); Qwen via OpenAI-compatible chat completions | 9 |
+| `research/`    | Sweeps, walk-forward, agent attribution, baseline-vs-AI experiments, out-of-sample comparison | 7, 9, 10 |
+| `dashboard/`   | Read-only data layer over SQLite and the Streamlit app | 10 |
+| `smoke.py`     | `agent-test` connectivity and agent smoke tests | 9 |
 
 ### Key interfaces
 
@@ -295,5 +298,32 @@ average trade return.
 - `docs/FAILURE_RECOVERY.md` lists every failure, what happens, and whether it is recovered or stops the process.
 - Tests: the breaker opens, probes, recovers and can be disabled; paused agents vote HOLD and count as skipped; data outages back off (DataError, connection reset, timeout) and recover; the back-off cap; a locked database mid-cycle gives no lost or duplicate orders or decisions and no repeated question; health in the dashboard; guide coverage.
 
+### Stage 10E: Reproducible AI experiment protocol ✅
+- `docs/EXPERIMENT_PROTOCOL.md` covers:
+  - the hypotheses and experiments A–D (baseline, + Trend, + Trend + Momentum, + all three) on identical periods, costs, liquidity, breakers and voting;
+  - a record-then-replay walk-forward procedure and the metrics to report;
+  - a decision rule fixed in advance (majority of folds with a sign test, a higher compounded out-of-sample return, a drawdown limit, a minimum number of trades, a second period, and a Bonferroni correction);
+  - the pitfalls, including look-ahead through the model's training data.
+- `research/protocol.py`: `summarize` (per variant: compounded out-of-sample return, benchmark, worst-window drawdown, mean Sharpe and profit factor, trades, exposure, folds won against the baseline) and `sign_test_p`. `experiment --walkforward` prints them and saves or exports them.
+- Tests: the sign-test values quoted in the protocol, fold-by-fold comparison (ties and undefined values skipped, infinite profit factors not averaged), CLI output, saved and exported comparisons, and document coverage.
+
+## 4. Stage 9/10 status summary
+
+The Stage 6 agent framework is now a multi-agent paper-trading research system on the teacher's Qwen endpoint. The architecture is provider-agnostic: a new provider is one `LLMProvider` subclass.
+
+| | |
+|---|---|
+| Provider | `llm/`: OpenAI-compatible client. URL, model and token from environment variables only. Timeouts, retries, a circuit breaker, redaction, usage tracking |
+| Agents | `qwen_trend`, `qwen_momentum` (market-only, so answers are shared across experiments), `qwen_risk` (portfolio-aware). Strict JSON with labels; anything else is HOLD; signals only |
+| Integration | Backtests, sweeps, walk-forward, experiments and live paper trading. Record, replay and live modes. Agents are asked only about traded bars, decision bars and new candles |
+| Measurement | `agent-report` (attribution), `experiment` (baseline versus AI, out-of-sample comparison and sign test), usage accounting |
+| Operations | `agent-test`, read-only data layer and Streamlit dashboard, systemd templates, environment file, `--run-id`, log file, SIGTERM, failure recovery |
+| Safety | The voting engine, breakers, risk manager and paper executor sit between every agent and every simulated trade. No exchange keys or private endpoints (the safety scans still pass). No hard-coded tokens. The dashboard cannot write |
+
+Trade-offs worth knowing:
+- `qwen_risk`'s answers depend on the trading path, so each experiment variant asks it new questions. The other two agents can be made portfolio-aware with `portfolio_context = true`, at the same cost.
+- An LLM may have seen historical prices during training. Final out-of-sample claims need periods after the model's training cutoff, and ultimately the live paper run (see the protocol).
+- `weight = 0` now means a strategy does not take part at all. Before, a zero-weight vote still counted towards `min_agreeing`.
+
 ### Later
-Stages 9B–10E (specialised Qwen agents, agent attribution, experiments, usage accounting, smoke test, live integration, dashboard, VM operation, failure recovery, experiment protocol). After that: short positions, trailing stops and order-book data.
+Short positions, trailing stops, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and alerting on breaker trips or long outages.
