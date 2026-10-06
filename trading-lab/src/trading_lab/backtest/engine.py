@@ -43,6 +43,7 @@ from trading_lab.core.models import (
 from trading_lab.core.timeutils import ensure_utc
 from trading_lab.data.base import MarketDataProvider, timeframe_delta
 from trading_lab.engine import Bar, TradingSession
+from trading_lab.engine.filters import filter_columns
 from trading_lab.ensemble import VotingEngine
 from trading_lab.execution import CostModel
 from trading_lab.execution.costs import market_stats_frame, stats_series
@@ -148,7 +149,7 @@ class BacktestEngine:
     def _load(self, start: datetime, end: datetime) -> dict[str, pd.DataFrame]:
         cfg = self._config
         step = timeframe_delta(cfg.market.timeframe)
-        history = max(s.history_bars for s in self._strategies)
+        history = max(max(s.history_bars for s in self._strategies), cfg.risk.trend_filter_period + 1)
         data_start = start - history * step
         candles = {}
         for symbol in cfg.market.symbols:
@@ -247,8 +248,10 @@ class BacktestEngine:
         }
         lookback = cfg.execution.volume_lookback
         market_stats = {
-            sym: stats_series(market_stats_frame(frame, lookback)) for sym, frame in candles.items()
+            sym: stats_series(market_stats_frame(frame, lookback, cfg.risk.atr_period))
+            for sym, frame in candles.items()
         }
+        filters = {sym: filter_columns(frame, cfg.risk) for sym, frame in candles.items()}
 
         timeline = sorted(
             set().union(*(frame.index[frame.index >= start_ts] for frame in candles.values()))
@@ -270,7 +273,8 @@ class BacktestEngine:
             bars = {sym: Bar(*(float(col[i]) for col in ohlcv[sym])) for sym, i in idx.items()}
             stats = {sym: market_stats[sym][i] for sym, i in idx.items()}
             session.open_bar(ts, {sym: bar.open for sym, bar in bars.items()}, stats)
-            session.close_bar(ts, bars, {sym: sources(sym, i) for sym, i in idx.items()}, stats)
+            session.close_bar(ts, bars, {sym: sources(sym, i) for sym, i in idx.items()}, stats,
+                              {sym: filters[sym][i] for sym, i in idx.items()})
 
         last_ts = timeline[-1].to_pydatetime()
         session.expire_pending(last_ts)

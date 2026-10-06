@@ -26,6 +26,7 @@ from trading_lab.research.sweep import (
     rank_key,
     run_sweep,
 )
+from trading_lab.research.weighting import WeightingRule, adaptive_weights
 from trading_lab.research.walkforward import (
     WalkForwardFold,
     WalkForwardResult,
@@ -34,6 +35,8 @@ from trading_lab.research.walkforward import (
 )
 
 __all__ = [
+    "WeightingRule",
+    "adaptive_weights",
     "VariantSummary",
     "sign_test_p",
     "summarize",

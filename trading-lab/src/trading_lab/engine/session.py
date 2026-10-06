@@ -36,6 +36,13 @@ period:
     (once the high is ``trailing_activation_pct`` above the average cost).
     Stops only move up, and a raised stop applies from the next bar on.
   * The stop-loss cooldown only follows stop exits that lost money.
+  * Optional entry filters only block NEW entries (recorded as IGNORED):
+      - ``risk.trend_filter_period``: no entry while the close is below its
+        simple moving average (``market`` passed to ``close_bar``); an unknown
+        average (too little history) also blocks;
+      - ``risk.block_entries_on_risk_states``: no entry while the latest
+        ``risk_state`` reported for the symbol (e.g. by ``qwen_risk``, at
+        most ``risk_state_max_age_bars`` old) is one of the listed states.
 
 ``open_bar`` only touches scheduled orders, so calling it again for the same
 bar is harmless. Every output (signals, decisions, execution reports,
@@ -188,6 +195,7 @@ class TradingSession:
         resting: Mapping[str, RestingLimit] | None = None,
         stop_events: Sequence[tuple[datetime, str]] | None = None,
         trailing: Mapping[str, Mapping[str, float]] | None = None,
+        risk_states: Mapping[str, tuple[datetime, str]] | None = None,
     ) -> None:
         self.config = config
         self.voting = voting
@@ -214,6 +222,7 @@ class TradingSession:
         self.stop_events: list[tuple[datetime, str]] = list(stop_events or [])
         # Per open position: {"high": highest high since entry, "stop": raised stop (if any)}.
         self.trailing: dict[str, dict[str, float]] = {k: dict(v) for k, v in (trailing or {}).items()}
+        self.risk_states: dict[str, tuple[datetime, str]] = dict(risk_states or {})  # latest reported per symbol
         for sym, info in self.trailing.items():  # re-apply raised stops (positions are rebuilt from fills)
             if "stop" in info and self.portfolio.position(sym) is not None:
                 self.portfolio.set_stop(sym, info["stop"])
@@ -268,9 +277,14 @@ class TradingSession:
         bars: Mapping[str, Bar],
         strategy_signals: Mapping[str, Sequence[SignalSource]],
         stats: Mapping[str, MarketStats | None] | None = None,
+        market: Mapping[str, Mapping[str, float | None]] | None = None,
     ) -> None:
-        """Limit fills, stop-losses, mark to market, circuit breakers, new signals."""
+        """Limit fills, stop-losses, mark to market, circuit breakers, new signals.
+
+        ``market`` carries per-symbol facts for entry filters, e.g. ``{"trend_sma": 123.4}``.
+        """
         stats = stats or {}
+        market = market or {}
         for sym in self._sorted(s for s in self.resting if s in bars):
             self._match_limit(sym, bars[sym], ts)
 
@@ -326,10 +340,14 @@ class TradingSession:
                 self.portfolio_view(sym, ts) if any(not isinstance(s, Signal) for s in sources) else None
             )
             strat_sigs = [s if isinstance(s, Signal) else s(view) for s in sources]  # type: ignore[arg-type]
+            for sig in strat_sigs:
+                state = sig.metadata.get("risk_state")
+                if isinstance(state, str) and "error" not in sig.metadata:
+                    self.risk_states[sym] = (ts, state)
             ensemble = self.voting.combine(strat_sigs)
             self.records.signals.extend(strat_sigs)
             self.records.signals.append(ensemble)
-            self._schedule(sym, ts, ensemble)
+            self._schedule(sym, ts, ensemble, bars[sym], market.get(sym, {}))
 
     def _update_trailing(self, bars: Mapping[str, Bar]) -> None:
         """Track the highest high of each open position and raise trailing stops (from the next bar)."""
@@ -428,7 +446,7 @@ class TradingSession:
         fill = self.costs.fill_price(Side.BUY, open_price, quantity, stats)
         affordable = self.costs.fee_model.max_notional(self.portfolio.cash) * (1 - 1e-9) / fill
         quantity = min(quantity, affordable)
-        stop = self.risk.stop_price_for(fill)
+        stop = self.risk.stop_price_for(fill, stats)
         order = Order(sym, Side.BUY, quantity, ts, stop_price=stop, reason="enter")
         report = self.executor.submit(order, open_price, stats)
         self.records.reports.append(report)
@@ -455,7 +473,7 @@ class TradingSession:
             self._decide(ts, sym, DecisionAction.REJECTED, decision.reason, sig,
                          reference_price=limit, details=decision.sizing)
             return
-        stop = self.risk.stop_price_for(limit)
+        stop = self.risk.stop_price_for(limit, stats)
         self.resting[sym] = RestingLimit(
             sym, limit, decision.quantity, decision.quantity, stop, ts, ex.limit_ttl_bars, sig
         )
@@ -533,7 +551,29 @@ class TradingSession:
             self.pending[sym] = Intent(DecisionAction.EXIT_SIGNAL, signal)
             self._decide(ts, sym, DecisionAction.EXIT_SIGNAL, "kill switch: closing position", signal)
 
-    def _schedule(self, sym: str, ts: datetime, ensemble: Signal) -> None:
+    def entry_filter_reason(
+        self, sym: str, ts: datetime, close: float, market: Mapping[str, float | None]
+    ) -> str | None:
+        """Why a new entry signalled at the close of ``ts`` is filtered out, or None."""
+        cfg = self.config.risk
+        if cfg.trend_filter_period > 0:
+            sma = market.get("trend_sma")
+            if sma is None:
+                return f"trend filter: not enough history for the {cfg.trend_filter_period}-bar average"
+            if close < sma:
+                return f"trend filter: close {close:.8g} below its {cfg.trend_filter_period}-bar average {sma:.8g}"
+        if cfg.block_entries_on_risk_states:
+            reported = self.risk_states.get(sym)
+            if reported is not None:
+                at, state = reported
+                if state in cfg.block_entries_on_risk_states and ts - at < cfg.risk_state_max_age_bars * self._bar:
+                    return f"risk filter: risk_state {state!r} reported {at:%Y-%m-%d %H:%M}"
+        return None
+
+    def _schedule(
+        self, sym: str, ts: datetime, ensemble: Signal, bar: Bar | None = None,
+        market: Mapping[str, float | None] | None = None,
+    ) -> None:
         existing = self.pending.get(sym)
         if existing is not None and existing.signal.strategy == "risk_manager":
             return  # a kill-switch exit is scheduled; strategies cannot override it
@@ -544,6 +584,8 @@ class TradingSession:
                 self._decide(ts, sym, DecisionAction.IGNORED, "BUY signal but position already open", ensemble)
             elif sym in self.resting:
                 self._decide(ts, sym, DecisionAction.IGNORED, "BUY signal but limit order already working", ensemble)
+            elif bar is not None and (blocked := self.entry_filter_reason(sym, ts, bar.close, market or {})):
+                self._decide(ts, sym, DecisionAction.IGNORED, f"BUY signal blocked by {blocked}", ensemble)
             else:
                 self.pending[sym] = Intent(DecisionAction.ENTER_SIGNAL, ensemble)
                 self._decide(ts, sym, DecisionAction.ENTER_SIGNAL, "entry scheduled for next bar open", ensemble)

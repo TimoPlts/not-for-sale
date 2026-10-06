@@ -34,6 +34,10 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 11A (complete):** optional trailing stops and take-profit exits (long-only, no look-ahead, identical in backtests and live, kept across resume).
 - **Stage 11B (complete):** `trading-lab summary`: what a run did over the last N hours, in Markdown.
 - **Stage 11C (complete):** push alerts (ntfy, Slack, Discord or JSON webhook) for breaker trips, outages, model pauses, crashes and a daily summary.
+- **Stage 12A (complete):** optional ATR-based stops with volatility-scaled position sizing (the same risk per trade on every coin).
+- **Stage 12B (complete):** AI agent weights that adapt to each agent's track record in walk-forward (`--adaptive-weights`, no look-ahead) and suggested weights for a run (`trading-lab agent-weights`).
+- **Stage 12C (complete):** optional entry filters (trend filter and a `qwen_risk` risk-state veto) that only ever block new entries.
+- **Stage 12D (complete):** `trading-lab report RUN_ID --html FILE`, a single self-contained HTML report to share.
 
 ### Stage 9/10 summary
 
@@ -133,6 +137,21 @@ It opens the database in SQLite's **read-only** mode, so it cannot write anythin
 trading-lab dashboard-data            # summary of the running paper run (or the latest run)
 trading-lab dashboard-data <run id> --json
 ```
+
+## HTML report
+
+```bash
+trading-lab report <run id> --html reports/run.html     # or omit the run id for the latest run
+```
+
+One self-contained file, with no external scripts, styles or fonts, so it opens offline and can be e-mailed to your teacher:
+
+* key numbers: return against buy & hold, max drawdown, Sharpe, profit factor, trades, win rate and exposure;
+* the equity curve against buy & hold, with hover values, and the drawdown;
+* a daily table view of the same numbers;
+* every voter's performance (AI agents marked), the latest AI rationales, model usage, breaker trips, closed trades and decision counts.
+
+It follows your system's light/dark setting. The report is built from the read-only data layer, so it never changes the database. All text from the database, including model rationales, is HTML-escaped.
 
 ## Run summary
 
@@ -481,6 +500,49 @@ Optional exits in `[risk]` (0 = off, the default):
 | `take_profit_pct = 0.10` | exit when a bar's high reaches average cost × 1.10, at that price, or at the open if the bar gapped above it |
 
 If the stop and the target are both reached in the same bar, the stop is assumed to come first, which is the conservative choice. Take-profit exits are recorded as `take_profit` decisions, and trailing-stop exits as `stop_loss` with "trailing stop" in the reason. The stop-loss cooldown now follows only stop exits that **lost** money: a trailing stop that locks in a gain does not block re-entry. Raised stops are saved with a live run, so they survive `--resume`, and the dashboard shows the current stop.
+
+## Volatility-scaled sizing (ATR stops)
+
+With `stop_mode = "atr"` in `[risk]`, the initial stop is set by recent volatility instead of a fixed percentage:
+
+```
+stop distance = atr_stop_multiple × ATR(atr_period) / entry price,
+                clamped to [atr_stop_min_pct, atr_stop_max_pct]
+```
+
+The risk-per-trade sizing already sizes each entry so that hitting the stop loses `risk_per_trade_pct` of equity. A volatile coin therefore gets a wider stop and a proportionally **smaller** position, and a calm one a tighter stop and a larger position. The risk per trade is the same either way, and the other limits (max position, exposure, cash, liquidity) still apply.
+
+ATR is the **simple** average true range of the bars *before* the fill, so it never sees the bar it trades on, and live paper trading computes exactly the same value as a backtest. Until there is enough history, the fixed `stop_loss_pct` is used. Each entry decision records `stop_basis` (`atr` or `percent`) and `stop_distance_pct`. Trailing stops and take-profit work on top of either mode.
+
+## Entry filters (trend and risk regime)
+
+Two optional filters in `[risk]`. They can only **block new entries**. They never force an exit, never change a position and never override the circuit breakers, which keep applying as before. A blocked BUY is recorded as an `ignored` decision with the filter's reason.
+
+| setting | effect |
+|---------|--------|
+| `trend_filter_period = 200` | no new entry while the close is below its 200-bar **simple** moving average. A simple average is used so live and backtest see the same value. With too little history to compute it, entries are blocked. |
+| `block_entries_on_risk_states = ["extreme"]` | no new entry while the latest `risk_state` reported for that symbol (by `qwen_risk`) is in the list, for up to `risk_state_max_age_bars` (8) bars after the answer. The last reported state is saved with live runs, so it survives `--resume`. |
+
+## Agent weights from their track record
+
+Agents that are often wrong should count for less. `--adaptive-weights` turns that into a rule, re-applied in every walk-forward fold:
+
+```
+multiplier = 1 + 10 × (directional correctness − 50%)          (55% → ×1.5, 45% → ×0.5, ≤40% → off)
+new weight = current weight × multiplier, capped at --weight-max (default 2.0)
+```
+
+* An agent with fewer than `--weight-min-votes` (30) measurable votes keeps its weight: no evidence, no change.
+* RSI, MACD and Bollinger are never re-weighted.
+* **No look-ahead:** each test window's weights come only from the training window before it, and only from votes whose outcome (`--weight-horizon` bars later) is known inside that training window. A test proves that changing the data after a training window cannot change its weights.
+
+```bash
+trading-lab walkforward --param strategies.qwen_trend.weight=1 --adaptive-weights --train-days 90 --test-days 30
+trading-lab experiment --walkforward --adaptive-weights --variants baseline,all_agents ...   # weights per fold in --export
+trading-lab agent-weights <run id>    # suggested weights from one run's record, as a config snippet
+```
+
+The weights `agent-weights` suggests are in-sample for that run. Validate them with walk-forward before using them live.
 
 ## Execution realism
 

@@ -40,6 +40,7 @@ from trading_lab.llm import LLMProvider
 from trading_lab.metrics import PerformanceMetrics
 from trading_lab.research.sweep import MemoizedProvider, apply_params
 from trading_lab.research.walkforward import WalkForwardResult, walk_forward
+from trading_lab.research.weighting import WeightingRule
 from trading_lab.storage import SQLiteStore
 
 AGENT_STRATEGIES: tuple[str, ...] = ("qwen_trend", "qwen_momentum", "qwen_risk")
@@ -110,6 +111,7 @@ class ExperimentRow:
                 "mean_out_of_sample": wf.mean_metric("out_of_sample"),
                 "folds": [
                     {"test_start": f.test_start, "test_end": f.test_end, "best_params": f.best_params,
+                     "agent_weights": f.agent_weights,
                      "in_sample": f.in_sample.to_dict(), "out_of_sample": f.out_of_sample.to_dict(),
                      "benchmark": None if f.benchmark is None else f.benchmark.to_dict()}
                     for f in wf.folds
@@ -133,6 +135,8 @@ def run_experiment(
     store: SQLiteStore | None = None,
     llm_provider: LLMProvider | None = None,
     progress: Callable[[str], None] | None = None,
+    adapt_agent_weights: bool = False,
+    weighting: WeightingRule | None = None,
 ) -> list[ExperimentRow]:
     """Run every variant over the same period, in the order given.
 
@@ -152,7 +156,8 @@ def run_experiment(
             progress(f"{variant}: {description}")
         if walkforward:
             result = walk_forward(cfg, memo, start, end, dict(grid or {}), train=train, test=test,
-                                  metric=metric, llm_provider=llm_provider)
+                                  metric=metric, llm_provider=llm_provider,
+                                  adapt_agent_weights=adapt_agent_weights, weighting=weighting)
             rows.append(ExperimentRow(variant, description, cfg.fingerprint(), walkforward=result))
         else:
             backtest = BacktestEngine(cfg, memo, store=store, llm_provider=llm_provider).run(
