@@ -356,5 +356,11 @@ Trade-offs worth knowing:
 - `RiskManager.stop_distance_pct` / `stop_price_for(fill, stats)` give the ATR distance, clamped, falling back to `stop_loss_pct` without history. Risk-per-trade sizing uses it, so the loss at the stop is the same share of equity for every coin. `stop_basis` and `stop_distance_pct` are recorded in each entry's sizing details.
 - Tests: ATR identical for the backtest and live paths and causal; modes, clamping and fallback; equal risk with a quarter of the size at four times the ATR; a backtest in ATR mode; live equal to the backtest in ATR mode (fills and stops); validation.
 
+### Stage 12B: Adaptive agent weights ✅
+- `research/weighting.py`: `WeightingRule` (horizon, min_votes, sensitivity, min/max weight) and `adaptive_weights`. The multiplier is 1 + sensitivity × (correctness − 0.5), clamped. Agents without enough measurable votes keep their weight, and deterministic strategies are never touched. If every voter would be switched off, the current weights are kept.
+- `walk_forward(..., adapt_agent_weights=True)`: per fold, the attribution of the training backtest sets the agents' weights for the test window. These are recorded as `WalkForwardFold.agent_weights` and exported by `experiment`.
+- CLI: `walkforward` and `experiment --walkforward` take `--adaptive-weights`, `--weight-horizon`, `--weight-min-votes` and `--weight-max`. `trading-lab agent-weights [RUN_ID]` prints suggested weights and a config snippet.
+- Tests: the rule's numbers, caps and floors; the all-off guard; fold weights equal to a separate training backtest's; changing the data after a training window leaves its weights unchanged (no look-ahead); fixed weights by default; the CLI.
+
 ### Later
 Short positions, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and more alert channels (e-mail).

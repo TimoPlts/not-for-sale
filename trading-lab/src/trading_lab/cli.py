@@ -14,6 +14,7 @@
     trading-lab dashboard [--host 127.0.0.1] [--port 8501]
     trading-lab summary [RUN_ID] [--hours 24]
     trading-lab alert-test [--format ntfy|slack|discord|json]
+    trading-lab agent-weights [RUN_ID]
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -470,6 +471,15 @@ def _grid_llm(cfg: AppConfig, grid: dict[str, list[Any]]) -> Any:
     return shared_llm_provider([apply_params(cfg, params) for params in expand_grid(grid)])
 
 
+def _weighting(args: argparse.Namespace) -> Any:
+    from trading_lab.research import WeightingRule
+
+    if getattr(args, "adaptive_weights", False) and not getattr(args, "walkforward", True):
+        raise TradingLabError("--adaptive-weights needs --walkforward (weights come from each training window)")
+    return WeightingRule(horizon=args.weight_horizon, min_votes=args.weight_min_votes,
+                         max_weight=args.weight_max)
+
+
 def _short(params: dict[str, Any]) -> str:
     return " ".join(f"{k.split('.', 1)[-1]}={v}" for k, v in params.items())
 
@@ -532,6 +542,7 @@ def cmd_walkforward(args: argparse.Namespace) -> int:
         cfg, provider, start, end, grid,
         train=timedelta(days=args.train_days), test=timedelta(days=args.test_days),
         metric=args.metric, progress=lambda msg: print(f"  {msg}"), llm_provider=(llm := _grid_llm(cfg, grid)),
+        adapt_agent_weights=args.adaptive_weights, weighting=_weighting(args),
     )
     metric = args.metric
     print(f"\n{'test window':<25} {'in-sample':>10} {'out-of-sample':>14} "
@@ -541,7 +552,8 @@ def cmd_walkforward(args: argparse.Namespace) -> int:
         oos_v = getattr(f.out_of_sample, metric)
         bh = "n/a" if f.benchmark is None else f"{f.benchmark.total_return:+.2%}"
         print(f"{f.test_start:%Y-%m-%d} -> {f.test_end:%Y-%m-%d}  {_fmt_num(is_v):>10} {_fmt_num(oos_v):>14} "
-              f"{f.out_of_sample.total_return:>+11.2%} {bh:>9}  {_short(f.best_params)}")
+              f"{f.out_of_sample.total_return:>+11.2%} {bh:>9}  {_short(f.best_params)}"
+              + (f"  weights {_short(f.agent_weights)}" if f.agent_weights else ""))
     is_mean, oos_mean = result.mean_metric("in_sample"), result.mean_metric("out_of_sample")
     print(f"\nMean {metric}: in-sample {_fmt_num(is_mean)} vs out-of-sample {_fmt_num(oos_mean)}")
     bench = result.benchmark_return
@@ -621,6 +633,7 @@ def cmd_experiment(args: argparse.Namespace) -> int:
             train=timedelta(days=args.train_days), test=timedelta(days=args.test_days),
             metric=args.metric, store=store if not args.walkforward else None, llm_provider=llm,
             progress=lambda msg: print(f"  running {msg}"),
+            adapt_agent_weights=args.adaptive_weights, weighting=_weighting(args),
         )
         summaries = summarize(rows, metric=args.metric) if args.walkforward else []
         if store is not None:
@@ -786,6 +799,38 @@ def cmd_alert_test(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_agent_weights(args: argparse.Namespace) -> int:
+    from trading_lab.research import WeightingRule, adaptive_weights, attribute_run
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    rule = WeightingRule(horizon=args.weight_horizon, min_votes=args.weight_min_votes, max_weight=args.weight_max)
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        run_id = args.run_id or _latest_run_id(store)
+        run = store.get_run(run_id)
+        if run is None:
+            raise TradingLabError(f"unknown run id {run_id}")
+        run_cfg = AppConfig.from_dict(run["config"])
+        attributions = attribute_run(store, run_id, horizon=rule.horizon)
+    current = {s.name: s.weight for s in run_cfg.enabled_strategies}
+    weights = adaptive_weights(attributions, current, rule)
+    if not weights:
+        print(f"Run {run_id}: no AI agent voted, nothing to re-weight.")
+        return 0
+    print(f"Run {run_id}: suggested agent weights from its own record ({rule.horizon}-bar horizon, "
+          f"at least {rule.min_votes} measurable votes to change a weight)")
+    print(f"{'agent':<16} {'measured':>8} {'correct':>8} {'weight':>7} -> {'new':>6}")
+    for name, new in weights.items():
+        a = attributions[name]
+        correct = "n/a" if a.directional_correctness is None else f"{a.directional_correctness:.1%}"
+        print(f"{name:<16} {a.measured:>8} {correct:>8} {current[name]:>7.2f} -> {new:>6.2f}")
+    print("\nPaste into your config to use them (in-sample for this run: check them with "
+          "walkforward --adaptive-weights first):")
+    for name, new in weights.items():
+        print(f"[strategies.{name}]\nweight = {new}")
+    return 0
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from trading_lab.reporting import run_metrics
     from trading_lab.storage import SQLiteStore
@@ -892,10 +937,19 @@ def build_parser() -> argparse.ArgumentParser:
     sw.add_argument("--export", metavar="CSV", help="write the results table to a CSV file")
     sw.set_defaults(func=cmd_sweep)
 
+    def weighting_options(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--weight-horizon", type=int, default=4, help="bars ahead to judge agent votes (default 4)")
+        p.add_argument("--weight-min-votes", type=int, default=30,
+                       help="measurable votes needed before an agent's weight changes (default 30)")
+        p.add_argument("--weight-max", type=float, default=2.0, help="largest agent weight (default 2.0)")
+
     wf = sub.add_parser("walkforward", help="choose parameters in-sample, measure them out-of-sample")
     research_options(wf, 365)
     wf.add_argument("--train-days", type=int, default=90)
     wf.add_argument("--test-days", type=int, default=30)
+    wf.add_argument("--adaptive-weights", action="store_true",
+                    help="set AI agent weights for each test window from their training-window record")
+    weighting_options(wf)
     wf.set_defaults(func=cmd_walkforward)
 
     ar = sub.add_parser("agent-report", help="per-agent votes, correctness and trade attribution")
@@ -912,6 +966,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="walk-forward per variant (out-of-sample); --param grids are tuned in-sample")
     ex.add_argument("--train-days", type=int, default=90)
     ex.add_argument("--test-days", type=int, default=30)
+    ex.add_argument("--adaptive-weights", action="store_true",
+                    help="(walk-forward) set agent weights per test window from the training window's record")
+    weighting_options(ex)
     ex.add_argument("--save", action="store_true",
                     help="store the summary (and, in backtest mode, every run) in the database")
     ex.add_argument("--export", metavar="JSON", help="write the full results to a JSON file")
@@ -946,6 +1003,11 @@ def build_parser() -> argparse.ArgumentParser:
     al = sub.add_parser("alert-test", help="send one test notification to TRADING_LAB_ALERT_URL")
     al.add_argument("--format", choices=("ntfy", "slack", "discord", "json"), help="default: [alerts] format")
     al.set_defaults(func=cmd_alert_test)
+
+    aw = sub.add_parser("agent-weights", help="suggest AI agent weights from a stored run's record")
+    aw.add_argument("run_id", nargs="?", help="default: the most recent run")
+    weighting_options(aw)
+    aw.set_defaults(func=cmd_agent_weights)
 
     cp = sub.add_parser("compare", help="compare stored runs side by side")
     cp.add_argument("run_ids", nargs="+")

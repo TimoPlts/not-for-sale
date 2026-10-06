@@ -14,7 +14,7 @@ The combined out-of-sample return compounds the per-window returns.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping, Sequence
 
@@ -24,7 +24,9 @@ from trading_lab.core.errors import ConfigError
 from trading_lab.data.base import MarketDataProvider
 from trading_lab.llm import LLMProvider
 from trading_lab.metrics import PerformanceMetrics
+from trading_lab.research.attribution import attribute_result
 from trading_lab.research.sweep import MemoizedProvider, apply_params, metric_value, run_sweep
+from trading_lab.research.weighting import WeightingRule, adaptive_weights
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +39,7 @@ class WalkForwardFold:
     in_sample: PerformanceMetrics
     out_of_sample: PerformanceMetrics
     benchmark: PerformanceMetrics | None
+    agent_weights: dict[str, float] = field(default_factory=dict)  # used in the test window (adaptive mode)
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +100,15 @@ def walk_forward(
     metric: str = "sharpe_ratio",
     progress: Callable[[str], None] | None = None,
     llm_provider: LLMProvider | None = None,
+    adapt_agent_weights: bool = False,
+    weighting: WeightingRule | None = None,
 ) -> WalkForwardResult:
+    """Walk-forward evaluation; see the module docstring.
+
+    With ``adapt_agent_weights`` the AI agents' weights for each test window
+    are set from their record in that fold's training backtest
+    (``research.weighting``), never from the test window itself.
+    """
     memo = provider if isinstance(provider, MemoizedProvider) else MemoizedProvider(provider)
     folds = []
     for n, (tr_start, tr_end, te_start, te_end) in enumerate(make_folds(start, end, train, test, step), 1):
@@ -105,11 +116,18 @@ def walk_forward(
             progress(f"fold {n}: train {tr_start:%Y-%m-%d} -> {tr_end:%Y-%m-%d}, "
                      f"test {te_start:%Y-%m-%d} -> {te_end:%Y-%m-%d}")
         best = run_sweep(base_config, memo, tr_start, tr_end, grid, metric=metric, llm_provider=llm_provider)[0]
-        test_run = BacktestEngine(
-            apply_params(base_config, best.params), memo, llm_provider=llm_provider
-        ).run(te_start, te_end)
+        test_config = apply_params(base_config, best.params)
+        weights: dict[str, float] = {}
+        if adapt_agent_weights:
+            rule = weighting or WeightingRule()
+            train = BacktestEngine(test_config, memo, llm_provider=llm_provider).run(tr_start, tr_end)
+            current = {s.name: s.weight for s in test_config.enabled_strategies}
+            weights = adaptive_weights(attribute_result(train, test_config, horizon=rule.horizon), current, rule)
+            if weights:
+                test_config = apply_params(test_config, {f"strategies.{n}.weight": w for n, w in weights.items()})
+        test_run = BacktestEngine(test_config, memo, llm_provider=llm_provider).run(te_start, te_end)
         folds.append(
             WalkForwardFold(tr_start, tr_end, te_start, te_end, best.params, best.metrics,
-                            test_run.metrics, test_run.benchmark)
+                            test_run.metrics, test_run.benchmark, weights)
         )
     return WalkForwardResult(metric, tuple(folds))

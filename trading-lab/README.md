@@ -35,6 +35,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 11B (complete):** `trading-lab summary`: what a run did over the last N hours, in Markdown.
 - **Stage 11C (complete):** push alerts (ntfy, Slack, Discord or JSON webhook) for breaker trips, outages, model pauses, crashes and a daily summary.
 - **Stage 12A (complete):** optional ATR-based stops with volatility-scaled position sizing (the same risk per trade on every coin).
+- **Stage 12B (complete):** AI agent weights that adapt to each agent's track record in walk-forward (`--adaptive-weights`, no look-ahead) and suggested weights for a run (`trading-lab agent-weights`).
 
 ### Stage 9/10 summary
 
@@ -495,6 +496,27 @@ stop distance = atr_stop_multiple × ATR(atr_period) / entry price,
 The risk-per-trade sizing already sizes each entry so that hitting the stop loses `risk_per_trade_pct` of equity. A volatile coin therefore gets a wider stop and a proportionally **smaller** position, and a calm one a tighter stop and a larger position. The risk per trade is the same either way, and the other limits (max position, exposure, cash, liquidity) still apply.
 
 ATR is the **simple** average true range of the bars *before* the fill, so it never sees the bar it trades on, and live paper trading computes exactly the same value as a backtest. Until there is enough history, the fixed `stop_loss_pct` is used. Each entry decision records `stop_basis` (`atr` or `percent`) and `stop_distance_pct`. Trailing stops and take-profit work on top of either mode.
+
+## Agent weights from their track record
+
+Agents that are often wrong should count for less. `--adaptive-weights` turns that into a rule, re-applied in every walk-forward fold:
+
+```
+multiplier = 1 + 10 × (directional correctness − 50%)          (55% → ×1.5, 45% → ×0.5, ≤40% → off)
+new weight = current weight × multiplier, capped at --weight-max (default 2.0)
+```
+
+* An agent with fewer than `--weight-min-votes` (30) measurable votes keeps its weight: no evidence, no change.
+* RSI, MACD and Bollinger are never re-weighted.
+* **No look-ahead:** each test window's weights come only from the training window before it, and only from votes whose outcome (`--weight-horizon` bars later) is known inside that training window. A test proves that changing the data after a training window cannot change its weights.
+
+```bash
+trading-lab walkforward --param strategies.qwen_trend.weight=1 --adaptive-weights --train-days 90 --test-days 30
+trading-lab experiment --walkforward --adaptive-weights --variants baseline,all_agents ...   # weights per fold in --export
+trading-lab agent-weights <run id>    # suggested weights from one run's record, as a config snippet
+```
+
+The weights `agent-weights` suggests are in-sample for that run. Validate them with walk-forward before using them live.
 
 ## Execution realism
 
