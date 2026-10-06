@@ -42,6 +42,7 @@ from trading_lab.data.base import MarketDataProvider, timeframe_delta
 from trading_lab.engine import Bar, Intent, TradingSession
 from trading_lab.engine.session import RestingLimit
 from trading_lab.execution.costs import market_stats_frame, next_bar_stats, stats_series
+from trading_lab.llm import LLMProvider
 from trading_lab.portfolio import Portfolio
 from trading_lab.risk.breakers import BreakerState
 from trading_lab.reporting import run_metrics
@@ -80,13 +81,15 @@ class LivePaperTrader:
         clock: Callable[[], datetime] = _utcnow,
         run_id: str | None = None,
         notes: str = "",
+        llm_provider: LLMProvider | None = None,
     ) -> None:
         self._config = config
         self._provider = provider
         self._store = store
         self._clock = clock
         self._strategies = (
-            list(strategies) if strategies is not None else strategies_for(config)
+            list(strategies) if strategies is not None
+            else strategies_for(config, llm_provider=llm_provider)
         )
         self._voting = build_voting(config, self._strategies)
         self._step = timeframe_delta(config.market.timeframe)
@@ -151,6 +154,7 @@ class LivePaperTrader:
             last_close=state.get("last_close", {}),
             breaker_state=BreakerState.from_json(state["breakers"]) if "breakers" in state else None,
             resting={s: RestingLimit.from_json(v) for s, v in state.get("resting", {}).items()},
+            stop_events=[(datetime.fromisoformat(t), sym) for t, sym in state.get("stop_events", [])],
         )
         last = state.get("last_processed")
         self._last_processed = pd.Timestamp(last) if last else None
@@ -192,6 +196,7 @@ class LivePaperTrader:
             "order_sequence": self._session.executor.sequence,
             "breakers": self._session.breakers.state.to_json(),
             "resting": {s: order.to_json() for s, order in self._session.resting.items()},
+            "stop_events": [[t.isoformat(), sym] for t, sym in self._session.stop_events],
         }
 
     # ------------------------------------------------------------------ cycle
@@ -222,11 +227,32 @@ class LivePaperTrader:
 
         fills_before = len(self.portfolio.fills)
         if new_bars:
-            signals = {
-                sym: [s.generate_signals(sym, candles[sym]) for s in self._strategies]
+            position = {sym: {ts: i for i, ts in enumerate(candles[sym].index)} for sym in candles}
+            # Strategies are evaluated for the new bars only: an AI agent is never asked
+            # again about bars processed in earlier cycles (or before a resume).
+            # Portfolio-aware strategies are evaluated inside the session, bar by bar.
+            new_positions = {
+                sym: [i for t in new_bars if (i := position[sym].get(t)) is not None]
                 for sym in cfg.market.symbols
             }
-            position = {sym: {ts: i for i, ts in enumerate(candles[sym].index)} for sym in candles}
+            precomputed = {
+                sym: [
+                    None if s.uses_portfolio
+                    else dict(zip(new_positions[sym], s.generate_signals_at(sym, candles[sym], new_positions[sym])))
+                    for s in self._strategies
+                ]
+                for sym in cfg.market.symbols
+            }
+
+            def sources(sym: str, i: int) -> list:  # type: ignore[type-arg]
+                out = []
+                for strategy, ready in zip(self._strategies, precomputed[sym]):
+                    if ready is None:
+                        out.append(lambda view, s=strategy: s.signal_at(sym, candles[sym], i, view))
+                    else:
+                        out.append(ready[i])
+                return out
+
             lookback = cfg.execution.volume_lookback
             market_stats = {
                 sym: stats_series(market_stats_frame(frame, lookback)) for sym, frame in candles.items()
@@ -240,10 +266,7 @@ class LivePaperTrader:
                 }
                 stats = {sym: market_stats[sym][i] for sym, i in idx.items()}
                 self._session.open_bar(ts, {sym: b.open for sym, b in bars.items()}, stats)
-                self._session.close_bar(
-                    ts, bars, {sym: [per_bar[i] for per_bar in signals[sym]] for sym, i in idx.items()},
-                    stats,
-                )
+                self._session.close_bar(ts, bars, {sym: sources(sym, i) for sym, i in idx.items()}, stats)
                 self._last_processed = t
 
         # Fill freshly scheduled orders at the open of the candle that just started.

@@ -265,5 +265,10 @@ average trade return.
 - `smoke.py` plus `trading-lab agent-test [qwen | qwen_trend | qwen_momentum | qwen_risk | llm_analyst]`. It shows which environment variables are set (the token is never shown), sends one tiny prompt, validates the structured answer and prints the model, latency, attempts and tokens. Agent tests ask the real agent about the latest closed candle (public or `--synthetic` data); the risk agent sees a flat simulated portfolio. Live mode, a throw-away cache, no database, no orders.
 - Tests (mocked credentials): success, missing variables, malformed, unauthorised and non-JSON answers, each agent, unknown targets. Any attempt to submit an order fails the test.
 
+### Stage 9G: Qwen agents in live paper trading ✅
+- `LivePaperTrader` evaluates strategies only for the candles that closed since the last cycle (`generate_signals_at`). Portfolio-aware agents are evaluated inside the session with the live portfolio view, and the trader accepts a shared `llm_provider`.
+- The session state persists recent stop-outs (`stop_events`) next to the breakers, working limit orders, scheduled orders and last prices, so the risk agent's context is identical after `--resume`.
+- Tests: live with three mocked agents equals the backtest and asks only about traded bars on decision bars; stop and resume equals an uninterrupted run (fills, every decision, breakers, working limits, stop-outs, no repeated question), with market and limit entries; a crash after the agents answered leaves nothing behind, and the restart reuses the cached answers and duplicates no order; model failures become HOLD while trading continues; live mode never re-asks processed bars across a resume.
+
 ### Later
 Stages 9B–10E (specialised Qwen agents, agent attribution, experiments, usage accounting, smoke test, live integration, dashboard, VM operation, failure recovery, experiment protocol). After that: short positions, trailing stops and order-book data.

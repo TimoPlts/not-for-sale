@@ -25,6 +25,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 9D (complete):** baseline versus AI experiments (`trading-lab experiment`), with agents usable in sweeps and walk-forward.
 - **Stage 9E (complete):** model usage accounting: calls, cache hits and misses, failures, retries, latency, and tokens (reported or estimated).
 - **Stage 9F (complete):** `trading-lab agent-test`: a connectivity and agent smoke test that never trades.
+- **Stage 9G (complete):** the Qwen agents in live paper trading, resumable, asking only about newly closed candles.
 
 ## Quick start
 
@@ -219,6 +220,13 @@ Every answer must be JSON with `direction` (BUY/SELL/HOLD), `confidence` (0–1)
 **Market-only versus portfolio context.** `qwen_trend` and `qwen_momentum` see only market data by default. Their answers depend only on the candles, so one recorded answer is reused by every backtest, sweep and experiment over the same bars. `qwen_risk` sees the simulated portfolio by default (`portfolio_context = true`), because judging exposure is its job. Its answers depend on the trading path, so different experiments ask it different questions. Set `portfolio_context = true` on the other two to include position status too, at the cost of fewer cache hits.
 
 Backtests only ask agents about bars inside the backtest period, never about the warm-up history before it.
+
+**Live paper trading with agents.** `trading-lab paper` uses the same agents, with the same rules as a backtest:
+
+* An agent is asked only once a candle has closed, and only on its decision bars. Each cycle evaluates the newly closed candles only, never the history window again.
+* The risk agent sees the live simulated portfolio, including breakers and recent stop-outs.
+* Any model failure is a HOLD for that bar.
+* On `--resume`, the portfolio, breakers, working limit orders and recent stop-outs are restored from the database. Bars already processed are never re-asked. In `record` mode, a bar re-processed after a crash gets its answers from the cache, so the model is not called twice for the same context and no paper order is duplicated.
 
 ### Does an agent add value? (`agent-report`)
 
