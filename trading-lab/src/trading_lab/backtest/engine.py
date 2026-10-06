@@ -79,6 +79,14 @@ class BacktestResult:
     signals: tuple[Signal, ...]
     benchmark: PerformanceMetrics | None = None  # equal-weight buy and hold, same costs
     benchmark_curve: pd.Series | None = None
+    bars: tuple[tuple[datetime, str, Bar], ...] = ()  # (open time, symbol, OHLCV) inside the period
+
+    def closes(self) -> dict[str, pd.Series]:
+        """Close price per symbol over the period, indexed by candle open time."""
+        out: dict[str, dict[pd.Timestamp, float]] = {}
+        for ts, sym, bar in self.bars:
+            out.setdefault(sym, {})[pd.Timestamp(ts)] = bar.close
+        return {sym: pd.Series(values, name=sym).sort_index() for sym, values in sorted(out.items())}
 
     def stored_metrics(self) -> dict:
         data = self.metrics.to_dict()
@@ -190,6 +198,7 @@ class BacktestEngine:
             store.add_execution_reports(run_id, result.reports)
             store.add_snapshots(run_id, result.snapshots)
             store.add_closed_trades(run_id, result.trades)
+            store.add_bars(run_id, result.bars)
             store.save_metrics(run_id, result.stored_metrics())
 
     def _simulate(self, start: datetime, end: datetime, run_id: str | None) -> BacktestResult:
@@ -295,4 +304,5 @@ class BacktestEngine:
             signals=tuple(records.signals),
             benchmark=benchmark,
             benchmark_curve=benchmark_curve,
+            bars=tuple(records.bars),
         )

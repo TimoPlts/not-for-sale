@@ -161,6 +161,7 @@ class SessionRecords:
     reports: list[ExecutionReport] = field(default_factory=list)
     snapshots: list[PortfolioSnapshot] = field(default_factory=list)
     in_market: list[bool] = field(default_factory=list)
+    bars: list[tuple[datetime, str, Bar]] = field(default_factory=list)  # every closed bar seen
 
 
 class TradingSession:
@@ -274,8 +275,9 @@ class TradingSession:
         horizon = ts - RECENT_STOP_BARS * self._bar
         self.stop_events = [(t, s) for t, s in self.stop_events if t > horizon]
 
-        for sym, bar in bars.items():
-            self.last_close[sym] = bar.close
+        for sym in self._sorted(bars):
+            self.last_close[sym] = bars[sym].close
+            self.records.bars.append((ts, sym, bars[sym]))
         snapshot = self.portfolio.snapshot(self.last_close, ts)
         self.records.snapshots.append(snapshot)
         self.records.in_market.append(bool(self.portfolio.positions))

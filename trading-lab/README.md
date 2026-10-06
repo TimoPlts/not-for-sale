@@ -21,6 +21,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 8 (complete):** execution realism: volume-aware slippage, a liquidity cap, and limit entries with partial fills.
 - **Stage 9A (complete):** a real LLM provider for agents. Qwen is the first, through any OpenAI-compatible chat-completions endpoint, with timeouts, retries and HOLD on any failure.
 - **Stage 9B (complete):** three specialist Qwen agents (Trend, Momentum, Risk/Regime) that vote in the ensemble.
+- **Stage 9C (complete):** agent performance attribution (`trading-lab agent-report`).
 
 ## Quick start
 
@@ -206,6 +207,37 @@ Every answer must be JSON with `direction` (BUY/SELL/HOLD), `confidence` (0–1)
 **Market-only versus portfolio context.** `qwen_trend` and `qwen_momentum` see only market data by default. Their answers depend only on the candles, so one recorded answer is reused by every backtest, sweep and experiment over the same bars. `qwen_risk` sees the simulated portfolio by default (`portfolio_context = true`), because judging exposure is its job. Its answers depend on the trading path, so different experiments ask it different questions. Set `portfolio_context = true` on the other two to include position status too, at the cost of fewer cache hits.
 
 Backtests only ask agents about bars inside the backtest period, never about the warm-up history before it.
+
+### Does an agent add value? (`agent-report`)
+
+```bash
+.venv/bin/trading-lab agent-report                 # most recent run
+.venv/bin/trading-lab agent-report <run id> --horizon 6 --all
+```
+
+```
+Agent: qwen_trend
+  Votes: 1832   BUY: 524   SELL: 391   HOLD: 917
+  Avg confidence (BUY/SELL): 0.67
+  Directional correctness (4-bar horizon): 54.8% of 903 measurable votes
+  Avg outcome after BUY: +0.21%   after SELL: -0.08%
+  Trades influenced: 61 of 140 (agreed 52, disagreed 9, pivotal 17)
+  PnL when agreed: +12.40% (+1,240.00 USDT)   when disagreed: -3.80% (-380.00 USDT)
+  Calibration:  confidence   votes  correct  mean signed return
+```
+
+(The numbers above are only an illustration of the layout.)
+
+The definitions are exact and deterministic. They are spelled out in `src/trading_lab/research/attribution.py`:
+
+* **Votes** count decision bars only. Warm-up bars and bars skipped by `decision_interval` are not votes. Failed or invalid answers are counted as `errors`.
+* **Directional correctness:** did the price move the voted way over the next N bars (`--horizon`, default 4)? Raw prices are used, without fees.
+* **Avg outcome after BUY/SELL:** the mean N-bar forward return after each kind of vote.
+* **Trades influenced:** each closed trade is linked to the ensemble's entry signal. An agent *agreed* (voted BUY), *disagreed* (SELL) or abstained at that bar. It was *pivotal* if the entry would not have happened without its vote.
+* **PnL when agreed/disagreed:** the realised PnL of those trades, fees included, as a share of the initial cash.
+* **Calibration:** correctness and mean signed return per confidence bucket. A well-calibrated agent is right more often when it is more confident.
+
+Every run now also stores the candles it traded on (schema v3 `bars` table), which the outcome statistics need. Older runs show `n/a` for them.
 
 ## Research tools
 

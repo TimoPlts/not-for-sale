@@ -1,5 +1,13 @@
-"""Research tools: parameter sweeps and walk-forward evaluation."""
+"""Research tools: parameter sweeps, walk-forward evaluation and agent attribution."""
 
+from trading_lab.research.attribution import (
+    Attribution,
+    CalibrationBucket,
+    attribute,
+    attribute_result,
+    attribute_run,
+    format_attribution,
+)
 from trading_lab.research.sweep import (
     MemoizedProvider,
     SweepResult,
@@ -16,6 +24,12 @@ from trading_lab.research.walkforward import (
 )
 
 __all__ = [
+    "Attribution",
+    "CalibrationBucket",
+    "attribute",
+    "attribute_result",
+    "attribute_run",
+    "format_attribution",
     "MemoizedProvider",
     "SweepResult",
     "WalkForwardFold",

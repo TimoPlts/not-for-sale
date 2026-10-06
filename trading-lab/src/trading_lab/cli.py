@@ -7,6 +7,7 @@
     trading-lab sweep    --param strategies.rsi.period=7,14,21 [--param ...] [--start/--end] [--metric M]
     trading-lab walkforward --param ... [--train-days 90] [--test-days 30]
     trading-lab compare  RUN_ID RUN_ID ...
+    trading-lab agent-report [RUN_ID] [--horizon N] [--all]
 
 Global options (before the command): ``--config PATH`` and ``--db PATH``.
 
@@ -426,6 +427,38 @@ def cmd_walkforward(args: argparse.Namespace) -> int:
     return 0
 
 
+def _latest_run_id(store: Any) -> str:
+    runs = store.list_runs(1)
+    if not runs:
+        raise TradingLabError("no runs stored yet")
+    return str(runs[0]["run_id"])
+
+
+def cmd_agent_report(args: argparse.Namespace) -> int:
+    from trading_lab.research import attribute_run, format_attribution
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    with SQLiteStore(cfg.storage.db_path) as store:
+        run_id = args.run_id or _latest_run_id(store)
+        run = store.get_run(run_id)
+        if run is None:
+            raise TradingLabError(f"unknown run id {run_id}")
+        results = attribute_run(store, run_id, horizon=args.horizon)
+        has_bars = store.count("bars", run_id) > 0
+    shown = [a for a in results.values() if a.is_agent or args.all]
+    print(f"Run {run_id} ({run['kind']}, {run['timeframe']}) | {len(shown)} "
+          f"{'voter(s)' if args.all else 'agent(s)'} | horizon {args.horizon} bars")
+    if not has_bars:
+        print("(no stored prices for this run: outcome statistics are n/a; re-run it to get them)")
+    if not shown:
+        print("No AI agents voted in this run. Use --all to see the deterministic strategies.")
+    for a in shown:
+        print()
+        print(format_attribution(a))
+    return 0
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from trading_lab.reporting import run_metrics
     from trading_lab.storage import SQLiteStore
@@ -530,6 +563,12 @@ def build_parser() -> argparse.ArgumentParser:
     wf.add_argument("--train-days", type=int, default=90)
     wf.add_argument("--test-days", type=int, default=30)
     wf.set_defaults(func=cmd_walkforward)
+
+    ar = sub.add_parser("agent-report", help="per-agent votes, correctness and trade attribution")
+    ar.add_argument("run_id", nargs="?", help="default: the most recent run")
+    ar.add_argument("--horizon", type=int, default=4, help="bars ahead for outcome statistics (default 4)")
+    ar.add_argument("--all", action="store_true", help="also show the deterministic strategies")
+    ar.set_defaults(func=cmd_agent_report)
 
     cp = sub.add_parser("compare", help="compare stored runs side by side")
     cp.add_argument("run_ids", nargs="+")

@@ -27,7 +27,7 @@ from trading_lab.core.models import (
     Signal,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA_V1 = """
 CREATE TABLE runs (
@@ -142,8 +142,29 @@ CREATE TABLE run_state (
 );
 """
 
+_SCHEMA_V3 = """
+CREATE TABLE bars (
+    run_id    TEXT NOT NULL REFERENCES runs(run_id),
+    symbol    TEXT NOT NULL,
+    timestamp TEXT NOT NULL,                    -- candle open time
+    open      REAL NOT NULL,
+    high      REAL NOT NULL,
+    low       REAL NOT NULL,
+    close     REAL NOT NULL,
+    volume    REAL NOT NULL,
+    PRIMARY KEY (run_id, symbol, timestamp)
+);
+CREATE TABLE research_results (
+    id           INTEGER PRIMARY KEY,
+    created_at   TEXT NOT NULL,
+    kind         TEXT NOT NULL,                 -- 'experiment' | 'walkforward' | 'sweep'
+    label        TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+);
+"""
+
 # version -> SQL that upgrades from version-1 to version.
-_MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2}
+_MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3}
 
 
 def _ts(value: datetime) -> str:
@@ -448,6 +469,26 @@ class SQLiteStore:
                 ),
             )
 
+    def add_bars(self, run_id: str, bars: Iterable[tuple[datetime, str, Any]]) -> None:
+        """Candles the run traded on, as ``(open time, symbol, bar)`` with OHLCV attributes."""
+        with self._tx():
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO bars (run_id, symbol, timestamp, open, high, low, close, volume) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    (run_id, symbol, _ts(ts), b.open, b.high, b.low, b.close, b.volume)
+                    for ts, symbol, b in bars
+                ),
+            )
+
+    def add_research_result(self, kind: str, label: str, payload: dict[str, Any]) -> int:
+        with self._tx():
+            cur = self._conn.execute(
+                "INSERT INTO research_results (created_at, kind, label, payload_json) VALUES (?, ?, ?, ?)",
+                (_ts(datetime.now(timezone.utc)), kind, label, _json(payload)),
+            )
+            return int(cur.lastrowid or 0)
+
     def save_metrics(self, run_id: str, metrics: dict[str, Any]) -> None:
         with self._tx():
             self._conn.execute(
@@ -527,6 +568,32 @@ class SQLiteStore:
             params.append(symbol)
         return self._frame(sql + " ORDER BY id", params, ["timestamp"])
 
+    def load_bars(self, run_id: str, symbol: str | None = None) -> pd.DataFrame:
+        sql, params = "SELECT symbol, timestamp, open, high, low, close, volume FROM bars WHERE run_id = ?", [run_id]
+        if symbol is not None:
+            sql += " AND symbol = ?"
+            params.append(symbol)
+        return self._frame(sql + " ORDER BY symbol, timestamp", params, ["timestamp"])
+
+    def load_closes(self, run_id: str) -> dict[str, pd.Series]:
+        """Close price per symbol, indexed by candle open time (empty for runs before schema v3)."""
+        bars = self.load_bars(run_id)
+        return {
+            str(sym): group.set_index("timestamp")["close"].rename(str(sym))
+            for sym, group in bars.groupby("symbol", sort=True)
+        }
+
+    def list_research_results(self, kind: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        sql, params = "SELECT id, created_at, kind, label, payload_json FROM research_results", []
+        if kind is not None:
+            sql += " WHERE kind = ?"
+            params.append(kind)
+        rows = self._conn.execute(sql + " ORDER BY id DESC LIMIT ?", [*params, limit]).fetchall()
+        return [
+            {"id": r[0], "created_at": r[1], "kind": r[2], "label": r[3], "payload": json.loads(r[4])}
+            for r in rows
+        ]
+
     def load_metrics(self, run_id: str) -> dict[str, Any] | None:
         row = self._conn.execute(
             "SELECT metrics_json FROM metrics WHERE run_id = ?", (run_id,)
@@ -534,7 +601,7 @@ class SQLiteStore:
         return json.loads(row[0]) if row else None
 
     def count(self, table: str, run_id: str) -> int:
-        if table not in {"signals", "decisions", "orders", "fills", "equity_snapshots", "closed_trades"}:
+        if table not in {"signals", "decisions", "orders", "fills", "equity_snapshots", "closed_trades", "bars"}:
             raise ValueError(f"unknown table {table!r}")
         return int(
             self._conn.execute(f"SELECT COUNT(*) FROM {table} WHERE run_id = ?", (run_id,)).fetchone()[0]

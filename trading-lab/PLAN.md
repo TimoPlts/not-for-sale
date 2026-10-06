@@ -243,5 +243,11 @@ average trade return.
 - The ATR indicator (Wilder) is added, and `parse_agent_json` takes required labels.
 - Tests: config defaults and the environment, prompts, causal features, label validation, labels through the cache, the portfolio view, the risk agent unable to override the kill switch, three agents voting, in-period-only calls, record/replay with a portfolio-aware agent, and unchanged baseline results.
 
+### Stage 9C: Agent performance attribution ✅
+- `research/attribution.py`: per voter, the vote counts (BUY/SELL/HOLD/errors), average confidence, N-bar directional correctness, average outcome after BUY and SELL, calibration by confidence bucket, and trade attribution. Trade attribution links each closed trade to its entry signal and records agreed/disagreed/influenced/pivotal trades plus the PnL when the voter agreed or disagreed. It works on in-memory results (`attribute_result`) and stored runs (`attribute_run`). The definitions are documented in the module.
+- Storage schema v3: a `bars` table (the OHLCV each run traded on, written by backtests and live paper runs) and a `research_results` table (used by later stages). Older databases are upgraded in place.
+- CLI: `trading-lab agent-report [RUN_ID] [--horizon N] [--all]`.
+- Tests: a hand-computed scenario with exact numbers, determinism and in-memory equal to stored, the CLI, and the v2 → v3 migration.
+
 ### Later
 Stages 9B–10E (specialised Qwen agents, agent attribution, experiments, usage accounting, smoke test, live integration, dashboard, VM operation, failure recovery, experiment protocol). After that: short positions, trailing stops and order-book data.

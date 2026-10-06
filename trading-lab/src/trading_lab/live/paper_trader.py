@@ -275,6 +275,7 @@ class LivePaperTrader:
             self._store.add_execution_reports(self.run_id, records.reports)
             self._store.add_snapshots(self.run_id, records.snapshots)
             self._store.add_closed_trades(self.run_id, new_trades)
+            self._store.add_bars(self.run_id, records.bars)
             self._store.save_state(self.run_id, self._state())
         self._persisted_trades += len(new_trades)
 
