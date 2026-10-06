@@ -337,7 +337,7 @@ class StorageConfig:
 
 
 AGENT_MODES = ("live", "record", "replay")
-LLM_PROVIDERS = ("qwen",)  # keep in sync with trading_lab.llm.factory.PROVIDERS
+LLM_PROVIDERS = ("qwen", "anthropic")  # keep in sync with trading_lab.llm.factory.PROVIDERS
 
 
 @dataclass(frozen=True, slots=True)

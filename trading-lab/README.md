@@ -48,6 +48,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 14D (complete):** `trading-lab export`: any stored run as CSV files plus a JSON summary with checksums.
 - **Stage 15A (complete):** `trading-lab demo`: one offline command that builds a sample backtest, a paper run and HTML reports. Start here.
 - **Stage 15B (complete):** e-mail alerts over encrypted SMTP, alongside or instead of the webhook (settings only from the environment).
+- **Stage 15C (complete):** an Anthropic (Claude) provider as an alternative to Qwen (`[agents] provider = "anthropic"`, key only from the environment).
 
 ### Stage 9/10 summary
 
@@ -496,6 +497,22 @@ The rest of the `[agents]` settings (`request_timeout_seconds`, `max_retries`, `
 The provider, model, temperature, output limit and prompt are all part of the cache key, so switching the model never reuses another model's answers. Missing variables stop a run before it starts, with a message naming them.
 
 Failures never stop a backtest or a paper run. Timeouts, network errors, HTTP 429 and 5xx are retried with exponential backoff. If the call still fails, or the answer is malformed, the agent votes HOLD for that bar and the error is saved with the signal. Failed answers are not cached, so `record` mode asks again next time. Reasoning models that "think aloud" (`<think>...</think>`) are supported, because the thinking is stripped before the JSON is parsed.
+
+### Claude (Anthropic) instead of Qwen
+
+Set `provider = "anthropic"` in `[agents]`. The agents and their prompts stay the same; only the model behind them changes. The settings again come **only from the environment**:
+
+```bash
+export ANTHROPIC_API_KEY="<key>"             # never commit this
+export ANTHROPIC_MODEL="<model name>"        # a current Claude model name from Anthropic's docs
+# export ANTHROPIC_API_URL="https://..."     # optional; default https://api.anthropic.com
+trading-lab agent-test anthropic             # one tiny prompt, as for Qwen
+trading-lab agent-test qwen_trend            # one real Trend Agent decision, answered by Claude
+```
+
+It calls Anthropic's Messages API (`/v1/messages`, header `x-api-key`). It shares the timeouts, retries, circuit breaker, usage accounting and secret redaction with Qwen. HTTP 529 (overloaded) is retried as well.
+
+The agents keep their names (`qwen_trend`, `qwen_momentum`, `qwen_risk`), so configs, reports and stored runs stay compatible. The provider and model are part of every cache key, so answers from one provider are never replayed for the other. `agent-report`, `agent-eval` and `experiment` work the same, which lets you compare the two models on identical periods.
 
 ### Qwen agents: Trend, Momentum and Risk/Regime
 

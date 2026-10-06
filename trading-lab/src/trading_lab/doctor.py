@@ -17,7 +17,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Any, Callable, Mapping
 
 from trading_lab.config import AppConfig, load_config
 from trading_lab.core.errors import ConfigError, TradingLabError
@@ -102,8 +102,11 @@ def run_checks(
     else:
         from trading_lab.llm import PROVIDERS
 
-        prefix = getattr(PROVIDERS[cfg.agents.provider], "env_prefix", cfg.agents.provider.upper())
-        required = ["MODEL"] if cfg.agents.mode == "replay" else ["API_URL", "API_KEY", "MODEL"]
+        provider_cls: Any = PROVIDERS[cfg.agents.provider]
+        prefix = getattr(provider_cls, "env_prefix", cfg.agents.provider.upper())
+        need_credentials = cfg.agents.mode != "replay"
+        required = provider_cls.required_env(need_credentials=need_credentials) \
+            if hasattr(provider_cls, "required_env") else ["MODEL"]
         missing = [f"{prefix}_{s}" for s in required if not env.get(f"{prefix}_{s}", "").strip()]
         state = ", ".join(f"{prefix}_{s} {'missing' if f'{prefix}_{s}' in missing else 'set'}" for s in required)
         add("model", FAIL if missing else OK, f"{cfg.agents.provider}, mode {cfg.agents.mode}: {state}")

@@ -108,10 +108,17 @@ def _int_or_none(value: Any) -> int | None:
 
 
 class OpenAICompatibleProvider(LLMProvider):
-    """Subclasses set ``name`` and ``env_prefix``."""
+    """Subclasses set ``name`` and ``env_prefix``.
+
+    Providers with another wire format (e.g. ``AnthropicProvider``) override
+    ``_request_url``, ``_request`` and ``_content`` and keep everything else:
+    environment handling, retries, the circuit breaker, redaction and usage.
+    """
 
     name: ClassVar[str] = "openai_compatible"
     env_prefix: ClassVar[str]
+    default_url: ClassVar[str] = ""  # used when <PREFIX>_API_URL is not set ("" = required)
+    retryable_status: ClassVar[frozenset[int]] = RETRYABLE_STATUS
 
     def __init__(
         self,
@@ -133,7 +140,7 @@ class OpenAICompatibleProvider(LLMProvider):
         if max_retries < 0 or retry_backoff_seconds < 0:
             raise ValueError("max_retries and retry_backoff_seconds must be >= 0")
         source = os.environ if env is None else env
-        self._url = source.get(self.env_var("API_URL"), "").strip()
+        self._url = source.get(self.env_var("API_URL"), "").strip() or self.default_url
         self._token = source.get(self.env_var("API_KEY"), "").strip()
         self._model = source.get(self.env_var("MODEL"), "").strip()
         self.timeout_seconds = float(timeout_seconds)
@@ -153,6 +160,13 @@ class OpenAICompatibleProvider(LLMProvider):
     def env_var(cls, suffix: str) -> str:
         return f"{cls.env_prefix}_{suffix}"
 
+    @classmethod
+    def required_env(cls, *, need_credentials: bool = True) -> list[str]:
+        """Suffixes of the variables that must be set (API_URL is optional when there is a default)."""
+        if not need_credentials:
+            return ["MODEL"]
+        return [s for s in ("API_URL", "API_KEY", "MODEL") if not (s == "API_URL" and cls.default_url)]
+
     @property
     def model(self) -> str:
         return self._model
@@ -160,7 +174,10 @@ class OpenAICompatibleProvider(LLMProvider):
     @property
     def endpoint(self) -> str:
         """The chat-completions URL without credentials or query string."""
-        return _safe_url(chat_completions_url(self._url)) if self._url else ""
+        return _safe_url(self._request_url()) if self._url else ""
+
+    def _request_url(self) -> str:
+        return chat_completions_url(self._url)
 
     @property
     def cache_params(self) -> dict[str, Any]:
@@ -176,10 +193,8 @@ class OpenAICompatibleProvider(LLMProvider):
 
     # ------------------------------------------------------------- validation
     def check_ready(self, *, need_credentials: bool = True) -> None:
-        required = [("MODEL", self._model)]
-        if need_credentials:
-            required += [("API_URL", self._url), ("API_KEY", self._token)]
-        missing = [self.env_var(suffix) for suffix, value in required if not value]
+        values = dict((("API_URL", self._url), ("API_KEY", self._token), ("MODEL", self._model)))
+        missing = [self.env_var(s) for s in self.required_env(need_credentials=need_credentials) if not values[s]]
         if missing:
             why = "to call the model" if need_credentials else "to look up cached answers (replay mode)"
             raise ProviderConfigError(
@@ -238,8 +253,7 @@ class OpenAICompatibleProvider(LLMProvider):
         self._paused_until = None
         return completion
 
-    def _chat(self, system_prompt: str, user_prompt: str) -> Completion:
-        url = chat_completions_url(self._url)
+    def _request(self, system_prompt: str, user_prompt: str) -> tuple[dict[str, str], bytes]:
         body = json.dumps({
             "model": self._model,
             "messages": [
@@ -254,6 +268,11 @@ class OpenAICompatibleProvider(LLMProvider):
             "Accept": "application/json",
             "Authorization": f"Bearer {self._token}",
         }
+        return headers, body
+
+    def _chat(self, system_prompt: str, user_prompt: str) -> Completion:
+        url = self._request_url()
+        headers, body = self._request(system_prompt, user_prompt)
         total = self.max_retries + 1
         started = self._clock()
         last: ProviderError | None = None
@@ -273,7 +292,7 @@ class OpenAICompatibleProvider(LLMProvider):
             else:
                 if 200 <= status < 300:
                     return self._parse(raw, attempts=attempt, latency=self._clock() - started)
-                if status not in RETRYABLE_STATUS:
+                if status not in self.retryable_status:
                     raise ProviderError(self._http_error(status, raw), attempts=attempt)
                 last = ProviderError(self._http_error(status, raw), attempts=attempt)
             if attempt < total:
@@ -298,23 +317,31 @@ class OpenAICompatibleProvider(LLMProvider):
         if "error" in data:
             raise fail(f"endpoint reported an error: {self._redact(json.dumps(data['error'])[:_EXCERPT_CHARS])}")
         try:
-            choice = data["choices"][0]
-            content = choice["message"]["content"]
-        except (KeyError, IndexError, TypeError):
-            raise fail("no choices[0].message.content") from None
-        if not isinstance(content, str):
-            raise fail("message content is not text")
+            content, finish, input_tokens, output_tokens = self._content(data)
+        except ValueError as exc:
+            raise fail(str(exc)) from None
         text = _THINK_BLOCK.sub("", content).strip()  # reasoning models (e.g. Qwen3) think aloud first
         if not text:
             raise fail("empty answer")
-        usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
-        finish = choice.get("finish_reason") if isinstance(choice, dict) else None
         return Completion(
             text=text,
             model=str(data.get("model") or self._model),
             latency_seconds=max(latency, 0.0),
             attempts=attempts,
-            input_tokens=_int_or_none(usage.get("prompt_tokens")),
-            output_tokens=_int_or_none(usage.get("completion_tokens")),
+            input_tokens=_int_or_none(input_tokens),
+            output_tokens=_int_or_none(output_tokens),
             finish_reason=finish if isinstance(finish, str) else None,
         )
+
+    def _content(self, data: dict[str, Any]) -> tuple[str, Any, Any, Any]:
+        """(answer text, finish reason, input tokens, output tokens) from a response body."""
+        try:
+            choice = data["choices"][0]
+            content = choice["message"]["content"]
+        except (KeyError, IndexError, TypeError):
+            raise ValueError("no choices[0].message.content") from None
+        if not isinstance(content, str):
+            raise ValueError("message content is not text")
+        usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+        finish = choice.get("finish_reason") if isinstance(choice, dict) else None
+        return content, finish, usage.get("prompt_tokens"), usage.get("completion_tokens")

@@ -1,9 +1,10 @@
-"""Model providers for LLM-backed agents (provider-agnostic; Qwen is the first).
+"""Model providers for LLM-backed agents (provider-agnostic: Qwen and Anthropic).
 
 Providers only turn prompts into text. They cannot see the portfolio and
 cannot place orders; see ``trading_lab.agents`` for how answers become signals.
 """
 
+from trading_lab.llm.anthropic import AnthropicProvider
 from trading_lab.llm.base import (
     Completion,
     LLMProvider,
@@ -35,6 +36,7 @@ from trading_lab.llm.usage import (
 
 __all__ = [
     "PROVIDERS",
+    "AnthropicProvider",
     "CallRecord",
     "UsageStats",
     "UsageTracker",
