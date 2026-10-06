@@ -15,6 +15,7 @@
     trading-lab summary [RUN_ID] [--hours 24]
     trading-lab alert-test [--format ntfy|slack|discord|json]
     trading-lab agent-weights [RUN_ID]
+    trading-lab doctor [--online]
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -842,6 +843,15 @@ def cmd_agent_weights(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from trading_lab.doctor import FAIL, format_checks, run_checks
+
+    print("trading-lab doctor: read-only checks (no trading; secret values are never shown)\n")
+    checks = run_checks(args.config, db_path=args.db, online=args.online)
+    print(format_checks(checks))
+    return 1 if any(c.status == FAIL for c in checks) else 0
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from trading_lab.reporting import run_metrics
     from trading_lab.storage import SQLiteStore
@@ -1021,6 +1031,11 @@ def build_parser() -> argparse.ArgumentParser:
     aw.add_argument("run_id", nargs="?", help="default: the most recent run")
     weighting_options(aw)
     aw.set_defaults(func=cmd_agent_weights)
+
+    dr = sub.add_parser("doctor", help="check that everything is ready to run (read-only)")
+    dr.add_argument("--online", action="store_true",
+                    help="also fetch one public candle and, if an agent is on, call the model once")
+    dr.set_defaults(func=cmd_doctor)
 
     cp = sub.add_parser("compare", help="compare stored runs side by side")
     cp.add_argument("run_ids", nargs="+")

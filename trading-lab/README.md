@@ -38,6 +38,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 12B (complete):** AI agent weights that adapt to each agent's track record in walk-forward (`--adaptive-weights`, no look-ahead) and suggested weights for a run (`trading-lab agent-weights`).
 - **Stage 12C (complete):** optional entry filters (trend filter and a `qwen_risk` risk-state veto) that only ever block new entries.
 - **Stage 12D (complete):** `trading-lab report RUN_ID --html FILE`, a single self-contained HTML report to share.
+- **Stage 13A (complete):** `trading-lab doctor`, a read-only readiness check before going live.
 
 ### Stage 9/10 summary
 
@@ -192,6 +193,15 @@ Live paper runs then push:
 * **every day:** a summary (`trading-lab summary`).
 
 Recoveries are reported too, and repeats of the same alert are suppressed for an hour. Alert settings come from the current config, even when resuming an older run. A webhook that fails never affects trading, and its URL is never logged.
+
+## Readiness check
+
+```bash
+trading-lab doctor             # Python, packages, config, voters, env vars (set/missing only), database, cache, disk
+trading-lab doctor --online    # also one public candle (freshness) and, if an agent is on, one model call
+```
+
+Each line is `[ OK ]`, `[WARN]`, `[FAIL]` or `[SKIP]`, followed by a verdict. The exit code is 1 when anything fails, so a script or service can refuse to start. The doctor only reads: the database is opened read-only, nothing is traded, and secret values are never printed.
 
 ## Running on a Linux VM
 

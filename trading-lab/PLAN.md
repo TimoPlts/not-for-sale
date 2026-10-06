@@ -371,5 +371,16 @@ Trade-offs worth knowing:
 - `html_report.py` and `trading-lab report [RUN_ID] --html FILE [--horizon N]`: one self-contained file with inline CSS and SVG and a tiny hover script, built from `DashboardData` (read-only). It covers key-number tiles, equity against buy & hold (legend, direct end labels, crosshair tooltip, at most 600 points), drawdown, a daily table view, the voter table, AI rationale cards, model usage, breaker trips, trades and decision counts. Light and dark themes come from validated palette steps. All database text is escaped.
 - Tests: numbers match the run and the database is byte-identical afterwards; a `<script>`/`<img onerror>` rationale is rendered as text; no external resources; downsampling keeps the last point; empty runs; the CLI.
 
+### Stage 13A: Readiness check ✅
+- `doctor.py` and `trading-lab doctor [--online]` check:
+  - the Python version and required/optional packages;
+  - that the config is valid (fingerprint), the enabled voters and the public-data-only safety line;
+  - the model environment variables (set or missing, depending on the agents mode; values never shown) and the alert URL;
+  - the database (read-only: schema, runs, running paper runs, writability), the answer cache (replay needs recorded answers), disk space and the data cache directory.
+  - `--online` adds one public candle (stale data is a warning) and one model call through the smoke test.
+  - The exit code is 1 on any failure.
+- `docs/DEPLOYMENT.md` runs it after the environment file is created.
+- Tests: a fresh install is ready and creates nothing; agents without or with variables (no secret printed); replay requirements; alert URL; an invalid config; an existing or newer database (left byte-identical); online fresh, stale and down data and the model call; CLI exit codes.
+
 ### Later
 Short positions, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and more alert channels (e-mail).
