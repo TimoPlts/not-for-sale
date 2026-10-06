@@ -124,8 +124,10 @@ decision_interval = 4
 [agents]
 mode = "record"               # record | replay | live (see README: AI agents)
 cache_path = "data/agent_cache.db"
-# LLM provider for model-backed agents. The endpoint, model and token come ONLY
-# from environment variables (QWEN_API_URL, QWEN_MODEL, QWEN_API_KEY), never this file.
+# LLM provider for model-backed agents: "qwen" (any OpenAI-compatible endpoint) or
+# "anthropic" (Claude). The endpoint, model and key come ONLY from environment variables,
+# never this file: QWEN_API_URL, QWEN_MODEL, QWEN_API_KEY, or ANTHROPIC_MODEL,
+# ANTHROPIC_API_KEY (and optionally ANTHROPIC_API_URL).
 provider = "qwen"
 request_timeout_seconds = 30.0  # per request
 max_retries = 2               # retries after a timeout, network error, HTTP 429 or 5xx
@@ -139,7 +141,8 @@ failure_cooldown_seconds = 300.0  # ... for 5 minutes (agents vote HOLD meanwhil
 # Push notifications from live paper trading. The webhook URL comes ONLY from the
 # TRADING_LAB_ALERT_URL environment variable (e.g. https://ntfy.sh/<your-secret-topic>).
 enabled = false
-format = "ntfy"               # ntfy | slack | discord | json
+channels = ["webhook"]        # webhook and/or email (SMTP settings ONLY from TRADING_LAB_SMTP_* variables)
+format = "ntfy"               # ntfy | slack | discord | json (webhook only)
 min_level = "warning"         # "info" also reports every entry and exit
 daily_summary = true          # a run summary after each UTC day
 outage_after_cycles = 3       # alert when this many cycles in a row could not be processed

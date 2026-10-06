@@ -54,7 +54,9 @@ def environment_lines(provider: LLMProvider) -> list[str]:
     for suffix in ("API_URL", "API_KEY", "MODEL"):
         var = provider.env_var(suffix)
         present = bool(os.environ.get(var, "").strip())
-        if not present:
+        if not present and suffix not in provider.required_env():
+            shown = f"not set -> default {provider.endpoint}"
+        elif not present:
             shown = "MISSING"
         elif suffix in _HIDDEN_SUFFIXES:
             shown = "set (hidden)"

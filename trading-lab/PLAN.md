@@ -420,7 +420,29 @@ Trade-offs worth knowing:
 - CLI: `trading-lab export RUN_ID DIR [--holds] [--force]` (read-only).
 - Tests: backtest export (files, rows, checksums, metrics, equity); identical to `backtest --export`; HOLDs on request; a paper run; agent votes readable and the API key never written; directory protection (non-empty, a file, unknown run, `overwrite` keeps foreign files); the CLI (exit codes, the database byte-identical).
 
-## 5. Stage 11–14 status summary
+### Stage 15A: Offline demo ✅
+- `demo.py`: `build_demo(dir, seed=7, days=60, paper_bars=72, now=None)` works in a new or empty directory with the built-in defaults (agents off, no CSV cache). It runs a backtest on synthetic candles, then a paper run (`demo-paper`) of the latest synthetic hours driven by a simulated clock, and reconciles that paper run with its backtest. It writes `demo.db`, `backtest-report.html` and `paper-report.html`. `next_steps` lists commands pointing at the demo database.
+- CLI: `trading-lab demo [DIR] [--seed S] [--days N] [--paper-bars N]`. It exits 1 if the reconciliation differs.
+- **Bug it found:** a run without losing trades stores its profit factor as the text `"inf"`, which crashed the HTML report and the dashboard formatters. They now show text values as text, escaped in HTML.
+- Tests: a complete sample (files, runs, paper bars ending at the last closed candle, reports); deterministic per time and seed; existing files never touched; next steps; the CLI (writes only the demo directory, and the result reconciles from the command line); text metrics in the HTML report and the dashboard.
+
+### Stage 15B: E-mail alerts ✅
+- `[alerts] channels` is a list of `"webhook"` and/or `"email"`, default `["webhook"]`, so behaviour is unchanged unless you opt in.
+- `alerts.EmailNotifier` sends a plain-text e-mail over SMTP. The settings (`TRADING_LAB_SMTP_HOST`, `_PORT`, `_SECURITY`, `_USER`, `_PASSWORD`, `TRADING_LAB_ALERT_EMAIL_TO`, `_FROM`) come only from the environment.
+  - Security is `starttls` (default, port 587), `ssl` (465), or `none` for a local relay without a login only, so a login is never sent unencrypted.
+  - Addresses are validated (no header injection) and titles are put on one line.
+  - Failures become `ConnectionError`s that name only the host, port and error type, never the login.
+- `MultiNotifier` delivers to every channel and fails only when none delivered. `build_notifier` builds the configured channels and fails fast on missing settings.
+- `alert-test` tests each configured channel (or `--channel`). `doctor` reports each channel without values.
+- Tests: an encrypted e-mail (STARTTLS before login, headers, body); SSL and a local relay; ten invalid settings; the login never shown (repr, errors, logs); unreachable servers never raise from the manager; header injection; several channels; config validation (no credential-like fields); `doctor` and `alert-test`.
+
+### Stage 15C: Anthropic provider ✅
+- `OpenAICompatibleProvider` gained hooks (`_request_url`, `_request`, `_content`, `default_url`, `retryable_status`, `required_env`), so a provider with another wire format reuses the environment handling, retries, circuit breaker, redaction and usage accounting. Qwen behaves exactly as before.
+- `llm/anthropic.py`: `AnthropicProvider` (`provider = "anthropic"`) calls the Messages API with `x-api-key` and `anthropic-version`, the system prompt as `system`, and joined text blocks. It reports `stop_reason` and input/output tokens. It also retries HTTP 529. `ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` are required and `ANTHROPIC_API_URL` is optional (default `https://api.anthropic.com`), all from the environment only.
+- `doctor` and `agent-test` know which variables each provider needs. Agents keep their names. Cache keys include the provider and model.
+- Tests: URL forms; the exact request (headers, body, default endpoint); text blocks joined and other blocks ignored; five malformed responses (not retried); 529 retried; 401 fails fast without leaking the key (errors, repr, logs); environment checks (replay needs only the model; custom and invalid URLs); config and factory; the three agents running a backtest on the Messages format; `doctor` and the `agent-test` environment lines.
+
+## 5. Stage 11–15 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -428,6 +450,7 @@ On top of the Stage 9/10 system:
 - **Operations:** run summaries (11B), push alerts (11C), a readiness check (13A), and a fix so runs from older versions resume.
 - **Evidence:** an HTML report (12D), bootstrap robustness ranges (13C), and alpha/beta against buy & hold (13D).
 - **Verification (14):** live runs reconciled with their backtest (14A, which found and fixed a window-dependent agent feature), market-data quality checks (14B), agent answer-quality diagnostics (14C), and run exports (14D).
+- **Usability and reach (15):** an offline demo (15A), e-mail alerts (15B) and Claude as a second model provider (15C).
 
 ### Later
-Short positions, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and more alert channels (e-mail).
+Short positions, order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

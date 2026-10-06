@@ -58,7 +58,7 @@ class Completion:
 
 
 class LLMProvider(ABC):
-    """Base class for model providers (Qwen today; OpenAI, Anthropic, Gemini later)."""
+    """Base class for model providers (Qwen and Anthropic today; more can subclass this)."""
 
     name: ClassVar[str]
 

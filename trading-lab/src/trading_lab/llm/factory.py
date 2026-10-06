@@ -5,11 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from trading_lab.config import AgentsConfig
+from trading_lab.llm.anthropic import AnthropicProvider
 from trading_lab.llm.base import LLMProvider, ProviderConfigError
 from trading_lab.llm.qwen import QwenProvider
 
 PROVIDERS: dict[str, type[LLMProvider]] = {
     QwenProvider.name: QwenProvider,
+    AnthropicProvider.name: AnthropicProvider,
 }
 
 

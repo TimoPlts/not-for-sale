@@ -337,7 +337,7 @@ class StorageConfig:
 
 
 AGENT_MODES = ("live", "record", "replay")
-LLM_PROVIDERS = ("qwen",)  # keep in sync with trading_lab.llm.factory.PROVIDERS
+LLM_PROVIDERS = ("qwen", "anthropic")  # keep in sync with trading_lab.llm.factory.PROVIDERS
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,6 +402,7 @@ class AgentsConfig:
 
 ALERT_LEVELS = ("info", "warning", "critical")
 ALERT_FORMATS = ("ntfy", "slack", "discord", "json")
+ALERT_CHANNELS = ("webhook", "email")
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,7 +414,8 @@ class AlertsConfig:
     """
 
     enabled: bool = False
-    format: str = "ntfy"  # ntfy | slack | discord | json
+    channels: tuple[str, ...] = ("webhook",)  # webhook and/or email (SMTP settings from the environment)
+    format: str = "ntfy"  # ntfy | slack | discord | json (webhook only)
     min_level: str = "warning"  # info also reports every entry and exit
     daily_summary: bool = True  # a run summary after each UTC day
     outage_after_cycles: int = 3  # alert once this many cycles in a row could not be processed
@@ -421,6 +423,13 @@ class AlertsConfig:
 
     def __post_init__(self) -> None:
         _require(isinstance(self.enabled, bool), "alerts.enabled must be true or false")
+        _require(
+            isinstance(self.channels, (list, tuple)) and len(self.channels) > 0
+            and all(c in ALERT_CHANNELS for c in self.channels) and len(set(self.channels)) == len(self.channels),
+            f"alerts.channels must be a non-empty list of distinct values from {ALERT_CHANNELS}, "
+            f"got {self.channels!r}",
+        )
+        object.__setattr__(self, "channels", tuple(self.channels))
         _require(self.format in ALERT_FORMATS, f"alerts.format must be one of {ALERT_FORMATS}, got {self.format!r}")
         _require(self.min_level in ALERT_LEVELS,
                  f"alerts.min_level must be one of {ALERT_LEVELS}, got {self.min_level!r}")

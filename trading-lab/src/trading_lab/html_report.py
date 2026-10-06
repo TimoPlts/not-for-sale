@@ -84,12 +84,16 @@ def _e(value: Any) -> str:
 
 
 def _pct(value: Any, signed: bool = True) -> str:
+    if isinstance(value, str):  # e.g. a profit factor of "inf" when nothing was lost
+        return _e(value)
     if value is None or (isinstance(value, float) and not math.isfinite(value)):
         return "n/a"
     return f"{value:+.2%}" if signed else f"{value:.1%}"
 
 
 def _num(value: Any, digits: int = 2) -> str:
+    if isinstance(value, str):  # e.g. a profit factor of "inf" when nothing was lost
+        return _e(value)
     if value is None or (isinstance(value, float) and not math.isfinite(value)):
         return "n/a"
     return f"{value:,.{digits}f}"

@@ -1,5 +1,6 @@
 """``trading-lab`` command-line interface.
 
+    trading-lab demo     [DIR]   (offline sample: a backtest, a paper run and HTML reports)
     trading-lab backtest [--start DATE] [--end DATE] [--symbols ...] [--timeframe TF] [--synthetic SEED]
     trading-lab paper    [--symbols ...] [--timeframe TF] [--resume RUN_ID] [--once] [--synthetic SEED]
     trading-lab report   [RUN_ID] [--limit N] [--html FILE]
@@ -13,7 +14,7 @@
     trading-lab dashboard-data [RUN_ID] [--json]
     trading-lab dashboard [--host 127.0.0.1] [--port 8501]
     trading-lab summary [RUN_ID] [--hours 24]
-    trading-lab alert-test [--format ntfy|slack|discord|json]
+    trading-lab alert-test [--channel webhook|email] [--format ntfy|slack|discord|json]
     trading-lab agent-weights [RUN_ID]
     trading-lab doctor [--online]
     trading-lab robustness [RUN_ID] [--samples 5000] [--seed 7]
@@ -831,17 +832,26 @@ def cmd_summary(args: argparse.Namespace) -> int:
 
 
 def cmd_alert_test(args: argparse.Namespace) -> int:
-    from trading_lab.alerts import URL_ENV, AlertManager, WebhookNotifier
+    from trading_lab.alerts import URL_ENV, AlertManager, MultiNotifier, WebhookNotifier, build_notifier
 
     cfg = _load_config(args)
-    notifier = WebhookNotifier.from_env(args.format or cfg.alerts.format)
-    print(f"Sending a test alert ({notifier.fmt}) to {notifier.host} (URL from {URL_ENV}, not shown)")
-    manager = AlertManager(notifier, min_level="info")
-    if manager.emit("info", "Test alert", "If you can read this, trading-lab alerts work. Nothing was traded."):
-        print("OK")
-        return 0
-    print("FAILED: see the warning above", file=sys.stderr)
-    return 1
+    if args.format:
+        cfg = cfg.with_overrides({"alerts": {"format": args.format}})
+    notifier = build_notifier(cfg, channels=[args.channel] if args.channel else None)
+    failed = 0
+    for n in notifier.notifiers if isinstance(notifier, MultiNotifier) else (notifier,):
+        if isinstance(n, WebhookNotifier):
+            print(f"Sending a test alert ({n.fmt}) to {n.host} (URL from {URL_ENV}, not shown)")
+        else:
+            print(f"Sending a test e-mail to {len(n.recipients)} recipient(s) via {n.host}:{n.port} "
+                  f"({n.security}; login from the environment, not shown)")
+        manager = AlertManager(n, min_level="info")
+        if manager.emit("info", "Test alert", "If you can read this, trading-lab alerts work. Nothing was traded."):
+            print("OK")
+        else:
+            failed += 1
+            print("FAILED: see the warning above", file=sys.stderr)
+    return 1 if failed else 0
 
 
 def cmd_agent_weights(args: argparse.Namespace) -> int:
@@ -982,6 +992,28 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_demo(args: argparse.Namespace) -> int:
+    from trading_lab.demo import build_demo, next_steps
+
+    print(f"Building an offline demo in {Path(args.directory).resolve()} (synthetic prices, no keys needed)...")
+    try:
+        result = build_demo(args.directory, seed=args.seed, days=args.days, paper_bars=args.paper_bars)
+    except ValueError as exc:
+        raise TradingLabError(str(exc)) from None
+    bench = "" if result.benchmark_return is None else f" (buy & hold {result.benchmark_return:+.2%})"
+    print(f"\n  backtest  {result.backtest_run}: {args.days} days, return {result.backtest_return:+.2%}{bench}")
+    print(f"  paper     {result.paper_run}: {args.paper_bars} simulated hours, {result.paper_fills} fill(s), "
+          f"equity {result.paper_equity:,.2f} USDT")
+    print(f"  reconcile {'OK: the paper run matches its backtest' if result.reconciled else 'DIFFERENT (a bug?)'}")
+    print(f"\nOpen in a browser:\n  {(result.directory / 'backtest-report.html').resolve()}"
+          f"\n  {(result.directory / 'paper-report.html').resolve()}")
+    print("\nThe prices are a random walk, so these results say nothing about real markets.")
+    print("\nNext:")
+    for what, command in next_steps(result):
+        print(f"  # {what}\n  {command}")
+    return 0 if result.reconciled else 1
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from trading_lab.reporting import run_metrics
     from trading_lab.storage import SQLiteStore
@@ -1038,6 +1070,13 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--symbols", nargs="+", help="e.g. BTC/USDT ETH/USDT")
         p.add_argument("--timeframe", help="e.g. 15m, 1h, 4h, 1d")
         p.add_argument("--synthetic", type=int, metavar="SEED", help="offline synthetic data")
+
+    dm = sub.add_parser("demo", help="offline sample: a backtest, a paper run and HTML reports (start here)")
+    dm.add_argument("directory", nargs="?", default="demo", help="a new or empty directory (default ./demo)")
+    dm.add_argument("--seed", type=int, default=7, help="synthetic market seed (default 7)")
+    dm.add_argument("--days", type=int, default=60, help="backtest length (default 60)")
+    dm.add_argument("--paper-bars", type=int, default=72, help="simulated paper-trading hours (default 72)")
+    dm.set_defaults(func=cmd_demo)
 
     bt = sub.add_parser("backtest", help="simulate a strategy set over historical data")
     market_options(bt)
@@ -1153,8 +1192,10 @@ def build_parser() -> argparse.ArgumentParser:
     sm.add_argument("--hours", type=float, default=24.0, help="window length (default 24)")
     sm.set_defaults(func=cmd_summary)
 
-    al = sub.add_parser("alert-test", help="send one test notification to TRADING_LAB_ALERT_URL")
+    al = sub.add_parser("alert-test", help="send one test notification through each configured channel")
     al.add_argument("--format", choices=("ntfy", "slack", "discord", "json"), help="default: [alerts] format")
+    al.add_argument("--channel", choices=("webhook", "email"),
+                    help="test only this channel (default: [alerts] channels)")
     al.set_defaults(func=cmd_alert_test)
 
     aw = sub.add_parser("agent-weights", help="suggest AI agent weights from a stored run's record")

@@ -46,6 +46,9 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 14B (complete):** `trading-lab data-check`: a market-data quality report (gaps, stale data, zero volume, extreme moves).
 - **Stage 14C (complete):** `trading-lab agent-eval`: answer-quality diagnostics for the AI agents (contradictions, one-sided voting, flat confidence, boilerplate rationales, errors).
 - **Stage 14D (complete):** `trading-lab export`: any stored run as CSV files plus a JSON summary with checksums.
+- **Stage 15A (complete):** `trading-lab demo`: one offline command that builds a sample backtest, a paper run and HTML reports. Start here.
+- **Stage 15B (complete):** e-mail alerts over encrypted SMTP, alongside or instead of the webhook (settings only from the environment).
+- **Stage 15C (complete):** an Anthropic (Claude) provider as an alternative to Qwen (`[agents] provider = "anthropic"`, key only from the environment).
 
 ### Stage 9/10 summary
 
@@ -75,6 +78,24 @@ RSI · MACD · Bollinger ──────┤
 * **Safety checks still enforced:** no exchange private endpoints, no exchange or credential fields, no hard-coded tokens, and Qwen secrets only from the environment. Tests check all of these.
 
 ## Quick start
+
+**First time? Start with the offline demo.** It needs no internet, no keys and no model:
+
+```bash
+cd trading-lab
+python -m venv .venv
+.venv/bin/python -m pip install -e ".[dev,dashboard]"     # Windows: .venv\Scripts\python -m pip ...
+.venv/bin/trading-lab demo                                # Windows: .venv\Scripts\trading-lab demo
+```
+
+This builds `./demo` with:
+
+* a 60-day backtest of the default strategies;
+* a 72-hour paper run, replayed with a simulated clock, which `reconcile` confirms matches its backtest;
+* `backtest-report.html` and `paper-report.html` to open in a browser.
+
+It then prints the commands to explore further: the run list, the dashboard, reconcile, export, and the same steps on real public market data. The prices are a seeded random walk, so the results say nothing about real markets. They show what the tool records and reports.
+
 
 On Linux or macOS the command is `.venv/bin/trading-lab` (or just `trading-lab` after `source .venv/bin/activate`). The examples below use the Windows path. The AI and dashboard commands:
 
@@ -267,6 +288,7 @@ The database is only read. A non-empty directory is refused unless you pass `--f
 ```toml
 [alerts]
 enabled = true
+channels = ["webhook"]   # webhook and/or email
 format = "ntfy"          # ntfy | slack | discord | json
 min_level = "warning"    # "info" also reports every entry and exit
 daily_summary = true
@@ -283,6 +305,18 @@ Live paper runs then push:
 * **every day:** a summary (`trading-lab summary`).
 
 Recoveries are reported too, and repeats of the same alert are suppressed for an hour. Alert settings come from the current config, even when resuming an older run. A webhook that fails never affects trading, and its URL is never logged.
+
+**E-mail instead of, or as well as, a webhook:** set `channels = ["email"]` (or `["webhook", "email"]`). The SMTP settings come only from the environment:
+
+```bash
+export TRADING_LAB_SMTP_HOST=smtp.gmail.com          # STARTTLS on 587 by default
+export TRADING_LAB_SMTP_USER=you@gmail.com
+export TRADING_LAB_SMTP_PASSWORD='an app password'   # secret: environment only
+export TRADING_LAB_ALERT_EMAIL_TO=you@gmail.com      # comma-separated for several
+trading-lab alert-test --channel email
+```
+
+The connection is always encrypted: STARTTLS by default, or `TRADING_LAB_SMTP_SECURITY=ssl` for port 465. Without encryption (`none`), only a local relay without a login is accepted, so a password is never sent in clear text. The password is never logged or shown, and `doctor` only reports whether the settings are complete. With several channels, an alert counts as delivered when any channel delivers it.
 
 ## Readiness check
 
@@ -463,6 +497,22 @@ The rest of the `[agents]` settings (`request_timeout_seconds`, `max_retries`, `
 The provider, model, temperature, output limit and prompt are all part of the cache key, so switching the model never reuses another model's answers. Missing variables stop a run before it starts, with a message naming them.
 
 Failures never stop a backtest or a paper run. Timeouts, network errors, HTTP 429 and 5xx are retried with exponential backoff. If the call still fails, or the answer is malformed, the agent votes HOLD for that bar and the error is saved with the signal. Failed answers are not cached, so `record` mode asks again next time. Reasoning models that "think aloud" (`<think>...</think>`) are supported, because the thinking is stripped before the JSON is parsed.
+
+### Claude (Anthropic) instead of Qwen
+
+Set `provider = "anthropic"` in `[agents]`. The agents and their prompts stay the same; only the model behind them changes. The settings again come **only from the environment**:
+
+```bash
+export ANTHROPIC_API_KEY="<key>"             # never commit this
+export ANTHROPIC_MODEL="<model name>"        # a current Claude model name from Anthropic's docs
+# export ANTHROPIC_API_URL="https://..."     # optional; default https://api.anthropic.com
+trading-lab agent-test anthropic             # one tiny prompt, as for Qwen
+trading-lab agent-test qwen_trend            # one real Trend Agent decision, answered by Claude
+```
+
+It calls Anthropic's Messages API (`/v1/messages`, header `x-api-key`). It shares the timeouts, retries, circuit breaker, usage accounting and secret redaction with Qwen. HTTP 529 (overloaded) is retried as well.
+
+The agents keep their names (`qwen_trend`, `qwen_momentum`, `qwen_risk`), so configs, reports and stored runs stay compatible. The provider and model are part of every cache key, so answers from one provider are never replayed for the other. `agent-report`, `agent-eval` and `experiment` work the same, which lets you compare the two models on identical periods.
 
 ### Qwen agents: Trend, Momentum and Risk/Regime
 
