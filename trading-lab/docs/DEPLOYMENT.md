@@ -148,6 +148,10 @@ Useful commands (as `tradinglab`, from the checkout):
 .venv/bin/trading-lab agent-report vm-paper-1    # per-agent votes, correctness, PnL attribution, Qwen usage
 .venv/bin/trading-lab dashboard-data vm-paper-1
 .venv/bin/trading-lab summary vm-paper-1 --hours 24   # what happened today
+.venv/bin/trading-lab reconcile vm-paper-1       # did the run do exactly what its backtest does?
+.venv/bin/trading-lab data-check                 # gaps, stale data, extreme moves in the market data
+.venv/bin/trading-lab agent-eval vm-paper-1      # are the agents' answers consistent?
+.venv/bin/trading-lab export vm-paper-1 ~/exports/vm-paper-1   # CSV files + summary.json
 ```
 
 ## 7. Stopping, restarting, resuming

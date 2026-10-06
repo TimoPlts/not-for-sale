@@ -20,6 +20,7 @@
     trading-lab reconcile PAPER_RUN_ID [--synthetic SEED]
     trading-lab data-check [--symbols ...] [--days N | --start/--end] [--run RUN_ID] [--strict]
     trading-lab agent-eval [RUN_ID] [--min-answers 20] [--json]
+    trading-lab export RUN_ID DIR [--holds] [--force]
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -208,19 +209,13 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     _print_signal_usage(result.signals)
 
     if args.export:
+        from trading_lab.export import fills_frame, trades_frame
+
         out = Path(args.export)
         out.mkdir(parents=True, exist_ok=True)
         result.equity_curve.to_csv(out / "equity_curve.csv")
-        pd.DataFrame([{
-            "symbol": t.symbol, "quantity": t.quantity, "entry_price": t.entry_price,
-            "exit_price": t.exit_price, "pnl": t.pnl, "return_pct": t.return_pct,
-            "opened_at": t.opened_at, "closed_at": t.closed_at,
-        } for t in result.trades]).to_csv(out / "trades.csv", index=False)
-        pd.DataFrame([{
-            "timestamp": f.timestamp, "symbol": f.symbol, "side": f.side.value,
-            "quantity": f.quantity, "reference_price": f.reference_price,
-            "fill_price": f.fill_price, "fee": f.fee,
-        } for f in result.fills]).to_csv(out / "fills.csv", index=False)
+        trades_frame(result.trades).to_csv(out / "trades.csv", index=False)
+        fills_frame(result.fills).to_csv(out / "fills.csv", index=False)
         print(f"\nCSV files written to {out.resolve()}")
 
     if store is not None:
@@ -968,6 +963,25 @@ def cmd_data_check(args: argparse.Namespace) -> int:
     return 1 if args.strict and any(r.warnings for r in reports) else 0
 
 
+def cmd_export(args: argparse.Namespace) -> int:
+    from trading_lab.export import export_run
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        try:
+            result = export_run(store, args.run_id, args.directory, holds=args.holds, overwrite=args.force)
+        except ValueError as exc:
+            raise TradingLabError(str(exc)) from None
+    print(f"Run {result.run_id} exported to {result.directory.resolve()}")
+    for name, rows in result.files.items():
+        print(f"  {name:<18} {rows:>8} rows")
+    print("  summary.json       run, config, metrics and file checksums")
+    return 0
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from trading_lab.reporting import run_metrics
     from trading_lab.storage import SQLiteStore
@@ -1185,6 +1199,13 @@ def build_parser() -> argparse.ArgumentParser:
     dc.add_argument("--strict", action="store_true", help="exit 1 on warnings too")
     dc.add_argument("--limit", type=int, default=5, help="details listed per symbol (default 5)")
     dc.set_defaults(func=cmd_data_check)
+
+    ex = sub.add_parser("export", help="write a stored run to CSV files and a JSON summary")
+    ex.add_argument("run_id")
+    ex.add_argument("directory", help="a new or empty directory")
+    ex.add_argument("--holds", action="store_true", help="include HOLD decisions (one per symbol and bar)")
+    ex.add_argument("--force", action="store_true", help="replace the export files in a non-empty directory")
+    ex.set_defaults(func=cmd_export)
 
     cp = sub.add_parser("compare", help="compare stored runs side by side")
     cp.add_argument("run_ids", nargs="+")

@@ -414,13 +414,20 @@ Trade-offs worth knowing:
 - CLI: `trading-lab agent-eval [RUN_ID] [--min-answers N] [--limit N] [--json]` (read-only).
 - Tests: a well-behaved fake agent has no warnings; fixed labels, confidence and rationale are flagged (contradictions, HOLD-label votes, flat confidence, boilerplate, always HOLD); one-sided zero-confidence answers with empty rationales; invalid answers by type; small samples; error kinds; runs without agents and unknown runs; the CLI (text, JSON, latest run, exit codes, the database byte-identical).
 
-## 5. Stage 11–13 status summary
+### Stage 14D: Run export ✅
+- `export.py`: `export_run(store, run_id, dir, holds=False, overwrite=False)` writes `equity_curve.csv`, `trades.csv`, `fills.csv`, `decisions.csv`, `signals.csv` (agent rationale, label, cache, error and reason flattened out of the metadata), `bars.csv` and `summary.json`. The summary holds the run, config, stored or recomputed metrics, decision counts and the rows and SHA-256 of each file. A non-empty directory is refused unless `overwrite` is set, which replaces only the export files.
+- `trades_frame` and `fills_frame` are shared with `backtest --export`, so the two give identical files.
+- CLI: `trading-lab export RUN_ID DIR [--holds] [--force]` (read-only).
+- Tests: backtest export (files, rows, checksums, metrics, equity); identical to `backtest --export`; HOLDs on request; a paper run; agent votes readable and the API key never written; directory protection (non-empty, a file, unknown run, `overwrite` keeps foreign files); the CLI (exit codes, the database byte-identical).
+
+## 5. Stage 11–14 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
 - **Agents:** weights that adapt to each agent's out-of-sample record in walk-forward, without look-ahead (12B).
 - **Operations:** run summaries (11B), push alerts (11C), a readiness check (13A), and a fix so runs from older versions resume.
 - **Evidence:** an HTML report (12D), bootstrap robustness ranges (13C), and alpha/beta against buy & hold (13D).
+- **Verification (14):** live runs reconciled with their backtest (14A, which found and fixed a window-dependent agent feature), market-data quality checks (14B), agent answer-quality diagnostics (14C), and run exports (14D).
 
 ### Later
 Short positions, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and more alert channels (e-mail).

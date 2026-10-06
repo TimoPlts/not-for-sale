@@ -45,6 +45,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 14A (complete):** `trading-lab reconcile`: checks that a live paper run did exactly what its backtest does on the same candles.
 - **Stage 14B (complete):** `trading-lab data-check`: a market-data quality report (gaps, stale data, zero volume, extreme moves).
 - **Stage 14C (complete):** `trading-lab agent-eval`: answer-quality diagnostics for the AI agents (contradictions, one-sided voting, flat confidence, boilerplate rationales, errors).
+- **Stage 14D (complete):** `trading-lab export`: any stored run as CSV files plus a JSON summary with checksums.
 
 ### Stage 9/10 summary
 
@@ -240,6 +241,26 @@ A strategy can only be as good as its candles. For each symbol, the report lists
 * **warnings:** missing candles (gaps, or none at the start or end of the period), zero-volume candles, candles with no price range, extreme moves, and opens far from the previous close.
 
 An extreme move is a candle that moved more than 10 robust standard deviations of the symbol's own returns, and at least 5%. Both limits can be changed with `--jump-sigmas` and `--jump-floor`. The threshold therefore adapts to each symbol and timeframe. An open far from the previous close only counts between consecutive candles, because a gap in the data explains it. With the CSV cache on, the candles come through the cache, exactly as a backtest gets them. Nothing else is written.
+
+## Exporting a run (`export`)
+
+```bash
+trading-lab export vm-paper-1 exports/vm-paper-1
+trading-lab export <run id> exports/run --holds      # also every HOLD decision
+```
+
+This writes any stored backtest or paper run into a new or empty directory, for a spreadsheet, a notebook or an archive:
+
+| File | Contents |
+|---|---|
+| `equity_curve.csv` | per bar: cash, positions value, equity, realized and unrealized PnL, fees, open positions |
+| `trades.csv`, `fills.csv` | closed trades and simulated fills (same columns as `backtest --export`) |
+| `decisions.csv` | the ensemble's decisions with reasons (HOLDs only with `--holds`) |
+| `signals.csv` | every strategy and agent vote, with each agent's rationale, label, cache status and error in their own columns |
+| `bars.csv` | the candles the run traded on |
+| `summary.json` | the run, its config, its metrics, decision counts, and the row count and SHA-256 of every file |
+
+The database is only read. A non-empty directory is refused unless you pass `--force`. That replaces only the export files and leaves anything else in the directory alone. No secret can appear in an export, because credentials only ever come from environment variables and are never stored.
 
 ## Alerts
 
