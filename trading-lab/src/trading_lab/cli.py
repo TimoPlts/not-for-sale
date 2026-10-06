@@ -187,6 +187,8 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         print(f"\nBuy & hold (equal weight, same costs): return {result.benchmark.total_return:+.2%}, "
               f"max drawdown {-result.benchmark.max_drawdown:.2%}, "
               f"sharpe {_fmt_num(result.benchmark.sharpe_ratio)}")
+        if result.relative is not None:
+            print(result.relative.format_line())
     per_symbol: dict[str, list[float]] = defaultdict(list)
     for t in result.trades:
         per_symbol[t.symbol].append(t.pnl)
@@ -383,10 +385,15 @@ def cmd_report(args: argparse.Namespace) -> int:
         metrics = run_metrics(store, args.run_id)
         print("\n=== Performance ===")
         print(metrics.format_table() if metrics else "no equity data yet")
-        bench = (store.load_metrics(args.run_id) or {}).get("benchmark")
+        stored = store.load_metrics(args.run_id) or {}
+        bench = stored.get("benchmark")
         if bench:
             print(f"\nBuy & hold (equal weight, same costs): return {_fmt_pct(bench.get('total_return'))}, "
                   f"max drawdown {_fmt_dd(bench.get('max_drawdown'))}")
+        if stored.get("relative"):
+            from trading_lab.metrics import RelativeMetrics
+
+            print(RelativeMetrics(**stored["relative"]).format_line())
 
         trades = store.load_closed_trades(args.run_id)
         print(f"\n=== Closed trades ({len(trades)}) - last {args.limit} ===")

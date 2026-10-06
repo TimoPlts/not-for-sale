@@ -340,9 +340,19 @@ class DashboardData:
             if curve is not None and len(curve) > 1:
                 bench = compute_metrics([config.portfolio.initial_cash, *curve.tolist()], [], run["timeframe"],
                                         in_market=[True] * len(curve)).to_dict()
+        relative = stored.get("relative")
+        if relative is None:
+            curve = self.equity_curve(run_id)
+            if "buy_and_hold" in curve and not curve["buy_and_hold"].isna().any():
+                from trading_lab.metrics import relative_metrics
+
+                initial = config.portfolio.initial_cash
+                rel = relative_metrics([initial, *curve["equity"].tolist()],
+                                       [initial, *curve["buy_and_hold"].tolist()], run["timeframe"])
+                relative = None if rel is None else rel.to_dict()
         results = self.store.list_research_results(limit=10) if self.store.has_table("research_results") else []
         return _clean({"metrics": None if metrics is None else metrics.to_dict(), "benchmark": bench,
-                       "research_results": results})
+                       "relative": relative, "research_results": results})
 
     # -------------------------------------------------------------- snapshot
     def snapshot(self, run_id: str | None = None, *, horizon: int = 4) -> dict[str, Any]:

@@ -246,6 +246,14 @@ def build_html_report(db_path: str, run_id: str | None = None, *, horizon: int =
         ("Win rate", _pct(m.get("win_rate"), signed=False), ""),
         ("Exposure", _pct(m.get("exposure"), signed=False), ""),
     ]
+    rel = research.get("relative") or {}
+    if rel:
+        tiles += [
+            ("Excess vs buy & hold", _pct(rel.get("excess_return")), _cls(rel.get("excess_return"))),
+            ("Alpha (per year)", _pct(rel.get("alpha_annualized")), _cls(rel.get("alpha_annualized"))),
+            ("Beta", _num(rel.get("beta")), ""),
+            ("Information ratio", _num(rel.get("information_ratio")), ""),
+        ]
     out.append('<div class="tiles">' + "".join(
         f'<div class="card tile"><div class="label">{_e(label)}</div><div class="value {cls}">{_e(value)}</div></div>'
         for label, value, cls in tiles) + "</div>")

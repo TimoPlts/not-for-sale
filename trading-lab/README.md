@@ -41,6 +41,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 13A (complete):** `trading-lab doctor`, a read-only readiness check before going live.
 - **Stage 13B (complete):** an optional correlation limit, so the bot does not stack positions in coins that move together.
 - **Stage 13C (complete):** `trading-lab robustness`: bootstrap ranges that show how much of a run's result could be luck (also in the HTML report).
+- **Stage 13D (complete):** performance relative to buy & hold: excess return, alpha, beta, correlation and information ratio.
 
 ### Stage 9/10 summary
 
@@ -155,6 +156,20 @@ One self-contained file, with no external scripts, styles or fonts, so it opens 
 * every voter's performance (AI agents marked), the latest AI rationales, model usage, breaker trips, closed trades and decision counts.
 
 It follows your system's light/dark setting. The report is built from the read-only data layer, so it never changes the database. All text from the database, including model rationales, is HTML-escaped.
+
+## Compared with buy & hold
+
+Every backtest (and `report`, the dashboard, the HTML report and `experiment`) also gives the strategy's performance **relative to equal-weight buy & hold** over the same bars:
+
+```
+Relative to buy & hold: excess return -5.44%, alpha -44.02%/yr, beta 0.34, correlation 0.65, information ratio -3.93
+```
+
+* **beta:** how much of the market's moves the strategy carries. 0.34 means about a third, which is typical when it is often in cash.
+* **alpha:** annualised return beyond what that beta explains.
+* **information ratio:** excess return per unit of tracking error.
+
+A strategy can beat buy & hold in a falling market simply by holding cash. Alpha and beta separate "less exposed" from "better at picking", and they are computed from per-bar returns, with definitions in `src/trading_lab/metrics/relative.py`.
 
 ## Could it be luck? (`robustness`)
 

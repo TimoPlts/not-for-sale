@@ -177,6 +177,13 @@ def research_section(data: DashboardData, run_id: str) -> None:
     cols[2].metric("Max drawdown", _pct(-m["max_drawdown"] if m.get("max_drawdown") is not None else None))
     cols[3].metric("Sharpe", _num(m.get("sharpe_ratio")))
     cols[4].metric("Profit factor", _num(m.get("profit_factor")))
+    rel = research.get("relative") or {}
+    if rel:
+        cols = st.columns(4)
+        cols[0].metric("Excess vs buy & hold", _pct(rel.get("excess_return")))
+        cols[1].metric("Alpha (per year)", _pct(rel.get("alpha_annualized")))
+        cols[2].metric("Beta", _num(rel.get("beta")))
+        cols[3].metric("Information ratio", _num(rel.get("information_ratio")))
     results = research["research_results"]
     if results:
         rows = []
