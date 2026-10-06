@@ -350,5 +350,11 @@ Trade-offs worth knowing:
 - Bug fix: resuming compares configs by value instead of by fingerprint. Before this, every new config setting since 9A would have stopped runs saved by older versions from resuming.
 - Tests: each format; no URL leaks; config and environment checks; levels and repeats; breaker, outage, model-pause and recovery alerts from real trader runs; the daily summary across midnight and a resume; failing alerts not changing any fill; the CLI; resuming a run saved by an older version.
 
+### Stage 12A: ATR stops and volatility-scaled sizing ✅
+- `[risk] stop_mode = "percent" | "atr"`, `atr_period`, `atr_stop_multiple`, `atr_stop_min_pct` and `atr_stop_max_pct`. The defaults keep the fixed percentage stop.
+- `MarketStats.atr`: the simple average true range of the bars before the fill. It is computed the same way by `market_stats_frame` (backtests) and `next_bar_stats` (live fills at the new candle's open), so both paths agree exactly.
+- `RiskManager.stop_distance_pct` / `stop_price_for(fill, stats)` give the ATR distance, clamped, falling back to `stop_loss_pct` without history. Risk-per-trade sizing uses it, so the loss at the stop is the same share of equity for every coin. `stop_basis` and `stop_distance_pct` are recorded in each entry's sizing details.
+- Tests: ATR identical for the backtest and live paths and causal; modes, clamping and fallback; equal risk with a quarter of the size at four times the ATR; a backtest in ATR mode; live equal to the backtest in ATR mode (fills and stops); validation.
+
 ### Later
 Short positions, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and more alert channels (e-mail).

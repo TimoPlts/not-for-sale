@@ -428,7 +428,7 @@ class TradingSession:
         fill = self.costs.fill_price(Side.BUY, open_price, quantity, stats)
         affordable = self.costs.fee_model.max_notional(self.portfolio.cash) * (1 - 1e-9) / fill
         quantity = min(quantity, affordable)
-        stop = self.risk.stop_price_for(fill)
+        stop = self.risk.stop_price_for(fill, stats)
         order = Order(sym, Side.BUY, quantity, ts, stop_price=stop, reason="enter")
         report = self.executor.submit(order, open_price, stats)
         self.records.reports.append(report)
@@ -455,7 +455,7 @@ class TradingSession:
             self._decide(ts, sym, DecisionAction.REJECTED, decision.reason, sig,
                          reference_price=limit, details=decision.sizing)
             return
-        stop = self.risk.stop_price_for(limit)
+        stop = self.risk.stop_price_for(limit, stats)
         self.resting[sym] = RestingLimit(
             sym, limit, decision.quantity, decision.quantity, stop, ts, ex.limit_ttl_bars, sig
         )

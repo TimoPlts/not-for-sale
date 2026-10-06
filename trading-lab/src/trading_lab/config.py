@@ -143,8 +143,27 @@ class RiskConfig:
     trailing_stop_pct: float = 0.0  # stop follows the highest high at this distance (raised at bar closes)
     trailing_activation_pct: float = 0.0  # start trailing once the high is this far above the average cost
     take_profit_pct: float = 0.0  # exit when the high reaches average cost x (1 + this)
+    # Initial stop: "percent" = stop_loss_pct below the entry fill; "atr" = atr_stop_multiple x ATR
+    # below it (ATR of the bars before the fill), clamped to [atr_stop_min_pct, atr_stop_max_pct].
+    # Risk-per-trade sizing uses that distance, so volatile coins get smaller positions.
+    stop_mode: str = "percent"
+    atr_period: int = 14
+    atr_stop_multiple: float = 2.0
+    atr_stop_min_pct: float = 0.005
+    atr_stop_max_pct: float = 0.25
 
     def __post_init__(self) -> None:
+        _require(self.stop_mode in ("percent", "atr"),
+                 f"risk.stop_mode must be 'percent' or 'atr', got {self.stop_mode!r}")
+        _require(
+            isinstance(self.atr_period, int) and not isinstance(self.atr_period, bool) and 2 <= self.atr_period <= 500,
+            f"risk.atr_period must be an integer in [2, 500], got {self.atr_period!r}",
+        )
+        _number(self, "atr_stop_multiple", low=0.0, high=50.0, low_inclusive=False)
+        _number(self, "atr_stop_min_pct", low=0.0, high=0.99, low_inclusive=False)
+        _number(self, "atr_stop_max_pct", low=0.0, high=0.99, low_inclusive=False)
+        _require(self.atr_stop_min_pct <= self.atr_stop_max_pct,
+                 "risk.atr_stop_min_pct must not exceed risk.atr_stop_max_pct")
         _number(self, "trailing_stop_pct", low=0.0, high=0.99)
         _number(self, "trailing_activation_pct", low=0.0, high=10.0)
         _number(self, "take_profit_pct", low=0.0, high=100.0)

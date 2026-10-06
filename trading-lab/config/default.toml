@@ -39,6 +39,13 @@ flatten_on_halt = false       # true = also close all positions when the kill sw
 trailing_stop_pct = 0.0       # e.g. 0.04 = stop trails 4% below the highest high since entry
 trailing_activation_pct = 0.0 # e.g. 0.02 = only start trailing after a 2% gain over the average cost
 take_profit_pct = 0.0         # e.g. 0.10 = take profit at average cost + 10%
+# Initial stop: "percent" (stop_loss_pct) or "atr" (atr_stop_multiple x ATR below the entry,
+# clamped to [atr_stop_min_pct, atr_stop_max_pct]); sizing then risks the same equity share per trade.
+stop_mode = "percent"
+atr_period = 14               # true ranges averaged (bars before the fill only)
+atr_stop_multiple = 2.0
+atr_stop_min_pct = 0.005
+atr_stop_max_pct = 0.25
 
 [data]
 cache_dir = "data/cache"      # CSV cache of public candles

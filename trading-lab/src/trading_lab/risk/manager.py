@@ -88,8 +88,16 @@ class RiskManager:
     def config(self) -> RiskConfig:
         return self._config
 
-    def stop_price_for(self, entry_fill_price: float) -> float:
-        return entry_fill_price * (1.0 - self._config.stop_loss_pct)
+    def stop_distance_pct(self, entry_fill_price: float, stats: MarketStats | None = None) -> tuple[float, str]:
+        """Initial stop distance as a fraction of the entry, and what it was based on."""
+        cfg = self._config
+        if cfg.stop_mode == "atr" and stats is not None and stats.atr is not None and stats.atr > 0:
+            raw = cfg.atr_stop_multiple * stats.atr / entry_fill_price
+            return min(max(raw, cfg.atr_stop_min_pct), cfg.atr_stop_max_pct), "atr"
+        return cfg.stop_loss_pct, "percent"  # also the fallback when ATR is not known yet
+
+    def stop_price_for(self, entry_fill_price: float, stats: MarketStats | None = None) -> float:
+        return entry_fill_price * (1.0 - self.stop_distance_pct(entry_fill_price, stats)[0])
 
     def evaluate_entry(
         self,
@@ -122,7 +130,8 @@ class RiskManager:
             return reject("non-positive equity")
 
         fill_price = self._costs.fill_price(Side.BUY, reference_price)
-        stop_price = self.stop_price_for(fill_price)
+        stop_distance, stop_basis = self.stop_distance_pct(fill_price, stats)
+        stop_price = fill_price * (1.0 - stop_distance)
         loss_per_unit = self._costs.entry_cost_per_unit(
             reference_price
         ) - self._costs.exit_proceeds_per_unit(stop_price)
@@ -145,6 +154,8 @@ class RiskManager:
             "binding_limit": binding,
             "equity": equity,
             "loss_per_unit_at_stop": loss_per_unit,
+            "stop_distance_pct": stop_distance,
+            "stop_basis": stop_basis,
         }
 
         notional = quantity * fill_price

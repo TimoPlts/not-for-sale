@@ -247,7 +247,8 @@ class BacktestEngine:
         }
         lookback = cfg.execution.volume_lookback
         market_stats = {
-            sym: stats_series(market_stats_frame(frame, lookback)) for sym, frame in candles.items()
+            sym: stats_series(market_stats_frame(frame, lookback, cfg.risk.atr_period))
+            for sym, frame in candles.items()
         }
 
         timeline = sorted(

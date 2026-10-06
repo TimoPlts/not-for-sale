@@ -34,6 +34,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 11A (complete):** optional trailing stops and take-profit exits (long-only, no look-ahead, identical in backtests and live, kept across resume).
 - **Stage 11B (complete):** `trading-lab summary`: what a run did over the last N hours, in Markdown.
 - **Stage 11C (complete):** push alerts (ntfy, Slack, Discord or JSON webhook) for breaker trips, outages, model pauses, crashes and a daily summary.
+- **Stage 12A (complete):** optional ATR-based stops with volatility-scaled position sizing (the same risk per trade on every coin).
 
 ### Stage 9/10 summary
 
@@ -481,6 +482,19 @@ Optional exits in `[risk]` (0 = off, the default):
 | `take_profit_pct = 0.10` | exit when a bar's high reaches average cost × 1.10, at that price, or at the open if the bar gapped above it |
 
 If the stop and the target are both reached in the same bar, the stop is assumed to come first, which is the conservative choice. Take-profit exits are recorded as `take_profit` decisions, and trailing-stop exits as `stop_loss` with "trailing stop" in the reason. The stop-loss cooldown now follows only stop exits that **lost** money: a trailing stop that locks in a gain does not block re-entry. Raised stops are saved with a live run, so they survive `--resume`, and the dashboard shows the current stop.
+
+## Volatility-scaled sizing (ATR stops)
+
+With `stop_mode = "atr"` in `[risk]`, the initial stop is set by recent volatility instead of a fixed percentage:
+
+```
+stop distance = atr_stop_multiple × ATR(atr_period) / entry price,
+                clamped to [atr_stop_min_pct, atr_stop_max_pct]
+```
+
+The risk-per-trade sizing already sizes each entry so that hitting the stop loses `risk_per_trade_pct` of equity. A volatile coin therefore gets a wider stop and a proportionally **smaller** position, and a calm one a tighter stop and a larger position. The risk per trade is the same either way, and the other limits (max position, exposure, cash, liquidity) still apply.
+
+ATR is the **simple** average true range of the bars *before* the fill, so it never sees the bar it trades on, and live paper trading computes exactly the same value as a backtest. Until there is enough history, the fixed `stop_loss_pct` is used. Each entry decision records `stop_basis` (`atr` or `percent`) and `stop_distance_pct`. Trailing stops and take-profit work on top of either mode.
 
 ## Execution realism
 

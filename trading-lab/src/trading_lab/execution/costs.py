@@ -37,12 +37,23 @@ class MarketStats:
 
     volatility: float  # std of per-bar log returns
     avg_quote_volume: float  # average traded value per bar (quote currency)
+    atr: float | None = None  # simple average true range of the preceding bars (price units)
 
 
-def market_stats_frame(candles: pd.DataFrame, lookback: int) -> pd.DataFrame:
+def _true_range(candles: pd.DataFrame) -> pd.Series:
+    prev_close = candles["close"].shift(1)
+    return pd.concat(
+        [candles["high"] - candles["low"], (candles["high"] - prev_close).abs(), (candles["low"] - prev_close).abs()],
+        axis=1,
+    ).max(axis=1, skipna=True)
+
+
+def market_stats_frame(candles: pd.DataFrame, lookback: int, atr_period: int = 14) -> pd.DataFrame:
     """Per-bar ``MarketStats`` columns where row ``i`` uses bars ``i-lookback .. i-1``.
 
     The shift by one bar keeps a fill at bar i's open from seeing bar i itself.
+    ATR is a *simple* average of the last ``atr_period`` true ranges, so the
+    value does not depend on where the data window starts (live == backtest).
     """
     log_returns = np.log(candles["close"]).diff()
     quote_volume = candles["close"] * candles["volume"]
@@ -50,20 +61,28 @@ def market_stats_frame(candles: pd.DataFrame, lookback: int) -> pd.DataFrame:
         {
             "volatility": log_returns.rolling(lookback, min_periods=lookback).std(ddof=0).shift(1),
             "avg_quote_volume": quote_volume.rolling(lookback, min_periods=lookback).mean().shift(1),
+            "atr": _true_range(candles).rolling(atr_period, min_periods=atr_period).mean().shift(1),
         },
         index=candles.index,
     )
 
 
+def _stats(vol: float, qv: float, atr: float | None) -> MarketStats | None:
+    if not (math.isfinite(vol) and math.isfinite(qv)) or qv <= 0:
+        return None
+    return MarketStats(float(vol), float(qv), float(atr) if atr is not None and math.isfinite(atr) else None)
+
+
 def stats_series(frame: pd.DataFrame) -> list[MarketStats | None]:
     """``market_stats_frame`` rows as objects (None where history is too short)."""
+    atr = frame["atr"].to_numpy() if "atr" in frame else [None] * len(frame)
     return [
-        MarketStats(float(v), float(q)) if math.isfinite(v) and math.isfinite(q) and q > 0 else None
-        for v, q in zip(frame["volatility"].to_numpy(), frame["avg_quote_volume"].to_numpy())
+        _stats(v, q, a)
+        for v, q, a in zip(frame["volatility"].to_numpy(), frame["avg_quote_volume"].to_numpy(), atr)
     ]
 
 
-def next_bar_stats(candles: pd.DataFrame, lookback: int) -> MarketStats | None:
+def next_bar_stats(candles: pd.DataFrame, lookback: int, atr_period: int = 14) -> MarketStats | None:
     """Stats for the bar right after the last candle (for fills at the next open)."""
     if len(candles) < lookback + 1:
         return None
@@ -71,14 +90,15 @@ def next_bar_stats(candles: pd.DataFrame, lookback: int) -> MarketStats | None:
     log_returns = np.diff(np.log(tail["close"].to_numpy()))
     quote_volume = (tail["close"] * tail["volume"]).to_numpy()[1:]
     vol, qv = float(np.std(log_returns)), float(np.mean(quote_volume))
-    return MarketStats(vol, qv) if math.isfinite(vol) and qv > 0 else None
+    atr = None
+    if len(candles) >= atr_period + 1:
+        atr = float(_true_range(candles.iloc[-(atr_period + 1):]).iloc[1:].mean())
+    return _stats(vol, qv, atr)
 
 
 def stats_at(frame: pd.DataFrame, position: int) -> MarketStats | None:
-    vol, qv = frame["volatility"].iloc[position], frame["avg_quote_volume"].iloc[position]
-    if not (math.isfinite(vol) and math.isfinite(qv)) or qv <= 0:
-        return None
-    return MarketStats(float(vol), float(qv))
+    atr = frame["atr"].iloc[position] if "atr" in frame else None
+    return _stats(frame["volatility"].iloc[position], frame["avg_quote_volume"].iloc[position], atr)
 
 
 class FeeModel(Protocol):

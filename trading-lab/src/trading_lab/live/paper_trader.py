@@ -278,7 +278,8 @@ class LivePaperTrader:
 
             lookback = cfg.execution.volume_lookback
             market_stats = {
-                sym: stats_series(market_stats_frame(frame, lookback)) for sym, frame in candles.items()
+                sym: stats_series(market_stats_frame(frame, lookback, cfg.risk.atr_period))
+                for sym, frame in candles.items()
             }
             columns = ("open", "high", "low", "close", "volume")
             for t in new_bars:
@@ -310,7 +311,7 @@ class LivePaperTrader:
                     opens[sym] = price
             if needed <= set(opens):
                 lookback = cfg.execution.volume_lookback
-                stats = {sym: next_bar_stats(candles[sym], lookback) for sym in opens}
+                stats = {sym: next_bar_stats(candles[sym], lookback, cfg.risk.atr_period) for sym in opens}
                 self._session.open_bar(next_bar.to_pydatetime(), opens, stats)
 
         records = self._session.drain()
