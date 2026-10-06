@@ -255,5 +255,11 @@ average trade return.
 - CLI: `trading-lab experiment` (`--variants`, `--walkforward`, `--param`, `--save` to the `research_results` table, `--export` JSON). There is also a global `--agent-mode record|replay|live`. Sweep and walk-forward fail fast on missing Qwen variables.
 - Tests: variants change only weights; answers are shared across variants, sweep combinations and overlapping walk-forward windows; replay reproduces every variant offline; the off row equals the baseline; the CLI in both modes; the fail-fast check.
 
+### Stage 9E: Model usage accounting ✅
+- `llm/usage.py`: `CallRecord` (one call: provider, model, ok, latency, attempts, characters, tokens and whether they are estimated, error), `UsageStats` (calls, cache hits and misses, failures, invalid answers, retries, characters, tokens, latency) and `UsageTracker` (per agent, kept on each provider as `provider.usage`). Tokens are taken from the endpoint when it reports them; otherwise they are estimated conservatively as ceil(chars / 3) and flagged.
+- `ProviderAgent` records every call, successful or not, and `AgentStrategy` reports every cache lookup. Each call's record is stored in the signal metadata (`llm`), and `usage_from_signals` rebuilds the usage of stored runs.
+- The CLI prints usage after `backtest`, `sweep`, `walkforward` and `experiment`, and in `agent-report`.
+- Tests: hits and misses across runs, latency with a fake clock, reported versus estimated tokens, failures, retries and invalid answers, stored usage equal to the tracker, and the CLI output.
+
 ### Later
 Stages 9B–10E (specialised Qwen agents, agent attribution, experiments, usage accounting, smoke test, live integration, dashboard, VM operation, failure recovery, experiment protocol). After that: short positions, trailing stops and order-book data.

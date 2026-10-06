@@ -22,9 +22,25 @@ from trading_lab.llm.openai_compat import (
     chat_completions_url,
 )
 from trading_lab.llm.qwen import QwenProvider
+from trading_lab.llm.usage import (
+    CallRecord,
+    UsageStats,
+    UsageTracker,
+    estimate_tokens,
+    format_usage,
+    total_usage,
+    usage_from_signals,
+)
 
 __all__ = [
     "PROVIDERS",
+    "CallRecord",
+    "UsageStats",
+    "UsageTracker",
+    "estimate_tokens",
+    "format_usage",
+    "total_usage",
+    "usage_from_signals",
     "Completion",
     "HttpTransport",
     "LLMProvider",

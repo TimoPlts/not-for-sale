@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from trading_lab.core.errors import ConfigError, TradingLabError
+from trading_lab.llm.usage import UsageTracker
 
 
 class ProviderConfigError(ConfigError):
@@ -73,6 +74,14 @@ class LLMProvider(ABC):
         With ``need_credentials=False`` (replay mode) only what is needed to
         look answers up in the cache is checked; the model is never called.
         """
+
+    @property
+    def usage(self) -> UsageTracker:
+        """Calls, cache hits, failures, latency and tokens per agent in this process."""
+        tracker = self.__dict__.get("_usage")
+        if tracker is None:
+            tracker = self.__dict__["_usage"] = UsageTracker()
+        return tracker
 
     @abstractmethod
     def chat(self, system_prompt: str, user_prompt: str) -> Completion:

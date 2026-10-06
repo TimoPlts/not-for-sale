@@ -83,6 +83,35 @@ def _fmt_dd(value: Any) -> str:
     return "n/a" if value is None else f"{-value:.1%}"
 
 
+def _usage_title(provider_name: str | None, model: str | None = None) -> str:
+    name = (provider_name or "model").capitalize()
+    return f"{name} usage" + (f" ({model})" if model else "")
+
+
+def _print_signal_usage(signals: Any) -> None:
+    """Model usage per agent from signals (in memory or from a stored run)."""
+    from trading_lab.llm import usage_from_signals
+
+    pairs = [(s.strategy, s.metadata) for s in signals]
+    per_agent = usage_from_signals(pairs)
+    if not per_agent:
+        return
+    providers = {m["llm"].get("provider") for _, m in pairs if isinstance(m.get("llm"), dict)}
+    from trading_lab.llm import format_usage
+
+    print()
+    print(format_usage(per_agent, _usage_title(next(iter(providers)) if len(providers) == 1 else None)))
+
+
+def _print_provider_usage(llm: Any) -> None:
+    if llm is None or not llm.usage.per_agent:
+        return
+    from trading_lab.llm import format_usage
+
+    print()
+    print(format_usage(llm.usage.per_agent, _usage_title(llm.name, llm.model)))
+
+
 # ---------------------------------------------------------------- backtest
 def cmd_backtest(args: argparse.Namespace) -> int:
     from trading_lab.backtest import BacktestEngine
@@ -122,6 +151,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         print(f"({open_positions} position(s) still open at the end; counted in equity, not in trades)")
     print("\n=== Decisions ===")
     print(", ".join(f"{k}={v}" for k, v in sorted(result.actions().items())))
+    _print_signal_usage(result.signals)
 
     if args.export:
         out = Path(args.export)
@@ -377,10 +407,11 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     print(f"Sweep: {combos} backtests | {start:%Y-%m-%d} -> {end:%Y-%m-%d} | {cfg.market.timeframe} | "
           f"ranked by {args.metric} | data: {provider.name}")
 
+    llm = _grid_llm(cfg, grid)
     store = SQLiteStore(cfg.storage.db_path) if args.save else None
     try:
         results = run_sweep(
-            cfg, provider, start, end, grid, metric=args.metric, store=store, llm_provider=_grid_llm(cfg, grid),
+            cfg, provider, start, end, grid, metric=args.metric, store=store, llm_provider=llm,
             progress=lambda n, total, params: print(f"  [{n}/{total}] {_short(params)}"),
         )
     finally:
@@ -398,6 +429,7 @@ def cmd_sweep(args: argparse.Namespace) -> int:
         print(f"\nBuy & hold over the same period: {bench.total_return:+.2%} "
               f"(max drawdown {-bench.max_drawdown:.1%})")
     print("\nNote: the best in-sample row is optimistic by construction; use walkforward to check it.")
+    _print_provider_usage(llm)
     if args.export:
         rows = [{**r.params, **r.metrics.to_dict(), "run_id": r.run_id} for r in results]
         Path(args.export).parent.mkdir(parents=True, exist_ok=True)
@@ -418,7 +450,7 @@ def cmd_walkforward(args: argparse.Namespace) -> int:
     result = walk_forward(
         cfg, provider, start, end, grid,
         train=timedelta(days=args.train_days), test=timedelta(days=args.test_days),
-        metric=args.metric, progress=lambda msg: print(f"  {msg}"), llm_provider=_grid_llm(cfg, grid),
+        metric=args.metric, progress=lambda msg: print(f"  {msg}"), llm_provider=(llm := _grid_llm(cfg, grid)),
     )
     metric = args.metric
     print(f"\n{'test window':<25} {'in-sample':>10} {'out-of-sample':>14} "
@@ -436,6 +468,7 @@ def cmd_walkforward(args: argparse.Namespace) -> int:
           + ("" if bench is None else f" vs buy & hold {bench:+.2%}"))
     if is_mean is not None and oos_mean is not None and oos_mean < is_mean:
         print("Out-of-sample is worse than in-sample: expect live results closer to the out-of-sample numbers.")
+    _print_provider_usage(llm)
     return 0
 
 
@@ -458,6 +491,7 @@ def cmd_agent_report(args: argparse.Namespace) -> int:
             raise TradingLabError(f"unknown run id {run_id}")
         results = attribute_run(store, run_id, horizon=args.horizon)
         has_bars = store.count("bars", run_id) > 0
+        stored_signals = _stored_signals(store, run_id)
     shown = [a for a in results.values() if a.is_agent or args.all]
     print(f"Run {run_id} ({run['kind']}, {run['timeframe']}) | {len(shown)} "
           f"{'voter(s)' if args.all else 'agent(s)'} | horizon {args.horizon} bars")
@@ -468,7 +502,17 @@ def cmd_agent_report(args: argparse.Namespace) -> int:
     for a in shown:
         print()
         print(format_attribution(a))
+    _print_signal_usage(stored_signals)
     return 0
+
+
+def _stored_signals(store: Any, run_id: str) -> list[Any]:
+    import json as _json
+    from types import SimpleNamespace
+
+    rows = store.load_signals(run_id)
+    return [SimpleNamespace(strategy=r.strategy, metadata=_json.loads(r.metadata_json))
+            for r in rows.itertuples(index=False) if r.strategy != "ensemble"]
 
 
 def cmd_experiment(args: argparse.Namespace) -> int:
@@ -529,6 +573,7 @@ def cmd_experiment(args: argparse.Namespace) -> int:
                   f"{-m.max_drawdown:>7.1%} {_fmt_num(m.sharpe_ratio):>7} {_fmt_num(m.profit_factor):>6} "
                   f"{m.num_trades:>6} {exposure:>8}  {r.description}")
         print("\nA single backtest proves nothing: compare variants with --walkforward (out-of-sample).")
+    _print_provider_usage(llm)
     if args.export:
         import json as _json
 

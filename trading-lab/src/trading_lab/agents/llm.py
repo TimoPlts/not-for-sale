@@ -15,13 +15,15 @@ paper executor always sit between the model and any simulated trade.
 from __future__ import annotations
 
 import hashlib
+import time
 from typing import Any, ClassVar, Mapping, Sequence
 
 from trading_lab.agents.base import Agent, AgentResponse, AgentResponseError
 from trading_lab.agents.context import MarketContext
 from trading_lab.agents.parsing import RESPONSE_INSTRUCTIONS, parse_agent_json
 from trading_lab.agents.strategy import AgentStrategy
-from trading_lab.llm.base import LLMProvider, ProviderConfigError
+from trading_lab.llm.base import LLMProvider, ProviderConfigError, ProviderError
+from trading_lab.llm.usage import CallRecord, estimate_tokens
 from trading_lab.strategies.registry import register_strategy
 
 
@@ -44,6 +46,7 @@ class ProviderAgent(Agent):
         self.system_prompt = system_prompt
         self.labels = {k: tuple(v) for k, v in (labels or {}).items()}
         self.provider: LLMProvider | None = None
+        self.last_call: CallRecord | None = None
 
     @property
     def params(self) -> dict[str, Any]:
@@ -56,17 +59,46 @@ class ProviderAgent(Agent):
         return context.to_prompt()
 
     def decide(self, context: MarketContext) -> AgentResponse:
-        if self.provider is None:
+        provider = self.provider
+        if provider is None:
             raise ProviderConfigError(f"{self.name}: no LLM provider attached")
-        completion = self.provider.chat(self.system_prompt, self.user_prompt(context))
+        system, user = self.system_prompt, self.user_prompt(context)
+        input_chars = len(system) + len(user)
+        started = time.monotonic()
         try:
-            return parse_agent_json(completion.text, self.labels)
+            completion = provider.chat(system, user)
+        except ProviderError as exc:
+            self._record(provider, CallRecord(
+                provider.name, provider.model, False, time.monotonic() - started, exc.attempts,
+                input_chars, 0, estimate_tokens(input_chars), 0, True, type(exc).__name__,
+            ), valid=False)
+            raise
+        record = CallRecord(
+            provider.name, completion.model, True, completion.latency_seconds, completion.attempts,
+            input_chars, len(completion.text),
+            completion.input_tokens if completion.input_tokens is not None else estimate_tokens(input_chars),
+            completion.output_tokens if completion.output_tokens is not None else estimate_tokens(len(completion.text)),
+            completion.input_tokens is None or completion.output_tokens is None,
+        )
+        try:
+            response = parse_agent_json(completion.text, self.labels)
         except AgentResponseError as exc:
+            self._record(provider, record, valid=False)
             if completion.finish_reason == "length":
                 raise AgentResponseError(
                     f"{exc} (the answer was cut off; raise [agents] max_output_tokens)"
                 ) from None
             raise
+        self._record(provider, record, valid=True)
+        return response
+
+    def _record(self, provider: LLMProvider, record: CallRecord, *, valid: bool) -> None:
+        self.last_call = record
+        provider.usage.record_call(self.name, record, valid=valid)
+
+    def pop_last_call(self) -> CallRecord | None:
+        record, self.last_call = self.last_call, None
+        return record
 
 
 class LLMProviderStrategy(AgentStrategy):
@@ -86,6 +118,14 @@ class LLMProviderStrategy(AgentStrategy):
     @property
     def provider(self) -> LLMProvider | None:
         return self.agent.provider if isinstance(self.agent, ProviderAgent) else None
+
+    def _call_meta(self) -> dict[str, Any]:
+        record = self.agent.pop_last_call() if isinstance(self.agent, ProviderAgent) else None
+        return {"llm": record.to_json()} if record is not None else {}
+
+    def _on_cache(self, hit: bool) -> None:
+        if self.provider is not None:
+            self.provider.usage.record_cache(self.name, hit)
 
 
 @register_strategy

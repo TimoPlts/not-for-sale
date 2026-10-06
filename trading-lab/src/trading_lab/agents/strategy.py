@@ -145,6 +145,7 @@ class AgentStrategy(Strategy):
             except Exception as exc:  # a broken cache must not crash the run
                 cached = None
                 meta["cache_error"] = f"{type(exc).__name__}: {exc}"
+            self._on_cache(cached is not None)
             if cached is not None:
                 return cached, {**meta, "cache": "hit"}
             if self.mode == "replay":
@@ -174,6 +175,9 @@ class AgentStrategy(Strategy):
     def _call_meta(self) -> dict[str, Any]:
         """Extra facts about the last call (e.g. model usage); see ``ProviderAgent``."""
         return {}
+
+    def _on_cache(self, hit: bool) -> None:
+        """Called after every cache lookup (for usage accounting)."""
 
     def _signal_at(
         self,

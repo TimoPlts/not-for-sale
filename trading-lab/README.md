@@ -23,6 +23,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 9B (complete):** three specialist Qwen agents (Trend, Momentum, Risk/Regime) that vote in the ensemble.
 - **Stage 9C (complete):** agent performance attribution (`trading-lab agent-report`).
 - **Stage 9D (complete):** baseline versus AI experiments (`trading-lab experiment`), with agents usable in sweeps and walk-forward.
+- **Stage 9E (complete):** model usage accounting: calls, cache hits and misses, failures, retries, latency, and tokens (reported or estimated).
 
 ## Quick start
 
@@ -239,6 +240,19 @@ The definitions are exact and deterministic. They are spelled out in `src/tradin
 * **Calibration:** correctness and mean signed return per confidence bucket. A well-calibrated agent is right more often when it is more confident.
 
 Every run now also stores the candles it traded on (schema v3 `bars` table), which the outcome statistics need. Older runs show `n/a` for them.
+
+### Model usage and cost
+
+The Qwen endpoint is free today, but every call is accounted for, so paid models can be budgeted later. `backtest`, `sweep`, `walkforward`, `experiment` and `agent-report` end with a block like this:
+
+```
+Qwen usage (qwen2.5-7b-instruct):
+  calls: 482   cache hits: 1204   cache misses: 482   failures: 3   invalid answers: 1   retries: 5
+  avg latency: 1.80s   total latency: 14m 28s
+  input tokens: 612,140 (estimated)   output tokens: 31,200 (estimated)   (input chars ..., output chars ...)
+```
+
+With several agents, the block also has a per-agent table. Token counts are the endpoint's own `usage` numbers when it reports them. Otherwise they are estimated as characters ÷ 3, which errs on the high side (real text is closer to 3.5–4 characters per token) and is marked `(estimated)`. Each model call's details (latency, attempts, characters, tokens, error) are saved in the signal's metadata under `llm`. Stored runs therefore keep their usage, and `agent-report` rebuilds it from the database.
 
 ## Research tools
 
