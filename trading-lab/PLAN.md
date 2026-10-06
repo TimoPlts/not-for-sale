@@ -505,6 +505,12 @@ Trade-offs worth knowing:
   - validation;
   - opt-in from the config, with a backtest trading both sides.
 
+### Stage 17B: Cost sensitivity ✅
+- `research/costs.py`: `cost_sensitivity(config, provider, start, end, multipliers)` backtests the same period with the fee rates, slippage, impact coefficient and borrow fee scaled together. The data is fetched once and shared, and the agent answers come from the shared cache. The 1x row is exactly the normal backtest.
+- `CostSensitivity` gives the break-even multiplier (linear interpolation where the return crosses zero), a verdict (no edge before costs, still profitable at the highest multiplier, or a thin or roomy break-even) and `to_dict`.
+- CLI: `trading-lab costs [--days N | --start/--end] [--multipliers 0,0.5,1,2,3] [--export JSON]` (nothing stored).
+- Tests: every cost scaled (and only costs); invalid multipliers; rows sorted and deduplicated; one data fetch per symbol; fees increasing; the 1x row equal to a plain backtest; break-even interpolation and every verdict; the CLI (export, bad input, no database).
+
 ## 5. Stage 11–16 status summary
 
 On top of the Stage 9/10 system:

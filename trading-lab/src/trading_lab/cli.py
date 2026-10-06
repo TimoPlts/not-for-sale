@@ -22,6 +22,7 @@
     trading-lab data-check [--symbols ...] [--days N | --start/--end] [--run RUN_ID] [--strict]
     trading-lab agent-eval [RUN_ID] [--min-answers 20] [--json]
     trading-lab export RUN_ID DIR [--holds] [--force]
+    trading-lab costs [--days N | --start/--end] [--multipliers 0,0.5,1,2,3]
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -547,6 +548,37 @@ def cmd_sweep(args: argparse.Namespace) -> int:
         rows = [{**r.params, **r.metrics.to_dict(), "run_id": r.run_id} for r in results]
         Path(args.export).parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(rows).to_csv(args.export, index=False)
+        print(f"Results written to {Path(args.export).resolve()}")
+    return 0
+
+
+def cmd_costs(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.research import cost_sensitivity, format_costs
+    from trading_lab.strategy_factory import shared_llm_provider
+
+    cfg = _load_config(args)
+    try:
+        multipliers = [float(x) for x in args.multipliers.split(",") if x.strip()]
+    except ValueError:
+        raise TradingLabError("--multipliers must be comma-separated numbers, e.g. 0,0.5,1,2,3") from None
+    start, end = _period(args, args.days)
+    provider = _provider(cfg, args.synthetic)
+    print(f"Cost sensitivity: {len(set(multipliers))} backtests | {start:%Y-%m-%d} -> {end:%Y-%m-%d} | "
+          f"{cfg.market.timeframe} | data: {provider.name}")
+    llm = shared_llm_provider([cfg])
+    try:
+        result = cost_sensitivity(cfg, provider, start, end, multipliers, llm_provider=llm,
+                                  progress=lambda m: print(f"  costs x{m:g}"))
+    except ValueError as exc:
+        raise TradingLabError(str(exc)) from None
+    print()
+    print(format_costs(result))
+    _print_provider_usage(llm)
+    if args.export:
+        Path(args.export).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.export).write_text(_json.dumps(result.to_dict(), indent=2, default=str) + "\n")
         print(f"Results written to {Path(args.export).resolve()}")
     return 0
 
@@ -1243,6 +1275,15 @@ def build_parser() -> argparse.ArgumentParser:
     dc.add_argument("--strict", action="store_true", help="exit 1 on warnings too")
     dc.add_argument("--limit", type=int, default=5, help="details listed per symbol (default 5)")
     dc.set_defaults(func=cmd_data_check)
+
+    co = sub.add_parser("costs", help="the same backtest at scaled fees and slippage: how much do costs decide?")
+    market_options(co)
+    co.add_argument("--start", type=_date, help="YYYY-MM-DD (UTC)")
+    co.add_argument("--end", type=_date, help="YYYY-MM-DD (UTC, exclusive); default now")
+    co.add_argument("--days", type=int, default=90, help="length when --start is omitted (default 90)")
+    co.add_argument("--multipliers", default="0,0.5,1,2,3", help="cost multipliers (default 0,0.5,1,2,3)")
+    co.add_argument("--export", metavar="JSON", help="write the results to a JSON file")
+    co.set_defaults(func=cmd_costs)
 
     ex = sub.add_parser("export", help="write a stored run to CSV files and a JSON summary")
     ex.add_argument("run_id")

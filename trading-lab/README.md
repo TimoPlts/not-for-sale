@@ -56,6 +56,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
   - short exposure on the dashboard;
   - agent attribution that credits SELL votes for short trades.
 - **Stage 17A (complete):** two opt-in trend-following strategies, `ma_cross` (moving-average crossover) and `donchian` (channel breakout).
+- **Stage 17B (complete):** `trading-lab costs`: the same backtest at 0x to 3x fees and slippage, with the break-even cost level.
 
 ### Stage 9/10 summary
 
@@ -202,6 +203,31 @@ Relative to buy & hold: excess return -5.44%, alpha -44.02%/yr, beta 0.34, corre
 * **information ratio:** excess return per unit of tracking error.
 
 A strategy can beat buy & hold in a falling market simply by holding cash. Alpha and beta separate "less exposed" from "better at picking", and they are computed from per-bar returns, with definitions in `src/trading_lab/metrics/relative.py`.
+
+## How much do costs decide? (`costs`)
+
+```bash
+trading-lab costs --start 2025-01-01 --end 2025-07-01
+trading-lab costs --days 60 --multipliers 0,1,1.5,2 --export costs.json
+```
+
+This runs the same backtest several times, with every trading cost scaled by a multiplier (`0` is free trading, `1` is as configured, `2` is twice as expensive). The scaled costs are the taker and maker fees, the slippage and volume impact, and the short borrow fee. Data, signals and cached agent answers are identical across the runs, so the differences come from costs alone.
+
+```
+ costs     fee slip bps    return  sharpe trades  fees paid
+    0x  0.000%      0.0    +3.10%    1.42     52       0.00
+    1x  0.100%      5.0    +0.40%    0.21     52     198.65
+    2x  0.200%     10.0    -2.20%   -1.03     52     374.63
+Costs as configured take 2.70 percentage points of return off the cost-free result (198.65 in fees; ...)
+Verdict: break-even at about 1.15x the configured costs (thin: ...)
+```
+
+(The numbers above are only an illustration of the layout.)
+
+* **Break-even below about 1.5x:** the edge is thin. Cheaper execution (limit orders, a lower fee tier), fewer trades or a longer timeframe matter more than strategy tuning.
+* **A loss even at 0x:** the strategy has no edge before costs in that period.
+
+Nothing is stored.
 
 ## Could it be luck? (`robustness`)
 
