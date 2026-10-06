@@ -74,6 +74,21 @@ liquidate_at_end = false      # true = sell open positions at the final close
 [storage]
 db_path = "data/trading_lab.db"   # SQLite history of runs, signals, decisions, trades
 
+# Model-backed agents (e.g. [strategies.llm_analyst]) are off unless enabled:
+# [strategies.llm_analyst]
+# enabled = true
+# weight = 1.0
+# lookback = 30               # candles shown to the model
+# decision_interval = 4       # ask every N candles
+
 [agents]
 mode = "record"               # record | replay | live (see README: AI agents)
 cache_path = "data/agent_cache.db"
+# LLM provider for model-backed agents. The endpoint, model and token come ONLY
+# from environment variables (QWEN_API_URL, QWEN_MODEL, QWEN_API_KEY), never this file.
+provider = "qwen"
+request_timeout_seconds = 30.0  # per request
+max_retries = 2               # retries after a timeout, network error, HTTP 429 or 5xx
+retry_backoff_seconds = 1.0   # wait before the first retry; doubles each time
+temperature = 0.0             # part of the cache key, like the model and the prompt
+max_output_tokens = 512       # raise this for models that think aloud before answering

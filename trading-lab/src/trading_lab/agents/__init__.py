@@ -1,6 +1,7 @@
 """AI agents as signal sources (see ``agents.strategy`` for how they plug in).
 
-Importing this package registers the example agent strategies.
+Importing this package registers the example agent strategies and the
+LLM-backed ``llm_analyst`` strategy.
 """
 
 from trading_lab.agents.base import Agent, AgentResponse, AgentResponseError
@@ -12,6 +13,7 @@ from trading_lab.agents.examples import (
     TrendAnalystStrategy,
     TrendFollowingAnalyst,
 )
+from trading_lab.agents.llm import LLMAnalystStrategy, LLMProviderStrategy, ProviderAgent
 from trading_lab.agents.parsing import RESPONSE_INSTRUCTIONS, parse_agent_json
 from trading_lab.agents.strategy import AgentStrategy
 
@@ -23,8 +25,11 @@ __all__ = [
     "AgentStrategy",
     "LLMAgent",
     "LLMAgentStrategy",
+    "LLMAnalystStrategy",
+    "LLMProviderStrategy",
     "MarketContext",
     "MemoryResponseCache",
+    "ProviderAgent",
     "SQLiteResponseCache",
     "TrendAnalystStrategy",
     "TrendFollowingAnalyst",

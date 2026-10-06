@@ -19,6 +19,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 6 (complete):** the AI-agent framework, with record and replay of agent answers for reproducible backtests.
 - **Stage 7 (complete):** research tools: a buy & hold benchmark, parameter sweeps, walk-forward evaluation and run comparison.
 - **Stage 8 (complete):** execution realism: volume-aware slippage, a liquidity cap, and limit entries with partial fills.
+- **Stage 9A (complete):** a real LLM provider for agents. Qwen is the first, through any OpenAI-compatible chat-completions endpoint, with timeouts, retries and HOLD on any failure.
 
 ## Quick start
 
@@ -145,7 +146,38 @@ Every answer is saved in `data/agent_cache.db`, and `[agents] mode` controls how
 
 Answers are keyed by agent, version, parameters, symbol, candle and a hash of the exact context the agent saw. Changing the agent, its prompt or the data therefore never reuses a stale answer. Rationales are stored with each signal in the run history.
 
-To connect an LLM later, pass any `complete(system_prompt, user_prompt) -> text` function to `LLMAgentStrategy`. It builds the prompt from the market context and strictly validates the JSON answer. Invalid answers and errors become HOLD signals and never crash a run. An LLM needs its own API key; exchange keys are never needed.
+You can also pass any `complete(system_prompt, user_prompt) -> text` function to `LLMAgentStrategy` from code. It builds the prompt from the market context and strictly validates the JSON answer. Invalid answers and errors become HOLD signals and never crash a run.
+
+### Qwen (LLM provider)
+
+Model-backed agents use the provider named in `[agents] provider` (today: `qwen`). The endpoint must speak the OpenAI-compatible `/chat/completions` API. Its address, model and token come **only from environment variables**. They are never read from the config, stored or printed:
+
+```bash
+export QWEN_API_URL="https://<host>/v1"      # or the full .../v1/chat/completions URL
+export QWEN_MODEL="<model name>"
+export QWEN_API_KEY="<token>"                # never commit this; *.env files are git-ignored
+```
+
+On Windows PowerShell, use `$env:QWEN_API_URL = "..."` and so on.
+
+Then enable the general-purpose `llm_analyst` agent in your config:
+
+```toml
+[strategies.llm_analyst]
+weight = 1.0
+lookback = 30            # candles shown to the model
+decision_interval = 4    # ask every 4 candles
+```
+
+The rest of the `[agents]` settings (`request_timeout_seconds`, `max_retries`, `retry_backoff_seconds`, `temperature`, `max_output_tokens`) are documented in `config/default.toml`. The record/replay/live modes work exactly as above:
+
+* **record** asks Qwen only when no answer is cached for the exact context.
+* **replay** never contacts Qwen. It needs only `QWEN_MODEL`, which is part of the cache key, so a replay is fully offline.
+* **live** asks every time.
+
+The provider, model, temperature, output limit and prompt are all part of the cache key, so switching the model never reuses another model's answers. Missing variables stop a run before it starts, with a message naming them.
+
+Failures never stop a backtest or a paper run. Timeouts, network errors, HTTP 429 and 5xx are retried with exponential backoff. If the call still fails, or the answer is malformed, the agent votes HOLD for that bar and the error is saved with the signal. Failed answers are not cached, so `record` mode asks again next time. Reasoning models that "think aloud" (`<think>...</think>`) are supported, because the thinking is stripped before the JSON is parsed.
 
 ## Research tools
 

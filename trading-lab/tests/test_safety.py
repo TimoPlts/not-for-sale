@@ -48,3 +48,28 @@ def test_scanner_actually_detects_violations():
     assert FORBIDDEN_CALLS.search("ex.fetch_balance()")
     assert FORBIDDEN_CREDENTIALS.search("ccxt.binance({'apiKey': key})")
     assert not FORBIDDEN_CALLS.search("provider.fetch_ohlcv('BTC/USDT', '1h')")
+
+
+# Hard-coded tokens (e.g. "sk-..." keys or literal bearer headers) anywhere in the source.
+HARDCODED_TOKENS = re.compile(r"""["'](sk-[A-Za-z0-9_\-]{8,}|Bearer\s+[A-Za-z0-9._\-]{8,})["']""")
+
+
+def test_no_hardcoded_tokens_in_source():
+    offenders = [
+        f"{path.relative_to(SRC_DIR)}:{lineno}: {line.strip()}"
+        for path in _python_sources()
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if HARDCODED_TOKENS.search(line)
+    ]
+    assert not offenders, "hard-coded tokens found:\n" + "\n".join(offenders)
+    assert HARDCODED_TOKENS.search('headers = {"Authorization": "Bearer abcdef123456"}')
+
+
+def test_llm_credentials_come_only_from_the_environment():
+    from trading_lab.config import AgentsConfig
+
+    fields = set(AgentsConfig.__dataclass_fields__)
+    credential_like = re.compile(r"key|secret|password|url|(^|_)token($|_)", re.IGNORECASE)
+    assert not {f for f in fields if credential_like.search(f)}
+    source = (SRC_DIR / "llm" / "openai_compat.py").read_text(encoding="utf-8")
+    assert "os.environ" in source and "tomllib" not in source

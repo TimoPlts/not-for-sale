@@ -269,6 +269,7 @@ class StorageConfig:
 
 
 AGENT_MODES = ("live", "record", "replay")
+LLM_PROVIDERS = ("qwen",)  # keep in sync with trading_lab.llm.factory.PROVIDERS
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,16 +279,45 @@ class AgentsConfig:
     * ``record``: use a cached answer when there is one, otherwise ask the agent and cache it
     * ``replay``: only use cached answers (never call the agent) for exact reproducibility
     * ``live``: always ask the agent and cache nothing
+
+    The remaining keys configure the model provider used by LLM-backed agents.
+    Endpoint URL, model name and token are read from environment variables
+    (e.g. ``QWEN_API_URL``, ``QWEN_MODEL``, ``QWEN_API_KEY``), never from here.
     """
 
     mode: str = "record"
     cache_path: str = "data/agent_cache.db"
+    provider: str = "qwen"
+    request_timeout_seconds: float = 30.0  # per HTTP request
+    max_retries: int = 2  # extra attempts after a timeout, network error, 429 or 5xx
+    retry_backoff_seconds: float = 1.0  # doubles after each failed attempt
+    temperature: float = 0.0  # 0 = as deterministic as the model allows
+    max_output_tokens: int = 512
 
     def __post_init__(self) -> None:
         _require(self.mode in AGENT_MODES, f"agents.mode must be one of {AGENT_MODES}, got {self.mode!r}")
         _require(
             isinstance(self.cache_path, str) and self.cache_path.strip() != "",
             "agents.cache_path must be a non-empty path",
+        )
+        _require(
+            self.provider in LLM_PROVIDERS,
+            f"agents.provider must be one of {LLM_PROVIDERS}, got {self.provider!r}",
+        )
+        _number(self, "request_timeout_seconds", low=0.0, high=600.0, low_inclusive=False)
+        _require(
+            isinstance(self.max_retries, int)
+            and not isinstance(self.max_retries, bool)
+            and 0 <= self.max_retries <= 10,
+            f"agents.max_retries must be an integer in [0, 10], got {self.max_retries!r}",
+        )
+        _number(self, "retry_backoff_seconds", low=0.0, high=60.0)
+        _number(self, "temperature", low=0.0, high=2.0)
+        _require(
+            isinstance(self.max_output_tokens, int)
+            and not isinstance(self.max_output_tokens, bool)
+            and 16 <= self.max_output_tokens <= 32768,
+            f"agents.max_output_tokens must be an integer in [16, 32768], got {self.max_output_tokens!r}",
         )
 
 

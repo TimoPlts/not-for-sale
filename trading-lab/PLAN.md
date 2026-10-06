@@ -89,6 +89,8 @@ trading bot.
 | `metrics/`     | Performance metrics | 3 |
 | `live/`        | `LivePaperTrader` loop (public data, simulated fills, resumable state) | 4 |
 | `cli.py`       | `trading-lab backtest`, `trading-lab paper`, `trading-lab report` | 4 |
+| `agents/`      | Agent interface, context, record/replay cache, `AgentStrategy` adapter, LLM-backed strategies | 6, 9 |
+| `llm/`         | Provider-agnostic LLM clients (`LLMProvider`); Qwen via OpenAI-compatible chat completions | 9 |
 
 ### Key interfaces
 
@@ -225,5 +227,12 @@ average trade return.
 - A liquidity cap: maximum participation in recent bar volume, applied as a sizing limit.
 - Limit entry orders: price offset, time-to-live, maker fee, trade-through fill rule, and partial fills capped by bar volume with the remainder resting until expiry.
 
+### Stage 9A: Qwen LLM provider ✅
+- New `llm/` package, provider-agnostic: an `LLMProvider` ABC (`chat() -> Completion` with text, token usage when reported, latency and attempts; `complete()` is the Stage 6 `complete(system, user) -> text` interface) and a provider error hierarchy.
+- `OpenAICompatibleProvider`: a client for `/chat/completions` endpoints over a pluggable HTTP transport (standard-library `urllib`, so no new dependency). It reads `<PREFIX>_API_URL`, `<PREFIX>_API_KEY` and `<PREFIX>_MODEL` from the environment only. Timeouts, network errors, 429 and 5xx are retried with exponential backoff; other HTTP errors fail at once with a hint. The token is redacted from every message, log and `repr`. `QwenProvider` is this client with the `QWEN` prefix; adding OpenAI, Anthropic or Gemini means adding a provider class.
+- `[agents]` gains `provider`, `request_timeout_seconds`, `max_retries`, `retry_backoff_seconds`, `temperature` and `max_output_tokens`. These are non-secret, and old configs still load.
+- `LLMProviderStrategy` (the base for model-backed agents) and the registered `llm_analyst` strategy. `configure_agents` builds one shared provider and fails fast when variables are missing. In replay only `QWEN_MODEL` is required, and the model is never called.
+- Tests: missing variables, request and response format, malformed bodies and answers, timeouts, retries, client errors, failure → HOLD (including a whole backtest against a failing endpoint), record reuse, replay offline, live always asking, secret redaction, and a real local HTTP server for the transport and its timeout. New safety tests: no hard-coded tokens in the source, and no credential fields in the config.
+
 ### Later
-Short positions, trailing stops, an LLM-backed agent (needs an LLM API key, never exchange keys), order-book data, and dashboards.
+Stages 9B–10E (specialised Qwen agents, agent attribution, experiments, usage accounting, smoke test, live integration, dashboard, VM operation, failure recovery, experiment protocol). After that: short positions, trailing stops and order-book data.
