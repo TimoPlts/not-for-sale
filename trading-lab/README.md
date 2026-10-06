@@ -24,6 +24,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 9C (complete):** agent performance attribution (`trading-lab agent-report`).
 - **Stage 9D (complete):** baseline versus AI experiments (`trading-lab experiment`), with agents usable in sweeps and walk-forward.
 - **Stage 9E (complete):** model usage accounting: calls, cache hits and misses, failures, retries, latency, and tokens (reported or estimated).
+- **Stage 9F (complete):** `trading-lab agent-test`: a connectivity and agent smoke test that never trades.
 
 ## Quick start
 
@@ -163,6 +164,15 @@ export QWEN_API_KEY="<token>"                # never commit this; *.env files ar
 ```
 
 On Windows PowerShell, use `$env:QWEN_API_URL = "..."` and so on.
+
+Check the connection before anything else. Each command makes **one** model call and never trades, never writes to the database or the answer cache, and never needs exchange keys:
+
+```bash
+trading-lab agent-test qwen                           # env vars, one tiny prompt, structured answer, model, latency
+trading-lab agent-test qwen_trend                     # one real agent decision on the latest closed candle
+trading-lab agent-test qwen_risk --symbol ETH/USDT    # (the risk agent sees a flat simulated portfolio)
+trading-lab agent-test qwen_momentum --synthetic 1    # offline market data
+```
 
 Then enable the general-purpose `llm_analyst` agent in your config:
 

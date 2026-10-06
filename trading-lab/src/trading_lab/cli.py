@@ -9,6 +9,7 @@
     trading-lab compare  RUN_ID RUN_ID ...
     trading-lab agent-report [RUN_ID] [--horizon N] [--all]
     trading-lab experiment [--variants baseline,trend,...] [--walkforward] [--param ...]
+    trading-lab agent-test [qwen | qwen_trend | qwen_momentum | qwen_risk] [--synthetic SEED]
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -583,6 +584,29 @@ def cmd_experiment(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_agent_test(args: argparse.Namespace) -> int:
+    from trading_lab.llm import PROVIDERS
+    from trading_lab.smoke import agent_smoke_test, provider_smoke_test
+
+    cfg = _load_config(args)
+    target = args.target or cfg.agents.provider
+    print(f"agent-test {target}: one model call, no trades, no database writes, no exchange keys")
+    if target in PROVIDERS:
+        if target != cfg.agents.provider:
+            cfg = cfg.with_overrides({"agents": {"provider": target}})
+        result = provider_smoke_test(cfg)
+    else:
+        symbol = args.symbol or cfg.market.symbols[0]
+        result = agent_smoke_test(cfg, target, _provider(cfg, args.synthetic), symbol)
+    for line in result.lines:
+        print(f"  {line}")
+    if result.ok:
+        print("OK")
+        return 0
+    print(f"FAILED: {result.error}", file=sys.stderr)
+    return 1
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from trading_lab.reporting import run_metrics
     from trading_lab.storage import SQLiteStore
@@ -708,6 +732,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="store the summary (and, in backtest mode, every run) in the database")
     ex.add_argument("--export", metavar="JSON", help="write the full results to a JSON file")
     ex.set_defaults(func=cmd_experiment)
+
+    at = sub.add_parser("agent-test", help="check the model connection or one agent (no trading)")
+    at.add_argument("target", nargs="?",
+                    help="provider (qwen) or agent (qwen_trend, qwen_momentum, qwen_risk, llm_analyst); "
+                         "default: the configured provider")
+    at.add_argument("--symbol", help="symbol for agent tests (default: the first configured)")
+    at.add_argument("--timeframe", help="e.g. 1h")
+    at.add_argument("--synthetic", type=int, metavar="SEED", help="offline synthetic data for agent tests")
+    at.set_defaults(func=cmd_agent_test)
 
     cp = sub.add_parser("compare", help="compare stored runs side by side")
     cp.add_argument("run_ids", nargs="+")
