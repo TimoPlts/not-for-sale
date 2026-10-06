@@ -44,6 +44,7 @@ from trading_lab.data.base import MarketDataProvider, timeframe_delta
 from trading_lab.engine import Bar, Intent, TradingSession
 from trading_lab.engine.session import RestingLimit
 from trading_lab.execution.costs import market_stats_frame, next_bar_stats, stats_series
+from trading_lab.alerts import AlertManager
 from trading_lab.llm import LLMProvider
 from trading_lab.portfolio import Portfolio
 from trading_lab.risk.breakers import BreakerState
@@ -86,8 +87,13 @@ class LivePaperTrader:
         run_id: str | None = None,
         notes: str = "",
         llm_provider: LLMProvider | None = None,
+        alerts: AlertManager | None = None,
     ) -> None:
         self._config = config
+        self.alerts = alerts
+        self._outage_alerted = False
+        self._model_paused = False
+        self._last_summary_day: str | None = None
         self._provider = provider
         self._store = store
         self._clock = clock
@@ -140,7 +146,9 @@ class LivePaperTrader:
 
     def _restore(self, run: dict[str, Any]) -> None:
         self.run_id = run["run_id"]
-        if run["config_fingerprint"] != self._config.fingerprint():
+        # Compare by value: settings added in later versions take their (behaviour-preserving)
+        # defaults, so runs started with older code can still be resumed.
+        if AppConfig.from_dict(run["config"]) != self._config:
             raise ValueError(
                 "config differs from the one this run was started with; "
                 "use LivePaperTrader.resume() to load the stored config"
@@ -165,6 +173,7 @@ class LivePaperTrader:
         )
         last = state.get("last_processed")
         self._last_processed = pd.Timestamp(last) if last else None
+        self._last_summary_day = (state.get("alerts") or {}).get("last_summary_day")
         self._persisted_trades = self._store.count("closed_trades", self.run_id)
         if self._persisted_trades != len(portfolio.closed_trades):
             raise RuntimeError("stored trades do not match the replayed fills; database is inconsistent")
@@ -205,6 +214,7 @@ class LivePaperTrader:
             "resting": {s: order.to_json() for s, order in self._session.resting.items()},
             "stop_events": [[t.isoformat(), sym] for t, sym in self._session.stop_events],
             "trailing": {s: dict(v) for s, v in self._session.trailing.items()},
+            "alerts": {"last_summary_day": self._last_summary_day},
             "health": {
                 "last_cycle_at": ensure_utc(self._clock()).isoformat(),
                 "consecutive_errors": self.consecutive_errors,
@@ -305,6 +315,8 @@ class LivePaperTrader:
 
         records = self._session.drain()
         new_trades = self.portfolio.closed_trades[self._persisted_trades :]
+        summary_day_before = self._last_summary_day
+        summary_due = self._summary_due()
         errors_before = (self.consecutive_errors, self._last_error)
         self.consecutive_errors, self._last_error = 0, None
         try:
@@ -321,13 +333,18 @@ class LivePaperTrader:
             # session already moved on. Never continue from a state the database does
             # not have: reload it, so the same bars are processed again next cycle.
             self.consecutive_errors, self._last_error = errors_before
+            self._last_summary_day = summary_day_before
             self._reload()
+            self._alert("warning", "Database error: cycle rolled back", f"{exc}. The state was reloaded from "
+                        "the database and the bars will be processed again.", key="db_error")
             return self._failed_cycle(now, f"database error, state reloaded and bars will be retried: {exc}",
                                       save_health=False)
         except BaseException:
             self.consecutive_errors, self._last_error = errors_before
+            self._last_summary_day = summary_day_before
             raise
         self._persisted_trades += len(new_trades)
+        self._after_cycle(records, new_trades, summary_due)
 
         agent_errors = sum(
             1 for sig in records.signals
@@ -344,10 +361,75 @@ class LivePaperTrader:
             agent_errors=agent_errors,
         )
 
+    # ----------------------------------------------------------------- alerts
+    def _alert(self, level: str, title: str, body: str = "", *, key: str | None = None,
+               force: bool = False) -> None:
+        if self.alerts is not None:
+            self.alerts.emit(level, title, body, key=key, run_id=self.run_id, force=force)
+
+    def _summary_due(self) -> bool:
+        """True once per UTC day: the first cycle whose last bar falls on a new day."""
+        if self._last_processed is None or self.alerts is None or not self._config.alerts.daily_summary:
+            return False
+        day = (self._last_processed + self._step).date().isoformat()  # the day the last bar closed in
+        if self._last_summary_day is None:
+            self._last_summary_day = day  # first day of the run: nothing to summarise yet
+            return False
+        if day > self._last_summary_day:
+            self._last_summary_day = day
+            return True
+        return False
+
+    def _after_cycle(self, records: Any, new_trades: Sequence[Any], summary_due: bool) -> None:
+        if self.alerts is None:
+            return
+        if self._outage_alerted:
+            self._outage_alerted = False
+            self._alert("info", "Trading cycles processed again", "The outage is over; missed candles were "
+                        "processed in order.", force=True)
+            self.alerts.clear("outage")
+        for d in records.decisions:
+            if d.action is DecisionAction.CIRCUIT_BREAKER:
+                critical = d.reason.startswith("max drawdown")
+                self._alert("critical" if critical else "warning",
+                            "Kill switch tripped" if critical else "Daily loss limit hit",
+                            f"{d.reason}. New entries are blocked; exits still work.")
+            elif d.action in (DecisionAction.ENTER, DecisionAction.EXIT, DecisionAction.STOP_LOSS,
+                              DecisionAction.TAKE_PROFIT):
+                self._alert("info", f"{d.action.value.replace('_', ' ')} {d.symbol}", d.reason)
+        for trade in new_trades:
+            self._alert("info", f"Trade closed {trade.symbol} {trade.pnl:+,.2f}",
+                        f"return {trade.return_pct:+.2%}, held {trade.opened_at:%m-%d %H:%M} -> "
+                        f"{trade.closed_at:%m-%d %H:%M}")
+        agent_signals = [s for s in records.signals if "agent" in (s.metadata.get("params") or {})
+                         and "called" in s.metadata]
+        paused = [s for s in agent_signals if str(s.metadata.get("error", "")).startswith("ProviderUnavailableError")]
+        answered = [s for s in agent_signals if "error" not in s.metadata]
+        if paused and not self._model_paused:
+            self._model_paused = True
+            self._alert("warning", "Model calls paused", f"{paused[0].metadata['error']}. Agents vote HOLD "
+                        "until the endpoint answers again.", key="model_paused")
+        elif self._model_paused and answered:
+            self._model_paused = False
+            self.alerts.clear("model_paused")
+            self._alert("info", "Model answers again", "The agents are voting normally again.", force=True)
+        if summary_due:
+            from trading_lab.summary import build_summary, format_summary
+
+            try:
+                text = format_summary(build_summary(self._store, self.run_id, hours=24))
+            except Exception as exc:  # a summary must never break the trader
+                text = f"(summary unavailable: {type(exc).__name__}: {exc})"
+            self._alert("info", "Daily summary", text, force=True)
+
     def _failed_cycle(self, now: datetime, error: str, *, save_health: bool = True) -> CycleReport:
         """A cycle that processed nothing; the trader state is unchanged and is retried later."""
         self.consecutive_errors += 1
         self._last_error = error
+        if self.consecutive_errors == self._config.alerts.outage_after_cycles:
+            self._outage_alerted = True
+            self._alert("warning", f"{self.consecutive_errors} trading cycles failed in a row",
+                        f"{error}. Nothing is traded meanwhile; retrying with back-off.", key="outage")
         if save_health:
             try:
                 self._store.save_state(self.run_id, self._state())

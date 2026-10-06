@@ -337,5 +337,18 @@ Trade-offs worth knowing:
 - CLI: `trading-lab summary [RUN_ID] [--hours N]`, which opens the database read-only.
 - Tests: the whole-run summary equals the backtest result; window filtering of trades, equity change and votes; the Markdown content; breaker, health and empty runs; the database byte-identical after the command.
 
+### Stage 11C: Alerts ✅
+- `alerts.py`: `WebhookNotifier` (ntfy, Slack, Discord or JSON; URL only from `TRADING_LAB_ALERT_URL`, never logged, errors name only the host), `AlertManager` (level filter, per-key repeat suppression, never raises), and `build_alerts`. `[alerts]` holds enabled, format, min_level, daily_summary, outage_after_cycles and repeat_after_minutes.
+- `LivePaperTrader(alerts=...)`:
+  - breaker trips (critical for the kill switch, warning for the daily limit);
+  - entries, exits, stops, take-profits and closed trades (info);
+  - model calls paused and recovered;
+  - repeated failed cycles and their recovery;
+  - database rollbacks;
+  - a daily summary once per UTC day, persisted across resume.
+- The CLI sends run start, stop and crash alerts and fails fast if alerts are enabled without the URL. There is a new `trading-lab alert-test`. Alert settings come from the current config.
+- Bug fix: resuming compares configs by value instead of by fingerprint. Before this, every new config setting since 9A would have stopped runs saved by older versions from resuming.
+- Tests: each format; no URL leaks; config and environment checks; levels and repeats; breaker, outage, model-pause and recovery alerts from real trader runs; the daily summary across midnight and a resume; failing alerts not changing any fill; the CLI; resuming a run saved by an older version.
+
 ### Later
-Short positions, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and alerting on breaker trips or long outages.
+Short positions, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and more alert channels (e-mail).

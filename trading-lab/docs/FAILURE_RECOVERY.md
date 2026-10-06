@@ -55,6 +55,18 @@ shows a warning, and the CLI prints `cycle not processed, will retry`.
 Nothing here ever "catches up" by trading on stale prices: bars are always
 processed in time order, with the prices of those bars.
 
+## Alerts
+
+With `[alerts] enabled = true`, failures are pushed to your webhook as they happen:
+- repeated failed cycles (`outage_after_cycles`, default 3), then a message when cycles succeed again;
+- model calls paused by the circuit breaker, then a message when the model answers again;
+- a database rollback and reload;
+- a crash of the trader;
+- kill switch and daily-limit trips.
+
+The same alert is not repeated within `repeat_after_minutes`. An alert that cannot be delivered is
+logged and dropped. It never delays or stops trading.
+
 ## What stops the process on purpose
 
 * invalid configuration, or missing Qwen variables when an agent with weight > 0 is enabled (before the run starts);
@@ -63,4 +75,6 @@ processed in time order, with the prices of those bars.
 * programming errors.
 
 Resuming a run with a different config is refused: a run keeps the config it
-was started with.
+was started with. Configs are compared by value, so runs saved by older versions
+still resume: settings added since then take their defaults, which keep the old
+behaviour. Alert settings are always taken from the current config.

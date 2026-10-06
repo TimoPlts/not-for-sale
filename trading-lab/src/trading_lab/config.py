@@ -343,6 +343,40 @@ class AgentsConfig:
         _number(self, "failure_cooldown_seconds", low=0.0, high=86_400.0)
 
 
+ALERT_LEVELS = ("info", "warning", "critical")
+ALERT_FORMATS = ("ntfy", "slack", "discord", "json")
+
+
+@dataclass(frozen=True, slots=True)
+class AlertsConfig:
+    """Push notifications from live paper trading (see ``trading_lab.alerts``).
+
+    The webhook URL is read from the ``TRADING_LAB_ALERT_URL`` environment
+    variable only (it usually contains a secret token).
+    """
+
+    enabled: bool = False
+    format: str = "ntfy"  # ntfy | slack | discord | json
+    min_level: str = "warning"  # info also reports every entry and exit
+    daily_summary: bool = True  # a run summary after each UTC day
+    outage_after_cycles: int = 3  # alert once this many cycles in a row could not be processed
+    repeat_after_minutes: float = 60.0  # do not repeat the same alert sooner
+
+    def __post_init__(self) -> None:
+        _require(isinstance(self.enabled, bool), "alerts.enabled must be true or false")
+        _require(self.format in ALERT_FORMATS, f"alerts.format must be one of {ALERT_FORMATS}, got {self.format!r}")
+        _require(self.min_level in ALERT_LEVELS,
+                 f"alerts.min_level must be one of {ALERT_LEVELS}, got {self.min_level!r}")
+        _require(isinstance(self.daily_summary, bool), "alerts.daily_summary must be true or false")
+        _require(
+            isinstance(self.outage_after_cycles, int)
+            and not isinstance(self.outage_after_cycles, bool)
+            and self.outage_after_cycles >= 1,
+            f"alerts.outage_after_cycles must be an integer >= 1, got {self.outage_after_cycles!r}",
+        )
+        _number(self, "repeat_after_minutes", low=0.0, high=10_080.0)
+
+
 @dataclass(frozen=True, slots=True)
 class AppConfig:
     portfolio: PortfolioConfig = field(default_factory=PortfolioConfig)
@@ -355,6 +389,7 @@ class AppConfig:
     backtest: BacktestConfig = field(default_factory=BacktestConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     agents: AgentsConfig = field(default_factory=AgentsConfig)
+    alerts: AlertsConfig = field(default_factory=AlertsConfig)
 
     def __post_init__(self) -> None:
         for symbol in self.market.symbols:
@@ -458,6 +493,7 @@ _SECTIONS: dict[str, type] = {
     "backtest": BacktestConfig,
     "storage": StorageConfig,
     "agents": AgentsConfig,
+    "alerts": AlertsConfig,
 }
 
 

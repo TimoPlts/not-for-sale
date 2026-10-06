@@ -33,6 +33,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 10E (complete):** a reproducible protocol for "does Qwen improve out-of-sample performance?", with the variant comparison (folds won, sign test) computed by `experiment --walkforward`. See [docs/EXPERIMENT_PROTOCOL.md](docs/EXPERIMENT_PROTOCOL.md).
 - **Stage 11A (complete):** optional trailing stops and take-profit exits (long-only, no look-ahead, identical in backtests and live, kept across resume).
 - **Stage 11B (complete):** `trading-lab summary`: what a run did over the last N hours, in Markdown.
+- **Stage 11C (complete):** push alerts (ntfy, Slack, Discord or JSON webhook) for breaker trips, outages, model pauses, crashes and a daily summary.
 
 ### Stage 9/10 summary
 
@@ -150,6 +151,28 @@ A short Markdown report covering:
 * model usage, plus a health warning if cycles are failing.
 
 It only reads the database (opened read-only) and works on backtests and live runs alike.
+
+## Alerts
+
+```toml
+[alerts]
+enabled = true
+format = "ntfy"          # ntfy | slack | discord | json
+min_level = "warning"    # "info" also reports every entry and exit
+daily_summary = true
+```
+
+```bash
+export TRADING_LAB_ALERT_URL="https://ntfy.sh/<a long random topic>"   # secret: environment only
+trading-lab alert-test
+```
+
+Live paper runs then push:
+* **critical:** kill switch trips and trader crashes;
+* **warning:** daily-limit trips, model calls paused, repeated failed cycles, and database rollbacks;
+* **every day:** a summary (`trading-lab summary`).
+
+Recoveries are reported too, and repeats of the same alert are suppressed for an hour. Alert settings come from the current config, even when resuming an older run. A webhook that fails never affects trading, and its URL is never logged.
 
 ## Running on a Linux VM
 

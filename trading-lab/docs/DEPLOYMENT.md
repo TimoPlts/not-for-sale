@@ -106,6 +106,20 @@ ssh -L 8501:127.0.0.1:8501 you@your-vm
 
 `trading-lab dashboard-data` prints the same information in the terminal (`--json` for scripts).
 
+## 5b. Alerts on your phone (optional)
+
+1. Choose a webhook: an [ntfy](https://ntfy.sh) topic with a long random name (install the ntfy app and
+   subscribe to it), a Slack incoming webhook, a Discord webhook, or any endpoint that accepts JSON.
+2. Add `TRADING_LAB_ALERT_URL=...` to `/etc/trading-lab/trading-lab.env` (the URL is a secret: never put it
+   in the config or in git).
+3. In the config: `[alerts] enabled = true`, plus `format = "ntfy" | "slack" | "discord" | "json"`.
+4. Test: `set -a; . /etc/trading-lab/trading-lab.env; set +a; .venv/bin/trading-lab alert-test`
+5. `sudo systemctl restart trading-lab-paper`
+
+You get: kill switch and daily loss limit trips, model calls paused/resumed, repeated failed cycles
+(data or database outages) and their recovery, crashes, and a daily summary. Set `min_level = "info"`
+to also hear about every entry, exit and run start/stop. A webhook that is down never affects trading.
+
 ## 6. Where things are
 
 | what | where |
@@ -115,7 +129,7 @@ ssh -L 8501:127.0.0.1:8501 you@your-vm
 | cached public candles | `/opt/trading-lab/trading-lab/data/cache/*.csv` |
 | service output | `journalctl -u trading-lab-paper -f`, `journalctl -u trading-lab-dashboard -f` |
 | paper log file (rotated, 10 MB x 5) | `/var/log/trading-lab/paper.log` |
-| secrets | `/etc/trading-lab/trading-lab.env` (root:tradinglab, 640) |
+| secrets (Qwen, optional alert URL) | `/etc/trading-lab/trading-lab.env` (root:tradinglab, 640) |
 
 Useful commands (as `tradinglab`, from the checkout):
 
@@ -124,6 +138,7 @@ Useful commands (as `tradinglab`, from the checkout):
 .venv/bin/trading-lab report vm-paper-1          # one run
 .venv/bin/trading-lab agent-report vm-paper-1    # per-agent votes, correctness, PnL attribution, Qwen usage
 .venv/bin/trading-lab dashboard-data vm-paper-1
+.venv/bin/trading-lab summary vm-paper-1 --hours 24   # what happened today
 ```
 
 ## 7. Stopping, restarting, resuming

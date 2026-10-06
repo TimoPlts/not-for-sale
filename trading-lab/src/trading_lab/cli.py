@@ -13,6 +13,7 @@
     trading-lab dashboard-data [RUN_ID] [--json]
     trading-lab dashboard [--host 127.0.0.1] [--port 8501]
     trading-lab summary [RUN_ID] [--hours 24]
+    trading-lab alert-test [--format ntfy|slack|discord|json]
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -230,6 +231,9 @@ def cmd_paper(args: argparse.Namespace) -> int:
         raise TradingLabError("--run-id may only contain letters, digits, '.', '_' and '-' (max 64)")
     if args.run_id and args.resume:
         raise TradingLabError("use either --run-id or --resume, not both")
+    from trading_lab.alerts import build_alerts
+
+    alerts = build_alerts(cfg)  # from the current config: alert settings are operational, not part of a run
     store = SQLiteStore(cfg.storage.db_path)
     try:
         if args.run_id and store.get_run(args.run_id) is not None:
@@ -247,11 +251,11 @@ def cmd_paper(args: argparse.Namespace) -> int:
             if seed is None and run["exchange"].startswith("synthetic-"):
                 seed = int(run["exchange"].split("-", 1)[1])
             stored_cfg = AppConfig.from_dict(run["config"])
-            trader = LivePaperTrader.resume(store, args.resume, _provider(stored_cfg, seed))
+            trader = LivePaperTrader.resume(store, args.resume, _provider(stored_cfg, seed), alerts=alerts)
             _say(f"Resuming paper run {trader.run_id}")
         else:
             trader = LivePaperTrader(cfg, _provider(cfg, args.synthetic), store, notes=args.notes,
-                                     run_id=args.run_id)
+                                     run_id=args.run_id, alerts=alerts)
             _say(f"Started paper run {trader.run_id}")
         tcfg = trader.config
         print(f"{tcfg.market.timeframe} candles | {', '.join(tcfg.market.symbols)} | "
@@ -298,6 +302,9 @@ def cmd_paper(args: argparse.Namespace) -> int:
             stop_event.set()
 
         previous = signal.signal(signal.SIGTERM, request_stop)  # systemctl stop / kill
+        if alerts is not None:
+            alerts.emit("info", f"Paper run {trader.run_id} running", f"{tcfg.market.timeframe} candles, "
+                        f"{', '.join(tcfg.market.symbols)}", run_id=trader.run_id)
         try:
             trader.run_forever(
                 poll_seconds=args.poll,
@@ -306,8 +313,15 @@ def cmd_paper(args: argparse.Namespace) -> int:
                 on_wait=on_wait,
                 stop_event=stop_event,
             )
+        except Exception as exc:
+            if alerts is not None:
+                alerts.emit("critical", f"Paper run {trader.run_id} crashed", f"{type(exc).__name__}: {exc}. "
+                            "The run is saved; a service restarts and resumes it.", run_id=trader.run_id)
+            raise
         finally:
             signal.signal(signal.SIGTERM, previous)
+        if alerts is not None:
+            alerts.emit("info", f"Paper run {trader.run_id} stopped", "It can be resumed.", run_id=trader.run_id)
         _say(f"\nPaper run {trader.run_id} stopped. Resume with: trading-lab paper --resume {trader.run_id}")
         print(f"Report:  trading-lab report {trader.run_id}")
     finally:
@@ -758,6 +772,20 @@ def cmd_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_alert_test(args: argparse.Namespace) -> int:
+    from trading_lab.alerts import URL_ENV, AlertManager, WebhookNotifier
+
+    cfg = _load_config(args)
+    notifier = WebhookNotifier.from_env(args.format or cfg.alerts.format)
+    print(f"Sending a test alert ({notifier.fmt}) to {notifier.host} (URL from {URL_ENV}, not shown)")
+    manager = AlertManager(notifier, min_level="info")
+    if manager.emit("info", "Test alert", "If you can read this, trading-lab alerts work. Nothing was traded."):
+        print("OK")
+        return 0
+    print("FAILED: see the warning above", file=sys.stderr)
+    return 1
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from trading_lab.reporting import run_metrics
     from trading_lab.storage import SQLiteStore
@@ -914,6 +942,10 @@ def build_parser() -> argparse.ArgumentParser:
     sm.add_argument("run_id", nargs="?", help="default: the most recent run")
     sm.add_argument("--hours", type=float, default=24.0, help="window length (default 24)")
     sm.set_defaults(func=cmd_summary)
+
+    al = sub.add_parser("alert-test", help="send one test notification to TRADING_LAB_ALERT_URL")
+    al.add_argument("--format", choices=("ntfy", "slack", "discord", "json"), help="default: [alerts] format")
+    al.set_defaults(func=cmd_alert_test)
 
     cp = sub.add_parser("compare", help="compare stored runs side by side")
     cp.add_argument("run_ids", nargs="+")

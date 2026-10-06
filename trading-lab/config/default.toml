@@ -120,3 +120,13 @@ temperature = 0.0             # part of the cache key, like the model and the pr
 max_output_tokens = 512       # raise this for models that think aloud before answering
 failure_threshold = 5         # after 5 failed calls in a row, stop calling the model ...
 failure_cooldown_seconds = 300.0  # ... for 5 minutes (agents vote HOLD meanwhile); 0 = never
+
+[alerts]
+# Push notifications from live paper trading. The webhook URL comes ONLY from the
+# TRADING_LAB_ALERT_URL environment variable (e.g. https://ntfy.sh/<your-secret-topic>).
+enabled = false
+format = "ntfy"               # ntfy | slack | discord | json
+min_level = "warning"         # "info" also reports every entry and exit
+daily_summary = true          # a run summary after each UTC day
+outage_after_cycles = 3       # alert when this many cycles in a row could not be processed
+repeat_after_minutes = 60.0   # do not repeat the same alert sooner
