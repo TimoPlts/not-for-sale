@@ -490,6 +490,21 @@ Trade-offs worth knowing:
 - Dashboard exposure counts quantity x price while shorts are open, since a short's book value is its collateral plus gain.
 - Tests: SELL votes agreeing and pivotal for a short trade (and BUY disagreeing); the CLI report and unchanged long-only backtest output; export, HTML and dashboard trades; open shorts on the dashboard (side, stop above, value, exposure) and in the summary.
 
+### Stage 17A: Trend-following strategies ✅
+- `strategies/trend.py`, both opt-in (only enabled by a config table):
+  - **`ma_cross`:** SMA or EMA fast/slow crossover. `signal_on = "cross"` signals on the cross bar, `"state"` on every bar above or below. Confidence is the gap change, or the gap, over its rolling standard deviation.
+  - **`donchian`:** a close beyond the previous `entry_period` high or low is a breakout. An optional `exit_period` break gives a weaker (0.5) opposite signal. Confidence is the breakout distance in ATRs. The channels exclude the current bar.
+- `signals` shows their key values. `config/default.toml` documents them as commented tables.
+- Tests:
+  - the shared strategy contract (warm-up, standardised signals, both directions, determinism);
+  - vectorised signals equal bar-by-bar signals for four parameter sets;
+  - crosses exactly where the gap changes sign;
+  - state mode following a trend;
+  - breakouts, inside-channel holds and weak exits;
+  - the channel excluding the current bar;
+  - validation;
+  - opt-in from the config, with a backtest trading both sides.
+
 ## 5. Stage 11–16 status summary
 
 On top of the Stage 9/10 system:

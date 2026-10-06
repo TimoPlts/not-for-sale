@@ -55,6 +55,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
   - trade side in `report`, `export`, the HTML report, the dashboard and summaries;
   - short exposure on the dashboard;
   - agent attribution that credits SELL votes for short trades.
+- **Stage 17A (complete):** two opt-in trend-following strategies, `ma_cross` (moving-average crossover) and `donchian` (channel breakout).
 
 ### Stage 9/10 summary
 
@@ -661,6 +662,33 @@ trading-lab walkforward --param strategies.qwen_trend.weight=0,1 --param strateg
 ```
 
 All runs in a sweep, walk-forward or experiment share one model provider and the answer cache. In `record` mode a market-only agent is asked about each bar **once**, and every variant, combination and overlapping training window reuses that answer. The comparison therefore measures the ensemble, not the model's randomness, and later replays are free. `qwen_risk` sees the portfolio, so it is asked again wherever the trades differ. Missing Qwen environment variables stop the command before the first backtest. The global `--agent-mode record|replay|live` option overrides `[agents] mode` for any command.
+
+## Trend-following strategies (opt-in)
+
+The default strategies are mostly contrarian: RSI and Bollinger buy weakness, while MACD follows momentum shifts. Two trend followers can join the vote. Each one is enabled by adding its table to the config:
+
+```toml
+[strategies.ma_cross]          # moving-average crossover
+weight = 1.0
+fast = 20
+slow = 50
+average = "sma"                # or "ema"
+signal_on = "cross"            # BUY/SELL on the bar of the cross; "state" = on every bar above/below
+
+[strategies.donchian]          # channel breakout ("turtle" style)
+weight = 1.0
+entry_period = 20              # BUY above the previous 20-bar high, SELL below the 20-bar low
+exit_period = 10               # a weaker opposite signal on a 10-bar break (0 = off)
+atr_period = 14
+```
+
+* **Confidence:**
+  * `ma_cross`: grows with how sharply the averages cross, relative to the usual size of the gap between them.
+  * `donchian`: grows with the breakout distance measured in ATRs.
+* **No look-ahead:** channels use only the bars *before* the current one.
+* **Shorts:** both strategies signal in both directions, so they work naturally with `allow_short = true`.
+
+To see whether they help on your symbols and timeframe, compare them on the same period. For example, `trading-lab sweep --param strategies.donchian.weight=0,1` runs the strategy on and off, and `walkforward` tests it out of sample.
 
 ## Short selling (simulated, off by default)
 

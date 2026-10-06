@@ -419,7 +419,8 @@ def cmd_signals(args: argparse.Namespace) -> int:
     strategies = strategies_for(cfg)
     voting = VotingEngine.from_specs(cfg.strategies, cfg.voting)
     since = datetime.now(timezone.utc) - timedelta(days=args.days)
-    keys = {"rsi": ["rsi"], "macd": ["hist", "crossover"], "bollinger": ["percent_b"]}
+    keys = {"rsi": ["rsi"], "macd": ["hist", "crossover"], "bollinger": ["percent_b"],
+            "ma_cross": ["gap", "crossover"], "donchian": ["upper", "lower", "breakout"]}
     default_keys = ["rationale"]  # agent strategies explain themselves
 
     print(f"data={provider.name}  timeframe={cfg.market.timeframe}  history={args.days}d\n")

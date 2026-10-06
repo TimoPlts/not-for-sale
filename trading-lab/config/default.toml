@@ -118,6 +118,20 @@ lookback = 30
 decision_interval = 4
 # portfolio_context = true    # default: sees exposure, open positions, stop-outs, breakers
 
+# Trend-following strategies (off unless their table is present; they suit allow_short):
+# [strategies.ma_cross]
+# weight = 1.0
+# fast = 20
+# slow = 50
+# average = "sma"             # or "ema"
+# signal_on = "cross"         # or "state": BUY/SELL on every bar the fast average is above/below
+#
+# [strategies.donchian]
+# weight = 1.0
+# entry_period = 20           # BUY above the previous 20-bar high, SELL below the 20-bar low
+# exit_period = 10            # weaker opposite signal on a 10-bar break (0 = off)
+# atr_period = 14             # confidence grows with the breakout distance in ATRs
+
 # A general-purpose model analyst is also available:
 # [strategies.llm_analyst]
 # weight = 1.0
