@@ -57,6 +57,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
   - agent attribution that credits SELL votes for short trades.
 - **Stage 17A (complete):** two opt-in trend-following strategies, `ma_cross` (moving-average crossover) and `donchian` (channel breakout).
 - **Stage 17B (complete):** `trading-lab costs`: the same backtest at 0x to 3x fees and slippage, with the break-even cost level.
+- **Stage 17C (complete):** `trading-lab regimes`: a run's performance by market regime (trend up, sideways or down, and calm or volatile).
 
 ### Stage 9/10 summary
 
@@ -228,6 +229,37 @@ Verdict: break-even at about 1.15x the configured costs (thin: ...)
 * **A loss even at 0x:** the strategy has no edge before costs in that period.
 
 Nothing is stored.
+
+## Where does it make or lose money? (`regimes`)
+
+```bash
+trading-lab regimes                    # the latest run
+trading-lab regimes <run id> --trend-bars 100 --json
+```
+
+Each bar of a run is labelled by the market regime of an equal-weight index of its symbols:
+
+* **Trend:**
+  * **up:** above its 50-bar average, with the average rising;
+  * **down:** below a falling average;
+  * **sideways:** anything else.
+
+  Only bars up to each point are used. The first 50 bars of a run are warm-up.
+* **Volatility:** *volatile* when the 24-bar volatility is above the run's median, *calm* otherwise.
+
+Per regime, and per trend × volatility combination, the table shows:
+
+* how much time the run spent there;
+* the strategy's return compounded over those bars, next to the market's;
+* the time in the market;
+* the trades opened there (count, wins, PnL).
+
+Some typical readings:
+
+* A strategy that only makes money in *up / calm* markets is a long-trend follower in disguise.
+* Losing mostly in *sideways / volatile* markets is the classic whipsaw.
+
+Combine it with `allow_short` or the trend filter, then backtest again. The database is only read.
 
 ## Could it be luck? (`robustness`)
 

@@ -20,6 +20,7 @@ from trading_lab.research.experiments import (
     variant_overrides,
 )
 from trading_lab.research.protocol import VariantSummary, sign_test_p, summarize
+from trading_lab.research.regimes import RegimeReport, format_regimes, regimes_for_run
 from trading_lab.research.reconcile import Reconciliation, format_reconciliation, reconcile
 from trading_lab.research.robustness import Robustness, bootstrap, format_robustness, robustness_for_run
 from trading_lab.research.sweep import (
@@ -39,6 +40,9 @@ from trading_lab.research.walkforward import (
 )
 
 __all__ = [
+    "RegimeReport",
+    "format_regimes",
+    "regimes_for_run",
     "CostSensitivity",
     "cost_sensitivity",
     "format_costs",
