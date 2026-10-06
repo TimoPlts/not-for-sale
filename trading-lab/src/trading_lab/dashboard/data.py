@@ -121,7 +121,8 @@ class DashboardData:
         )
 
     def _portfolio(self, run_id: str, config: AppConfig) -> Portfolio:
-        portfolio = Portfolio(config.portfolio.initial_cash, config.portfolio.quote_currency)
+        portfolio = Portfolio(config.portfolio.initial_cash, config.portfolio.quote_currency,
+                              allow_short=config.risk.allow_short)
         for fill in self.store.load_fill_objects(run_id):
             portfolio.apply_fill(fill)
         return portfolio

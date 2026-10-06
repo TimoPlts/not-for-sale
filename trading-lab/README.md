@@ -50,6 +50,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 15B (complete):** e-mail alerts over encrypted SMTP, alongside or instead of the webhook (settings only from the environment).
 - **Stage 15C (complete):** an Anthropic (Claude) provider as an alternative to Qwen (`[agents] provider = "anthropic"`, key only from the environment).
 - **Stage 16A (complete):** simulated short-position accounting: fully collateralised (no leverage), with a borrow fee on cover and a trade side stored in the database (schema v4). Strategies use it from 16B.
+- **Stage 16B (complete):** `[risk] allow_short = true` lets the bot short (simulated): an ensemble SELL opens a short, and stops, take-profit, trailing stops, limit entries and filters are all mirrored. Off by default.
 
 ### Stage 9/10 summary
 
@@ -656,6 +657,35 @@ trading-lab walkforward --param strategies.qwen_trend.weight=0,1 --param strateg
 ```
 
 All runs in a sweep, walk-forward or experiment share one model provider and the answer cache. In `record` mode a market-only agent is asked about each bar **once**, and every variant, combination and overlapping training window reuses that answer. The comparison therefore measures the ensemble, not the model's randomness, and later replays are free. `qwen_risk` sees the portfolio, so it is asked again wherever the trades differ. Missing Qwen environment variables stop the command before the first backtest. The global `--agent-mode record|replay|live` option overrides `[agents] mode` for any command.
+
+## Short selling (simulated, off by default)
+
+```toml
+[risk]
+allow_short = true
+
+[execution]
+short_borrow_bps_per_day = 2.0   # borrow cost per day held (0.02%/day), paid when the short is covered
+```
+
+By default the bot is long-only: a SELL vote only closes a long. With `allow_short = true`:
+
+* **Entries and exits:** an ensemble SELL with no long open opens a short at the next candle's open, and an ensemble BUY covers it. A long is never turned into a short in one step: the SELL closes the long first, and only a later SELL opens a short.
+* **No leverage:** a short is fully collateralised. Its value is set aside from cash, plus the fee, exactly like buying. Losses can still exceed the collateral if the price more than doubles, so keep the stop-loss on.
+* **Mirrored risk:** sizing risks the same share of equity per trade, with the stop *above* the entry.
+  * Stops trigger on the candle's high, filling at the stop, or at the open if it gapped above.
+  * Take-profit triggers on the low.
+  * Trailing stops follow the lowest low and only ever move down.
+  * ATR stops work the same way.
+  * Limit entries rest above the open and fill when a candle trades through them.
+* **Filters and breakers:**
+  * The trend filter allows shorts only while the close is *below* its average.
+  * The correlation and risk-state filters, the circuit breakers and the kill switch apply to both sides. The kill switch also covers shorts when `flatten_on_halt` is set.
+* **Costs:** besides fees and slippage, covering pays the borrow fee for the days held. It is included in the cover's fee.
+
+Backtests, paper runs, resume and `reconcile` handle shorts exactly like longs. Trades record their side.
+
+This changes what a SELL vote does, from the AI agents too. Compare `allow_short = true` and `false` on the same period with `experiment` or `walkforward` before relying on it.
 
 ## Trailing stops and take-profit
 

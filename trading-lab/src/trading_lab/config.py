@@ -95,6 +95,7 @@ class ExecutionConfig:
     limit_offset_bps: float = 10.0  # buy limit = open * (1 - offset)
     limit_ttl_bars: int = 3  # unfilled remainder expires after this many bars
     maker_fee_rate: float = 0.001  # fee for limit-order fills
+    short_borrow_bps_per_day: float = 2.0  # borrow cost of a short, charged when it is covered
 
     def __post_init__(self) -> None:
         _number(self, "fee_rate", low=0.0, high=0.05)
@@ -124,6 +125,7 @@ class ExecutionConfig:
             f"execution.limit_ttl_bars must be an integer >= 1, got {self.limit_ttl_bars!r}",
         )
         _number(self, "maker_fee_rate", low=0.0, high=0.05)
+        _number(self, "short_borrow_bps_per_day", low=0.0, high=1000.0)
 
 
 RISK_STATES = ("low", "moderate", "high", "extreme")  # labels of the qwen_risk agent
@@ -137,6 +139,9 @@ class RiskConfig:
     max_open_positions: int = 4
     max_total_exposure_pct: float = 1.0
     allow_pyramiding: bool = False
+    # Simulated shorts: an ensemble SELL with no long open opens a fully collateralised short
+    # (no leverage) and a BUY covers it. Off = long-only, as before.
+    allow_short: bool = False
     # Circuit breakers (0 disables each one). They block new entries; exits stay allowed.
     max_drawdown_pct: float = 0.25  # kill switch: equity this far below its peak
     daily_loss_limit_pct: float = 0.05  # equity this far below the start of the UTC day
@@ -164,6 +169,7 @@ class RiskConfig:
     correlation_lookback: int = 48  # bars in the rolling correlation (up to the signal bar)
 
     def __post_init__(self) -> None:
+        _require(isinstance(self.allow_short, bool), f"risk.allow_short must be true or false, got {self.allow_short!r}")
         _require(
             isinstance(self.max_correlated_positions, int) and not isinstance(self.max_correlated_positions, bool)
             and self.max_correlated_positions >= 0,

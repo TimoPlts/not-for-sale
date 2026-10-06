@@ -453,6 +453,31 @@ Trade-offs worth knowing:
 - Storage schema v4: `closed_trades.side` (existing trades are longs). The migration is idempotent, and read-only access to older databases still works.
 - Tests: long-only by default; a round trip with exact cash, fees, PnL and break-even; partial covers and adding to a short; losses beyond the collateral; no flips; collateral required; a randomized 400-fill replay keeping the invariant and rebuilding identically; executor slippage, borrow fee, limits, dust and limit fills; storage of the side; v3 upgrade and read-only access.
 
+### Stage 16B: Shorts in the trading session ✅
+- Config: `risk.allow_short` (default false) and `execution.short_borrow_bps_per_day` (default 2.0, used only by shorts).
+- `TradingSession`:
+  - An ensemble SELL with no long open schedules a short entry, and a BUY covers it. A long is closed before any short (no flips). With shorts off, every message and branch is unchanged.
+  - Stops trigger on the high, filling at the stop or at a higher gapped open. Take-profit triggers on the low. Trailing stops follow the lowest low and only move down.
+  - Limit short entries rest at `open x (1 + offset)` and fill when the high trades through. A BUY signal cancels a working short entry.
+  - The trend filter is mirrored. The portfolio view reports `short` and the stop distance above.
+- `RiskManager`: `evaluate_entry(side=SELL)` is mirrored. The stop is above. The loss at the stop is the buy-back cost minus the net sale proceeds. Exposure is absolute (`gross_exposure`). The cash limit is the collateral. `evaluate_exit` buys back shorts. `stop_triggered` uses the high for shorts.
+- The live trader and the dashboard rebuild portfolios with shorts allowed when the run allowed them.
+- Tests:
+  - long-only by default (and validation);
+  - SELL opens and BUY covers;
+  - stops on the high and gaps;
+  - take-profit, and stop first;
+  - trailing stops that never loosen;
+  - long closed before a short;
+  - pyramiding;
+  - mirrored sizing, including short exposure;
+  - mirrored filters;
+  - the kill switch covering shorts;
+  - limit short entries;
+  - the portfolio view;
+  - backtest equal to live with both sides traded and borrow fees charged;
+  - a short surviving a resume.
+
 ## 5. Stage 11–15 status summary
 
 On top of the Stage 9/10 system:
