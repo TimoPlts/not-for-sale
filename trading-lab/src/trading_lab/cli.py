@@ -2,7 +2,7 @@
 
     trading-lab backtest [--start DATE] [--end DATE] [--symbols ...] [--timeframe TF] [--synthetic SEED]
     trading-lab paper    [--symbols ...] [--timeframe TF] [--resume RUN_ID] [--once] [--synthetic SEED]
-    trading-lab report   [RUN_ID] [--limit N]
+    trading-lab report   [RUN_ID] [--limit N] [--html FILE]
     trading-lab signals  [--symbols ...] [--timeframe TF] [--days N]
     trading-lab sweep    --param strategies.rsi.period=7,14,21 [--param ...] [--start/--end] [--metric M]
     trading-lab walkforward --param ... [--train-days 90] [--test-days 30]
@@ -336,6 +336,17 @@ def cmd_report(args: argparse.Namespace) -> int:
     from trading_lab.storage import SQLiteStore
 
     cfg = _load_config(args)
+    if args.html:
+        from trading_lab.html_report import build_html_report
+
+        if not Path(cfg.storage.db_path).exists():
+            raise TradingLabError(f"no database at {cfg.storage.db_path}")
+        page = build_html_report(cfg.storage.db_path, args.run_id, horizon=args.horizon)
+        out = Path(args.html)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(page, encoding="utf-8")
+        print(f"HTML report written to {out.resolve()}")
+        return 0
     with SQLiteStore(cfg.storage.db_path) as store:
         if not args.run_id:
             runs = store.list_runs(args.limit)
@@ -913,6 +924,8 @@ def build_parser() -> argparse.ArgumentParser:
     rp = sub.add_parser("report", help="list runs, or show one run in detail")
     rp.add_argument("run_id", nargs="?")
     rp.add_argument("--limit", type=int, default=20)
+    rp.add_argument("--html", metavar="FILE", help="write a self-contained HTML report (default run: the latest)")
+    rp.add_argument("--horizon", type=int, default=4, help="bars ahead for agent outcome statistics (with --html)")
     rp.set_defaults(func=cmd_report)
 
     sg = sub.add_parser("signals", help="current strategy signals from live public data")

@@ -37,6 +37,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 12A (complete):** optional ATR-based stops with volatility-scaled position sizing (the same risk per trade on every coin).
 - **Stage 12B (complete):** AI agent weights that adapt to each agent's track record in walk-forward (`--adaptive-weights`, no look-ahead) and suggested weights for a run (`trading-lab agent-weights`).
 - **Stage 12C (complete):** optional entry filters (trend filter and a `qwen_risk` risk-state veto) that only ever block new entries.
+- **Stage 12D (complete):** `trading-lab report RUN_ID --html FILE`, a single self-contained HTML report to share.
 
 ### Stage 9/10 summary
 
@@ -136,6 +137,21 @@ It opens the database in SQLite's **read-only** mode, so it cannot write anythin
 trading-lab dashboard-data            # summary of the running paper run (or the latest run)
 trading-lab dashboard-data <run id> --json
 ```
+
+## HTML report
+
+```bash
+trading-lab report <run id> --html reports/run.html     # or omit the run id for the latest run
+```
+
+One self-contained file, with no external scripts, styles or fonts, so it opens offline and can be e-mailed to your teacher:
+
+* key numbers: return against buy & hold, max drawdown, Sharpe, profit factor, trades, win rate and exposure;
+* the equity curve against buy & hold, with hover values, and the drawdown;
+* a daily table view of the same numbers;
+* every voter's performance (AI agents marked), the latest AI rationales, model usage, breaker trips, closed trades and decision counts.
+
+It follows your system's light/dark setting. The report is built from the read-only data layer, so it never changes the database. All text from the database, including model rationales, is HTML-escaped.
 
 ## Run summary
 

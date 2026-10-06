@@ -367,5 +367,9 @@ Trade-offs worth knowing:
 - `TradingSession.entry_filter_reason` is checked only when a BUY would be scheduled. A blocked BUY is recorded as IGNORED with the reason. Exits, stops, take-profits and breakers are unchanged, and engines load enough history for the average.
 - Tests: blocking below the average and unknown averages; the veto and its age limit; no forced exits, exits still working and breakers still applying; no backtest entry signalled below the average; live equal to the backtest with the filter; an agent veto surviving a resume; validation and round-trip.
 
+### Stage 12D: HTML run report ✅
+- `html_report.py` and `trading-lab report [RUN_ID] --html FILE [--horizon N]`: one self-contained file with inline CSS and SVG and a tiny hover script, built from `DashboardData` (read-only). It covers key-number tiles, equity against buy & hold (legend, direct end labels, crosshair tooltip, at most 600 points), drawdown, a daily table view, the voter table, AI rationale cards, model usage, breaker trips, trades and decision counts. Light and dark themes come from validated palette steps. All database text is escaped.
+- Tests: numbers match the run and the database is byte-identical afterwards; a `<script>`/`<img onerror>` rationale is rendered as text; no external resources; downsampling keeps the last point; empty runs; the CLI.
+
 ### Later
 Short positions, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and more alert channels (e-mail).
