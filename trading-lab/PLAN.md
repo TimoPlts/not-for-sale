@@ -371,5 +371,39 @@ Trade-offs worth knowing:
 - `html_report.py` and `trading-lab report [RUN_ID] --html FILE [--horizon N]`: one self-contained file with inline CSS and SVG and a tiny hover script, built from `DashboardData` (read-only). It covers key-number tiles, equity against buy & hold (legend, direct end labels, crosshair tooltip, at most 600 points), drawdown, a daily table view, the voter table, AI rationale cards, model usage, breaker trips, trades and decision counts. Light and dark themes come from validated palette steps. All database text is escaped.
 - Tests: numbers match the run and the database is byte-identical afterwards; a `<script>`/`<img onerror>` rationale is rendered as text; no external resources; downsampling keeps the last point; empty runs; the CLI.
 
+### Stage 13A: Readiness check ✅
+- `doctor.py` and `trading-lab doctor [--online]` check:
+  - the Python version and required/optional packages;
+  - that the config is valid (fingerprint), the enabled voters and the public-data-only safety line;
+  - the model environment variables (set or missing, depending on the agents mode; values never shown) and the alert URL;
+  - the database (read-only: schema, runs, running paper runs, writability), the answer cache (replay needs recorded answers), disk space and the data cache directory.
+  - `--online` adds one public candle (stale data is a warning) and one model call through the smoke test.
+  - The exit code is 1 on any failure.
+- `docs/DEPLOYMENT.md` runs it after the environment file is created.
+- Tests: a fresh install is ready and creates nothing; agents without or with variables (no secret printed); replay requirements; alert URL; an invalid config; an existing or newer database (left byte-identical); online fresh, stale and down data and the model call; CLI exit codes.
+
+### Stage 13B: Correlation-aware exposure ✅
+- `[risk] max_correlated_positions` (0 = off), `correlation_threshold` and `correlation_lookback`. `engine/filters.correlation_lookup` computes the rolling log-return correlation between every pair of symbols up to the signal bar (fixed window, time-aligned, gaps give unknown), and the engines pass it to the session.
+- `entry_filter_reason` counts open, working-limit and already-scheduled entries whose correlation with the new symbol is at or above the threshold (unknown counts as correlated) and blocks the entry when there are `max_correlated_positions` of them. It only blocks new entries.
+- Tests: perfect, independent and too-short correlations and causality; blocking, allowing and unknown; two entries scheduled in the same bar; perfectly correlated twins never held together (and held together without the limit); live equal to the backtest; validation.
+
+### Stage 13C: Robustness ranges ✅
+- `research/robustness.py`: a seeded trade bootstrap (total-return range and probability of a loss) and a block bootstrap of per-bar equity returns (blocks of about √n bars; total-return and Sharpe ranges), with warnings for fewer than 30 trades, ranges spanning gains and losses, and too few bars.
+- CLI: `trading-lab robustness [RUN_ID] [--samples N] [--seed S]` (read-only). It also appears as a section of the HTML report, and the experiment protocol points to it.
+- Tests: deterministic per seed with ordered percentiles; known cases (all winners, a coin flip, constant returns); warnings and edge cases; stored runs agreeing with the metrics (return and Sharpe); the CLI (read-only) and the report section.
+
+### Stage 13D: Benchmark-relative metrics ✅
+- `metrics/relative.py`: from aligned per-bar returns, the excess return, beta, annualised alpha, correlation, tracking error and information ratio (None when undefined).
+- `BacktestResult.relative` (also stored in the run's metrics as `relative`), printed by `backtest` and `report`. Paper runs get it from stored bars through `DashboardData.research`. It also appears in the dashboard, the HTML report tiles and `experiment` summaries.
+- Tests: hand-made curves (identical, half exposure, constant extra return, cash, invalid input); the backtest stored and printed values and their agreement with the metrics; paper runs from bars; experiment summaries.
+
+## 5. Stage 11–13 status summary
+
+On top of the Stage 9/10 system:
+- **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
+- **Agents:** weights that adapt to each agent's out-of-sample record in walk-forward, without look-ahead (12B).
+- **Operations:** run summaries (11B), push alerts (11C), a readiness check (13A), and a fix so runs from older versions resume.
+- **Evidence:** an HTML report (12D), bootstrap robustness ranges (13C), and alpha/beta against buy & hold (13D).
+
 ### Later
 Short positions, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and more alert channels (e-mail).

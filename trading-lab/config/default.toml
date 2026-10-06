@@ -50,6 +50,9 @@ atr_stop_max_pct = 0.25
 trend_filter_period = 0       # e.g. 200 = no new entry while the close is below its 200-bar average
 block_entries_on_risk_states = []  # e.g. ["extreme"] or ["high", "extreme"] (labels from qwen_risk)
 risk_state_max_age_bars = 8   # a reported risk_state stays in force this many bars
+max_correlated_positions = 0  # e.g. 1 = no new entry while 1 open position moves with it (0 = off)
+correlation_threshold = 0.8   # correlation of per-bar log returns that counts as "moves together"
+correlation_lookback = 48     # bars in the rolling correlation
 
 [data]
 cache_dir = "data/cache"      # CSV cache of public candles

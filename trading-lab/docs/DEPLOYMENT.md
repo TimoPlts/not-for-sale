@@ -46,6 +46,15 @@ sudo -u tradinglab bash -c 'set -a; . /etc/trading-lab/trading-lab.env; set +a;
   cd /opt/trading-lab/trading-lab && .venv/bin/trading-lab agent-test qwen && .venv/bin/trading-lab agent-test qwen_trend'
 ```
 
+Then check everything at once (read-only; it prints whether each variable is set, never its value):
+
+```bash
+sudo -u tradinglab bash -c 'set -a; . /etc/trading-lab/trading-lab.env; set +a;
+  cd /opt/trading-lab/trading-lab && .venv/bin/trading-lab doctor --online'
+```
+
+Run it again after any change to the config or the environment file.
+
 ## 3. Choose what runs
 
 Edit `/opt/trading-lab/trading-lab/config/default.toml` (or a copy that you

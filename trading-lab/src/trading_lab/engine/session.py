@@ -40,6 +40,9 @@ period:
       - ``risk.trend_filter_period``: no entry while the close is below its
         simple moving average (``market`` passed to ``close_bar``); an unknown
         average (too little history) also blocks;
+      - ``risk.max_correlated_positions``: no entry while that many open, working
+        or scheduled positions have a rolling return correlation with it of at
+        least ``correlation_threshold`` (unknown counts as correlated);
       - ``risk.block_entries_on_risk_states``: no entry while the latest
         ``risk_state`` reported for the symbol (e.g. by ``qwen_risk``, at
         most ``risk_state_max_age_bars`` old) is one of the listed states.
@@ -562,6 +565,18 @@ class TradingSession:
                 return f"trend filter: not enough history for the {cfg.trend_filter_period}-bar average"
             if close < sma:
                 return f"trend filter: close {close:.8g} below its {cfg.trend_filter_period}-bar average {sma:.8g}"
+        if cfg.max_correlated_positions > 0:
+            correlations = market.get("correlations") or {}
+            exposed = sorted(set(self.portfolio.positions) | set(self.resting) | {
+                s for s, it in self.pending.items() if it.action is DecisionAction.ENTER_SIGNAL} - {sym})
+            close_peers = []
+            for other in exposed:
+                c = correlations.get(other)  # type: ignore[union-attr]
+                if c is None or c >= cfg.correlation_threshold:  # unknown counts as correlated
+                    close_peers.append(f"{other} {'unknown' if c is None else f'{c:.2f}'}")
+            if len(close_peers) >= cfg.max_correlated_positions:
+                return (f"correlation filter: already exposed to {len(close_peers)} symbol(s) moving with it "
+                        f"({', '.join(close_peers)}; threshold {cfg.correlation_threshold:g})")
         if cfg.block_entries_on_risk_states:
             reported = self.risk_states.get(sym)
             if reported is not None:

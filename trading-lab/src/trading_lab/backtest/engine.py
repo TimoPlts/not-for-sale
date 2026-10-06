@@ -43,12 +43,12 @@ from trading_lab.core.models import (
 from trading_lab.core.timeutils import ensure_utc
 from trading_lab.data.base import MarketDataProvider, timeframe_delta
 from trading_lab.engine import Bar, TradingSession
-from trading_lab.engine.filters import filter_columns
+from trading_lab.engine.filters import correlation_lookup, filter_columns
 from trading_lab.ensemble import VotingEngine
 from trading_lab.execution import CostModel
 from trading_lab.execution.costs import market_stats_frame, stats_series
 from trading_lab.llm import LLMProvider
-from trading_lab.metrics import PerformanceMetrics, compute_metrics
+from trading_lab.metrics import PerformanceMetrics, RelativeMetrics, compute_metrics, relative_metrics
 from trading_lab.metrics.benchmark import buy_and_hold_equity
 from trading_lab.storage import SQLiteStore
 from trading_lab.strategies import Strategy
@@ -82,6 +82,7 @@ class BacktestResult:
     benchmark: PerformanceMetrics | None = None  # equal-weight buy and hold, same costs
     benchmark_curve: pd.Series | None = None
     bars: tuple[tuple[datetime, str, Bar], ...] = ()  # (open time, symbol, OHLCV) inside the period
+    timeframe: str = "1h"
 
     def closes(self) -> dict[str, pd.Series]:
         """Close price per symbol over the period, indexed by candle open time."""
@@ -90,10 +91,25 @@ class BacktestResult:
             out.setdefault(sym, {})[pd.Timestamp(ts)] = bar.close
         return {sym: pd.Series(values, name=sym).sort_index() for sym, values in sorted(out.items())}
 
+    @property
+    def relative(self) -> RelativeMetrics | None:
+        """Beta, alpha, correlation and information ratio against the buy & hold benchmark."""
+        if self.benchmark_curve is None or self.equity_curve.empty:
+            return None
+        initial = self.metrics.initial_equity
+        bench = self.benchmark_curve.reindex(self.equity_curve.index)
+        if bench.isna().any():
+            return None
+        return relative_metrics([initial, *self.equity_curve["equity"].tolist()], [initial, *bench.tolist()],
+                                self.timeframe)
+
     def stored_metrics(self) -> dict:
         data = self.metrics.to_dict()
         if self.benchmark is not None:
             data["benchmark"] = self.benchmark.to_dict()
+        relative = self.relative
+        if relative is not None:
+            data["relative"] = relative.to_dict()
         return data
 
     def actions(self) -> dict[str, int]:
@@ -149,7 +165,8 @@ class BacktestEngine:
     def _load(self, start: datetime, end: datetime) -> dict[str, pd.DataFrame]:
         cfg = self._config
         step = timeframe_delta(cfg.market.timeframe)
-        history = max(max(s.history_bars for s in self._strategies), cfg.risk.trend_filter_period + 1)
+        history = max(max(s.history_bars for s in self._strategies), cfg.risk.trend_filter_period + 1,
+                      cfg.risk.correlation_lookback + 2 if cfg.risk.max_correlated_positions else 0)
         data_start = start - history * step
         candles = {}
         for symbol in cfg.market.symbols:
@@ -252,6 +269,7 @@ class BacktestEngine:
             for sym, frame in candles.items()
         }
         filters = {sym: filter_columns(frame, cfg.risk) for sym, frame in candles.items()}
+        correlations = correlation_lookup(candles, cfg.risk)
 
         timeline = sorted(
             set().union(*(frame.index[frame.index >= start_ts] for frame in candles.values()))
@@ -274,7 +292,8 @@ class BacktestEngine:
             stats = {sym: market_stats[sym][i] for sym, i in idx.items()}
             session.open_bar(ts, {sym: bar.open for sym, bar in bars.items()}, stats)
             session.close_bar(ts, bars, {sym: sources(sym, i) for sym, i in idx.items()}, stats,
-                              {sym: filters[sym][i] for sym, i in idx.items()})
+                              {sym: {**filters[sym][i], "correlations": correlations[sym].get(t, {})}
+                                         for sym, i in idx.items()})
 
         last_ts = timeline[-1].to_pydatetime()
         session.expire_pending(last_ts)
@@ -316,4 +335,5 @@ class BacktestEngine:
             benchmark=benchmark,
             benchmark_curve=benchmark_curve,
             bars=tuple(records.bars),
+            timeframe=cfg.market.timeframe,
         )

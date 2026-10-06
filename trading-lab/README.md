@@ -38,6 +38,10 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 12B (complete):** AI agent weights that adapt to each agent's track record in walk-forward (`--adaptive-weights`, no look-ahead) and suggested weights for a run (`trading-lab agent-weights`).
 - **Stage 12C (complete):** optional entry filters (trend filter and a `qwen_risk` risk-state veto) that only ever block new entries.
 - **Stage 12D (complete):** `trading-lab report RUN_ID --html FILE`, a single self-contained HTML report to share.
+- **Stage 13A (complete):** `trading-lab doctor`, a read-only readiness check before going live.
+- **Stage 13B (complete):** an optional correlation limit, so the bot does not stack positions in coins that move together.
+- **Stage 13C (complete):** `trading-lab robustness`: bootstrap ranges that show how much of a run's result could be luck (also in the HTML report).
+- **Stage 13D (complete):** performance relative to buy & hold: excess return, alpha, beta, correlation and information ratio.
 
 ### Stage 9/10 summary
 
@@ -153,6 +157,39 @@ One self-contained file, with no external scripts, styles or fonts, so it opens 
 
 It follows your system's light/dark setting. The report is built from the read-only data layer, so it never changes the database. All text from the database, including model rationales, is HTML-escaped.
 
+## Compared with buy & hold
+
+Every backtest (and `report`, the dashboard, the HTML report and `experiment`) also gives the strategy's performance **relative to equal-weight buy & hold** over the same bars:
+
+```
+Relative to buy & hold: excess return -5.44%, alpha -44.02%/yr, beta 0.34, correlation 0.65, information ratio -3.93
+```
+
+* **beta:** how much of the market's moves the strategy carries. 0.34 means about a third, which is typical when it is often in cash.
+* **alpha:** annualised return beyond what that beta explains.
+* **information ratio:** excess return per unit of tracking error.
+
+A strategy can beat buy & hold in a falling market simply by holding cash. Alpha and beta separate "less exposed" from "better at picking", and they are computed from per-bar returns, with definitions in `src/trading_lab/metrics/relative.py`.
+
+## Could it be luck? (`robustness`)
+
+```bash
+trading-lab robustness <run id>          # 5000 samples, seed 7 (reproducible)
+```
+
+```
+Robustness (5000 bootstrap samples, seed 7; ranges are 5th .. median .. 95th percentile)
+  Actual total return: -0.97%   actual Sharpe: -1.38
+  Trade bootstrap (32 trades): total return -5.42% .. -0.78% .. +4.18%; probability of a loss 60%
+  Block bootstrap (696 bars, blocks of 26): total return -4.53% .. -1.18% .. +2.62%; Sharpe -6.68 .. -1.67 .. +3.77
+  ! the trade-bootstrap range includes both gains and losses
+```
+
+* The **trade bootstrap** redraws the run's closed trades with replacement.
+* The **block bootstrap** redraws blocks of about √n bars of the equity curve's returns, so calm and volatile stretches stay together.
+
+A range that spans both gains and losses, or fewer than 30 trades, means the run alone shows nothing either way. The HTML report includes the same table.
+
 ## Run summary
 
 ```bash
@@ -192,6 +229,15 @@ Live paper runs then push:
 * **every day:** a summary (`trading-lab summary`).
 
 Recoveries are reported too, and repeats of the same alert are suppressed for an hour. Alert settings come from the current config, even when resuming an older run. A webhook that fails never affects trading, and its URL is never logged.
+
+## Readiness check
+
+```bash
+trading-lab doctor             # Python, packages, config, voters, env vars (set/missing only), database, cache, disk
+trading-lab doctor --online    # also one public candle (freshness) and, if an agent is on, one model call
+```
+
+Each line is `[ OK ]`, `[WARN]`, `[FAIL]` or `[SKIP]`, followed by a verdict. The exit code is 1 when anything fails, so a script or service can refuse to start. The doctor only reads: the database is opened read-only, nothing is traded, and secret values are never printed.
 
 ## Running on a Linux VM
 
@@ -522,6 +568,7 @@ Two optional filters in `[risk]`. They can only **block new entries**. They neve
 |---------|--------|
 | `trend_filter_period = 200` | no new entry while the close is below its 200-bar **simple** moving average. A simple average is used so live and backtest see the same value. With too little history to compute it, entries are blocked. |
 | `block_entries_on_risk_states = ["extreme"]` | no new entry while the latest `risk_state` reported for that symbol (by `qwen_risk`) is in the list, for up to `risk_state_max_age_bars` (8) bars after the answer. The last reported state is saved with live runs, so it survives `--resume`. |
+| `max_correlated_positions = 1` | no new entry while that many open, working or already-scheduled positions moved with it: their per-bar log-return correlation over the last `correlation_lookback` (48) bars is at least `correlation_threshold` (0.8). BTC, ETH, SOL and DOGE often move together, so this keeps one market move from hitting several positions at once. An unknown correlation (too little data) counts as correlated. |
 
 ## Agent weights from their track record
 

@@ -15,6 +15,8 @@
     trading-lab summary [RUN_ID] [--hours 24]
     trading-lab alert-test [--format ntfy|slack|discord|json]
     trading-lab agent-weights [RUN_ID]
+    trading-lab doctor [--online]
+    trading-lab robustness [RUN_ID] [--samples 5000] [--seed 7]
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -185,6 +187,8 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         print(f"\nBuy & hold (equal weight, same costs): return {result.benchmark.total_return:+.2%}, "
               f"max drawdown {-result.benchmark.max_drawdown:.2%}, "
               f"sharpe {_fmt_num(result.benchmark.sharpe_ratio)}")
+        if result.relative is not None:
+            print(result.relative.format_line())
     per_symbol: dict[str, list[float]] = defaultdict(list)
     for t in result.trades:
         per_symbol[t.symbol].append(t.pnl)
@@ -381,10 +385,15 @@ def cmd_report(args: argparse.Namespace) -> int:
         metrics = run_metrics(store, args.run_id)
         print("\n=== Performance ===")
         print(metrics.format_table() if metrics else "no equity data yet")
-        bench = (store.load_metrics(args.run_id) or {}).get("benchmark")
+        stored = store.load_metrics(args.run_id) or {}
+        bench = stored.get("benchmark")
         if bench:
             print(f"\nBuy & hold (equal weight, same costs): return {_fmt_pct(bench.get('total_return'))}, "
                   f"max drawdown {_fmt_dd(bench.get('max_drawdown'))}")
+        if stored.get("relative"):
+            from trading_lab.metrics import RelativeMetrics
+
+            print(RelativeMetrics(**stored["relative"]).format_line())
 
         trades = store.load_closed_trades(args.run_id)
         print(f"\n=== Closed trades ({len(trades)}) - last {args.limit} ===")
@@ -842,6 +851,30 @@ def cmd_agent_weights(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    from trading_lab.doctor import FAIL, format_checks, run_checks
+
+    print("trading-lab doctor: read-only checks (no trading; secret values are never shown)\n")
+    checks = run_checks(args.config, db_path=args.db, online=args.online)
+    print(format_checks(checks))
+    return 1 if any(c.status == FAIL for c in checks) else 0
+
+
+def cmd_robustness(args: argparse.Namespace) -> int:
+    from trading_lab.research import format_robustness, robustness_for_run
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        run_id = args.run_id or _latest_run_id(store)
+        result = robustness_for_run(store, run_id, samples=args.samples, seed=args.seed)
+    print(f"Run {run_id}")
+    print(format_robustness(result))
+    return 0
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from trading_lab.reporting import run_metrics
     from trading_lab.storage import SQLiteStore
@@ -1021,6 +1054,17 @@ def build_parser() -> argparse.ArgumentParser:
     aw.add_argument("run_id", nargs="?", help="default: the most recent run")
     weighting_options(aw)
     aw.set_defaults(func=cmd_agent_weights)
+
+    dr = sub.add_parser("doctor", help="check that everything is ready to run (read-only)")
+    dr.add_argument("--online", action="store_true",
+                    help="also fetch one public candle and, if an agent is on, call the model once")
+    dr.set_defaults(func=cmd_doctor)
+
+    rb = sub.add_parser("robustness", help="bootstrap ranges: how much of a run's result could be luck")
+    rb.add_argument("run_id", nargs="?", help="default: the most recent run")
+    rb.add_argument("--samples", type=int, default=5000)
+    rb.add_argument("--seed", type=int, default=7)
+    rb.set_defaults(func=cmd_robustness)
 
     cp = sub.add_parser("compare", help="compare stored runs side by side")
     cp.add_argument("run_ids", nargs="+")

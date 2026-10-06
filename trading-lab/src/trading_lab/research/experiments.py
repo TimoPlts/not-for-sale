@@ -93,6 +93,7 @@ class ExperimentRow:
     walkforward: WalkForwardResult | None = None  # walk-forward mode
     run_id: str | None = None
     signals: tuple[Any, ...] = ()  # kept for usage accounting / attribution
+    relative: Any = None  # RelativeMetrics against buy & hold (backtest mode)
 
     def summary(self) -> dict[str, Any]:
         out: dict[str, Any] = {"variant": self.variant, "description": self.description,
@@ -101,6 +102,8 @@ class ExperimentRow:
             out["metrics"] = self.metrics.to_dict()
         if self.benchmark is not None:
             out["benchmark"] = self.benchmark.to_dict()
+        if self.relative is not None:
+            out["relative"] = self.relative.to_dict()
         if self.walkforward is not None:
             wf = self.walkforward
             out["walkforward"] = {
@@ -164,5 +167,6 @@ def run_experiment(
                 start, end, notes=f"experiment {variant}" if store is not None else ""
             )
             rows.append(ExperimentRow(variant, description, cfg.fingerprint(), backtest.metrics,
-                                      backtest.benchmark, run_id=backtest.run_id, signals=backtest.signals))
+                                      backtest.benchmark, run_id=backtest.run_id, signals=backtest.signals,
+                                      relative=backtest.relative))
     return rows

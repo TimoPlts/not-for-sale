@@ -158,8 +158,23 @@ class RiskConfig:
     trend_filter_period: int = 0  # no new entry while the close is below its N-bar simple average (0 = off)
     block_entries_on_risk_states: tuple[str, ...] = ()  # e.g. ("extreme",) or ("high", "extreme")
     risk_state_max_age_bars: int = 8  # how long a reported risk_state stays in force
+    # Correlation limit (0 = off): no new entry if this many open/pending positions already move with it.
+    max_correlated_positions: int = 0
+    correlation_threshold: float = 0.8  # correlation of per-bar log returns that counts as "moves together"
+    correlation_lookback: int = 48  # bars in the rolling correlation (up to the signal bar)
 
     def __post_init__(self) -> None:
+        _require(
+            isinstance(self.max_correlated_positions, int) and not isinstance(self.max_correlated_positions, bool)
+            and self.max_correlated_positions >= 0,
+            f"risk.max_correlated_positions must be an integer >= 0, got {self.max_correlated_positions!r}",
+        )
+        _number(self, "correlation_threshold", low=-1.0, high=1.0, low_inclusive=False)
+        _require(
+            isinstance(self.correlation_lookback, int) and not isinstance(self.correlation_lookback, bool)
+            and 5 <= self.correlation_lookback <= 2000,
+            f"risk.correlation_lookback must be an integer in [5, 2000], got {self.correlation_lookback!r}",
+        )
         _require(
             isinstance(self.trend_filter_period, int) and not isinstance(self.trend_filter_period, bool)
             and 0 <= self.trend_filter_period <= 2000,
