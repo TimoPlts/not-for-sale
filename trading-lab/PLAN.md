@@ -249,5 +249,11 @@ average trade return.
 - CLI: `trading-lab agent-report [RUN_ID] [--horizon N] [--all]`.
 - Tests: a hand-computed scenario with exact numbers, determinism and in-memory equal to stored, the CLI, and the v2 → v3 migration.
 
+### Stage 9D: Baseline versus AI experiments ✅
+- `research/experiments.py`: named variants (`baseline`, `trend`, `momentum`, `risk`, `trend_momentum`, `all_agents`, `ai_only`) that change only strategy weights. `run_experiment` runs them over the same data, in backtest or walk-forward mode, with an optional in-sample grid.
+- `BacktestEngine`, `run_sweep` and `walk_forward` accept one shared `llm_provider`. `shared_llm_provider` checks the credentials once before any run, and all runs share the answer cache, so a market-only agent is asked about each bar once across all combinations.
+- CLI: `trading-lab experiment` (`--variants`, `--walkforward`, `--param`, `--save` to the `research_results` table, `--export` JSON). There is also a global `--agent-mode record|replay|live`. Sweep and walk-forward fail fast on missing Qwen variables.
+- Tests: variants change only weights; answers are shared across variants, sweep combinations and overlapping walk-forward windows; replay reproduces every variant offline; the off row equals the baseline; the CLI in both modes; the fail-fast check.
+
 ### Later
 Stages 9B–10E (specialised Qwen agents, agent attribution, experiments, usage accounting, smoke test, live integration, dashboard, VM operation, failure recovery, experiment protocol). After that: short positions, trailing stops and order-book data.

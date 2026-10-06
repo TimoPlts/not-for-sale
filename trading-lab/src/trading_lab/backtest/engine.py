@@ -46,6 +46,7 @@ from trading_lab.engine import Bar, TradingSession
 from trading_lab.ensemble import VotingEngine
 from trading_lab.execution import CostModel
 from trading_lab.execution.costs import market_stats_frame, stats_series
+from trading_lab.llm import LLMProvider
 from trading_lab.metrics import PerformanceMetrics, compute_metrics
 from trading_lab.metrics.benchmark import buy_and_hold_equity
 from trading_lab.storage import SQLiteStore
@@ -127,15 +128,21 @@ class BacktestEngine:
         *,
         strategies: Sequence[Strategy] | None = None,
         store: SQLiteStore | None = None,
+        llm_provider: LLMProvider | None = None,
     ) -> None:
         self._config = config
         self._provider = provider
         self._store = store
         self._strategy_override = strategies is not None
         self._strategies = (
-            list(strategies) if strategies is not None else strategies_for(config)
+            list(strategies) if strategies is not None
+            else strategies_for(config, llm_provider=llm_provider)
         )
         self._voting = build_voting(config, self._strategies)
+
+    @property
+    def strategies(self) -> tuple[Strategy, ...]:
+        return tuple(self._strategies)
 
     # ------------------------------------------------------------------ data
     def _load(self, start: datetime, end: datetime) -> dict[str, pd.DataFrame]:

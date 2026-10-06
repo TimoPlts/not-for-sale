@@ -8,8 +8,10 @@
     trading-lab walkforward --param ... [--train-days 90] [--test-days 30]
     trading-lab compare  RUN_ID RUN_ID ...
     trading-lab agent-report [RUN_ID] [--horizon N] [--all]
+    trading-lab experiment [--variants baseline,trend,...] [--walkforward] [--param ...]
 
-Global options (before the command): ``--config PATH`` and ``--db PATH``.
+Global options (before the command): ``--config PATH``, ``--db PATH`` and
+``--agent-mode record|replay|live``.
 
 Everything is simulated: market data comes from public endpoints and no
 order is ever sent to an exchange.
@@ -58,6 +60,8 @@ def _load_config(args: argparse.Namespace) -> AppConfig:
         overrides["backtest"] = {"liquidate_at_end": True}
     if args.db:
         overrides["storage"] = {"db_path": args.db}
+    if getattr(args, "agent_mode", None):
+        overrides["agents"] = {"mode": args.agent_mode}
     return cfg.with_overrides(overrides) if overrides else cfg
 
 
@@ -347,6 +351,14 @@ def _period(args: argparse.Namespace, default_days: int) -> tuple[datetime, date
     return start, end
 
 
+def _grid_llm(cfg: AppConfig, grid: dict[str, list[Any]]) -> Any:
+    """One LLM provider for every combination, checked before the first backtest."""
+    from trading_lab.research import apply_params, expand_grid
+    from trading_lab.strategy_factory import shared_llm_provider
+
+    return shared_llm_provider([apply_params(cfg, params) for params in expand_grid(grid)])
+
+
 def _short(params: dict[str, Any]) -> str:
     return " ".join(f"{k.split('.', 1)[-1]}={v}" for k, v in params.items())
 
@@ -368,7 +380,7 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     store = SQLiteStore(cfg.storage.db_path) if args.save else None
     try:
         results = run_sweep(
-            cfg, provider, start, end, grid, metric=args.metric, store=store,
+            cfg, provider, start, end, grid, metric=args.metric, store=store, llm_provider=_grid_llm(cfg, grid),
             progress=lambda n, total, params: print(f"  [{n}/{total}] {_short(params)}"),
         )
     finally:
@@ -406,7 +418,7 @@ def cmd_walkforward(args: argparse.Namespace) -> int:
     result = walk_forward(
         cfg, provider, start, end, grid,
         train=timedelta(days=args.train_days), test=timedelta(days=args.test_days),
-        metric=args.metric, progress=lambda msg: print(f"  {msg}"),
+        metric=args.metric, progress=lambda msg: print(f"  {msg}"), llm_provider=_grid_llm(cfg, grid),
     )
     metric = args.metric
     print(f"\n{'test window':<25} {'in-sample':>10} {'out-of-sample':>14} "
@@ -459,6 +471,73 @@ def cmd_agent_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_experiment(args: argparse.Namespace) -> int:
+    from trading_lab.research import VARIANTS, run_experiment, variant_config
+    from trading_lab.storage import SQLiteStore
+    from trading_lab.strategy_factory import shared_llm_provider
+
+    cfg = _load_config(args)
+    variants = [v.strip() for v in args.variants.split(",") if v.strip()]
+    unknown = [v for v in variants if v not in VARIANTS]
+    if unknown:
+        raise TradingLabError(f"unknown variant(s) {unknown}; available: {', '.join(VARIANTS)}")
+    grid = _grid(args) if (args.param or args.grid) else {}
+    start, end = _period(args, args.days)
+    provider = _provider(cfg, args.synthetic)
+    llm = shared_llm_provider([variant_config(cfg, v) for v in variants])
+    mode = "walk-forward" if args.walkforward else "backtest"
+    print(f"Experiment ({mode}) | {start:%Y-%m-%d} -> {end:%Y-%m-%d} | {cfg.market.timeframe} | "
+          f"agents mode {cfg.agents.mode} | data: {provider.name}")
+
+    store = SQLiteStore(cfg.storage.db_path) if args.save else None
+    try:
+        rows = run_experiment(
+            cfg, provider, start, end, variants, walkforward=args.walkforward, grid=grid,
+            train=timedelta(days=args.train_days), test=timedelta(days=args.test_days),
+            metric=args.metric, store=store if not args.walkforward else None, llm_provider=llm,
+            progress=lambda msg: print(f"  running {msg}"),
+        )
+        if store is not None:
+            label = f"{mode} {','.join(variants)} {start:%Y-%m-%d}..{end:%Y-%m-%d}"
+            store.add_research_result("experiment", label, {
+                "mode": mode, "start": start, "end": end, "timeframe": cfg.market.timeframe,
+                "symbols": list(cfg.market.symbols), "agents_mode": cfg.agents.mode, "grid": grid,
+                "rows": [r.summary() for r in rows],
+            })
+    finally:
+        if store is not None:
+            store.close()
+
+    if args.walkforward:
+        print(f"\n{'variant':<16} {'OOS return':>10} {'buy&hold':>9} {'IS ' + args.metric:>18} "
+              f"{'OOS ' + args.metric:>18} {'folds':>5}  description")
+        for r in rows:
+            wf = r.walkforward
+            assert wf is not None
+            bench = "n/a" if wf.benchmark_return is None else f"{wf.benchmark_return:+.2%}"
+            print(f"{r.variant:<16} {wf.out_of_sample_return:>+10.2%} {bench:>9} "
+                  f"{_fmt_num(wf.mean_metric('in_sample')):>18} {_fmt_num(wf.mean_metric('out_of_sample')):>18} "
+                  f"{len(wf.folds):>5}  {r.description}")
+    else:
+        print(f"\n{'variant':<16} {'return':>8} {'buy&hold':>9} {'max dd':>7} {'sharpe':>7} {'PF':>6} "
+              f"{'trades':>6} {'exposure':>8}  description")
+        for r in rows:
+            m, b = r.metrics, r.benchmark
+            assert m is not None
+            exposure = "n/a" if m.exposure is None else f"{m.exposure:.0%}"
+            print(f"{r.variant:<16} {m.total_return:>+8.2%} {_fmt_pct(None if b is None else b.total_return):>9} "
+                  f"{-m.max_drawdown:>7.1%} {_fmt_num(m.sharpe_ratio):>7} {_fmt_num(m.profit_factor):>6} "
+                  f"{m.num_trades:>6} {exposure:>8}  {r.description}")
+        print("\nA single backtest proves nothing: compare variants with --walkforward (out-of-sample).")
+    if args.export:
+        import json as _json
+
+        Path(args.export).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.export).write_text(_json.dumps([r.summary() for r in rows], indent=2, default=str))
+        print(f"Results written to {Path(args.export).resolve()}")
+    return 0
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from trading_lab.reporting import run_metrics
     from trading_lab.storage import SQLiteStore
@@ -504,6 +583,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", default=DEFAULT_CONFIG, help=f"TOML config (default {DEFAULT_CONFIG})")
     parser.add_argument("--db", help="SQLite file (overrides [storage] db_path)")
+    parser.add_argument("--agent-mode", choices=("record", "replay", "live"),
+                        help="override [agents] mode (replay = fully offline, cached answers only)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     def market_options(p: argparse.ArgumentParser) -> None:
@@ -569,6 +650,19 @@ def build_parser() -> argparse.ArgumentParser:
     ar.add_argument("--horizon", type=int, default=4, help="bars ahead for outcome statistics (default 4)")
     ar.add_argument("--all", action="store_true", help="also show the deterministic strategies")
     ar.set_defaults(func=cmd_agent_report)
+
+    ex = sub.add_parser("experiment", help="compare baseline and AI-agent variants on the same data")
+    research_options(ex, 180)
+    ex.add_argument("--variants", default="baseline,trend,trend_momentum,all_agents",
+                    help="comma-separated: baseline, trend, momentum, risk, trend_momentum, all_agents, ai_only")
+    ex.add_argument("--walkforward", action="store_true",
+                    help="walk-forward per variant (out-of-sample); --param grids are tuned in-sample")
+    ex.add_argument("--train-days", type=int, default=90)
+    ex.add_argument("--test-days", type=int, default=30)
+    ex.add_argument("--save", action="store_true",
+                    help="store the summary (and, in backtest mode, every run) in the database")
+    ex.add_argument("--export", metavar="JSON", help="write the full results to a JSON file")
+    ex.set_defaults(func=cmd_experiment)
 
     cp = sub.add_parser("compare", help="compare stored runs side by side")
     cp.add_argument("run_ids", nargs="+")

@@ -8,6 +8,15 @@ from trading_lab.research.attribution import (
     attribute_run,
     format_attribution,
 )
+from trading_lab.research.experiments import (
+    AGENT_STRATEGIES,
+    DEFAULT_VARIANTS,
+    VARIANTS,
+    ExperimentRow,
+    run_experiment,
+    variant_config,
+    variant_overrides,
+)
 from trading_lab.research.sweep import (
     MemoizedProvider,
     SweepResult,
@@ -24,6 +33,13 @@ from trading_lab.research.walkforward import (
 )
 
 __all__ = [
+    "AGENT_STRATEGIES",
+    "DEFAULT_VARIANTS",
+    "VARIANTS",
+    "ExperimentRow",
+    "run_experiment",
+    "variant_config",
+    "variant_overrides",
     "Attribution",
     "CalibrationBucket",
     "attribute",

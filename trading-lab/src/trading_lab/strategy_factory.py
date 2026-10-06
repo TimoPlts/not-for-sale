@@ -9,6 +9,7 @@ from trading_lab.agents import AgentStrategy, LLMProviderStrategy, SQLiteRespons
 from trading_lab.config import AppConfig
 from trading_lab.llm import LLMProvider, build_llm_provider
 from trading_lab.strategies import Strategy, build_strategies
+from trading_lab.strategies.registry import strategy_class
 
 
 def configure_agents(
@@ -39,3 +40,22 @@ def strategies_for(config: AppConfig, *, llm_provider: LLMProvider | None = None
     strategies = build_strategies(config.enabled_strategies)
     configure_agents(strategies, config, llm_provider=llm_provider)
     return strategies
+
+
+def needs_llm(config: AppConfig) -> bool:
+    """True if any strategy taking part is answered by the configured LLM provider."""
+    for spec in config.enabled_strategies:
+        cls = strategy_class(spec.name)
+        if cls is not None and issubclass(cls, LLMProviderStrategy):
+            return True
+    return False
+
+
+def shared_llm_provider(configs: Sequence[AppConfig]) -> LLMProvider | None:
+    """One provider for a series of runs (sweeps, experiments), checked before any run starts."""
+    using = [c for c in configs if needs_llm(c)]
+    if not using:
+        return None
+    provider = build_llm_provider(using[0].agents)
+    provider.check_ready(need_credentials=any(c.agents.mode != "replay" for c in using))
+    return provider

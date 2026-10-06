@@ -22,6 +22,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 9A (complete):** a real LLM provider for agents. Qwen is the first, through any OpenAI-compatible chat-completions endpoint, with timeouts, retries and HOLD on any failure.
 - **Stage 9B (complete):** three specialist Qwen agents (Trend, Momentum, Risk/Regime) that vote in the ensemble.
 - **Stage 9C (complete):** agent performance attribution (`trading-lab agent-report`).
+- **Stage 9D (complete):** baseline versus AI experiments (`trading-lab experiment`), with agents usable in sweeps and walk-forward.
 
 ## Quick start
 
@@ -253,6 +254,38 @@ Every backtest now reports an equal-weight **buy & hold benchmark** over the sam
 ```
 
 `--param` takes any dotted config key, such as `risk.stop_loss_pct=0.03,0.05` or `strategies.trend_analyst.weight=0,1`. A sweep's best row is optimistic by construction, so judge it by the walk-forward **out-of-sample** results.
+
+### Baseline versus AI experiments
+
+`trading-lab experiment` runs named *variants* over the same period, with identical fees, slippage, liquidity, breakers and voting thresholds. Only the voters differ:
+
+| variant | voters |
+|---------|--------|
+| `baseline` | RSI + MACD + Bollinger |
+| `trend` / `momentum` / `risk` | baseline + one Qwen agent |
+| `trend_momentum` | baseline + Qwen Trend + Momentum |
+| `all_agents` | baseline + all 3 Qwen agents |
+| `ai_only` | the 3 Qwen agents only (same risk manager, breakers and executor) |
+
+```bash
+# One backtest per variant (quick look; proves nothing on its own):
+trading-lab experiment --variants baseline,trend,all_agents,ai_only --start 2025-01-01 --end 2025-07-01
+# The real comparison: walk-forward, out-of-sample, per variant (optionally tuning a grid in-sample):
+trading-lab experiment --walkforward --train-days 90 --test-days 30 --start 2024-07-01 --end 2025-07-01 \
+    --param voting.min_agreeing=1,2 --save --export results/experiment.json
+# Re-run exactly, fully offline, from the recorded answers:
+trading-lab --agent-mode replay experiment --walkforward --train-days 90 --test-days 30 --start 2024-07-01 --end 2025-07-01
+```
+
+Agents also work in plain sweeps and walk-forwards, because `weight = 0` switches a voter off completely:
+
+```bash
+trading-lab sweep --param strategies.qwen_trend.weight=0,1 --start 2025-01-01 --end 2025-07-01
+trading-lab walkforward --param strategies.qwen_trend.weight=0,1 --param strategies.qwen_momentum.weight=0,1 \
+    --train-days 90 --test-days 30 --start 2024-07-01
+```
+
+All runs in a sweep, walk-forward or experiment share one model provider and the answer cache. In `record` mode a market-only agent is asked about each bar **once**, and every variant, combination and overlapping training window reuses that answer. The comparison therefore measures the ensemble, not the model's randomness, and later replays are free. `qwen_risk` sees the portfolio, so it is asked again wherever the trades differ. Missing Qwen environment variables stop the command before the first backtest. The global `--agent-mode record|replay|live` option overrides `[agents] mode` for any command.
 
 ## Execution realism
 

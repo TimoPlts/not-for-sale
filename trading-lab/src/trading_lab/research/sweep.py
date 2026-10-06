@@ -23,6 +23,7 @@ from trading_lab.backtest import BacktestEngine
 from trading_lab.config import AppConfig
 from trading_lab.core.errors import ConfigError
 from trading_lab.data.base import MarketDataProvider
+from trading_lab.llm import LLMProvider
 from trading_lab.metrics import PerformanceMetrics
 from trading_lab.storage import SQLiteStore
 
@@ -129,8 +130,14 @@ def run_sweep(
     store: SQLiteStore | None = None,
     label: str = "sweep",
     progress: Callable[[int, int, dict[str, Any]], None] | None = None,
+    llm_provider: LLMProvider | None = None,
 ) -> list[SweepResult]:
-    """Backtest every grid combination; results sorted best-first by ``metric``."""
+    """Backtest every grid combination; results sorted best-first by ``metric``.
+
+    AI agents in the grid share ``llm_provider`` (default: one built from the
+    config) and the configured answer cache, so in record mode a market-only
+    agent is asked about each bar once, however many combinations use it.
+    """
     rank_key(metric)  # validate the metric name early
     combos = expand_grid(grid)
     configs = [apply_params(base_config, params) for params in combos]  # fail fast on bad keys
@@ -139,7 +146,7 @@ def run_sweep(
     for n, (params, cfg) in enumerate(zip(combos, configs), start=1):
         if progress is not None:
             progress(n, len(combos), params)
-        result = BacktestEngine(cfg, memo, store=store).run(
+        result = BacktestEngine(cfg, memo, store=store, llm_provider=llm_provider).run(
             start, end, notes=f"{label} {params}" if store is not None else ""
         )
         results.append(SweepResult(params, result.metrics, result.benchmark, cfg.fingerprint(), result.run_id))

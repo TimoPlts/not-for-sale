@@ -22,6 +22,7 @@ from trading_lab.backtest import BacktestEngine
 from trading_lab.config import AppConfig
 from trading_lab.core.errors import ConfigError
 from trading_lab.data.base import MarketDataProvider
+from trading_lab.llm import LLMProvider
 from trading_lab.metrics import PerformanceMetrics
 from trading_lab.research.sweep import MemoizedProvider, apply_params, metric_value, run_sweep
 
@@ -95,6 +96,7 @@ def walk_forward(
     step: timedelta | None = None,
     metric: str = "sharpe_ratio",
     progress: Callable[[str], None] | None = None,
+    llm_provider: LLMProvider | None = None,
 ) -> WalkForwardResult:
     memo = provider if isinstance(provider, MemoizedProvider) else MemoizedProvider(provider)
     folds = []
@@ -102,8 +104,10 @@ def walk_forward(
         if progress is not None:
             progress(f"fold {n}: train {tr_start:%Y-%m-%d} -> {tr_end:%Y-%m-%d}, "
                      f"test {te_start:%Y-%m-%d} -> {te_end:%Y-%m-%d}")
-        best = run_sweep(base_config, memo, tr_start, tr_end, grid, metric=metric)[0]
-        test_run = BacktestEngine(apply_params(base_config, best.params), memo).run(te_start, te_end)
+        best = run_sweep(base_config, memo, tr_start, tr_end, grid, metric=metric, llm_provider=llm_provider)[0]
+        test_run = BacktestEngine(
+            apply_params(base_config, best.params), memo, llm_provider=llm_provider
+        ).run(te_start, te_end)
         folds.append(
             WalkForwardFold(tr_start, tr_end, te_start, te_end, best.params, best.metrics,
                             test_run.metrics, test_run.benchmark)
