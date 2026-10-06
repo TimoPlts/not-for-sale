@@ -28,7 +28,7 @@ import pandas as pd
 
 from trading_lab.agents.base import Agent
 from trading_lab.agents.llm import LLMProviderStrategy, ProviderAgent
-from trading_lab.indicators import atr, ema, macd, rsi
+from trading_lab.indicators import atr, ema, macd, rsi, windowed_ema
 from trading_lab.strategies.registry import register_strategy
 
 _COMMON_RULES = """\
@@ -51,6 +51,9 @@ def _system_prompt(role: str, task: str, label: str, values: tuple[str, ...]) ->
     return f"You are the {role}.\n{task}\n\n{_COMMON_RULES}{schema}"
 
 
+EMA_200_WINDOW = 1000
+
+
 def _pct(series: pd.Series) -> pd.Series:
     return series * 100.0
 
@@ -65,6 +68,10 @@ class SpecialistStrategy(LLMProviderStrategy):
     label: ClassVar[str]
     label_values: ClassVar[tuple[str, ...]]
     context_digits: ClassVar[int] = 5  # robust contexts: tiny float noise must not change cache keys
+    # What the prompt asks for, used by ``trading-lab agent-eval`` to spot inconsistent answers:
+    # the vote that contradicts a label value, and the label values that call for HOLD.
+    contradicting_votes: ClassVar[dict[str, str]] = {}
+    hold_labels: ClassVar[tuple[str, ...]] = ()
     agent_version: ClassVar[str] = "1"  # bump when features or the prompt layout change
 
     def build_agent(self, **params: Any) -> Agent:
@@ -83,6 +90,8 @@ class QwenTrendStrategy(SpecialistStrategy):
     name = "qwen_trend"
     label = "regime"
     label_values = ("bullish_trend", "bearish_trend", "sideways", "uncertain")
+    contradicting_votes = {"bullish_trend": "SELL", "bearish_trend": "BUY"}
+    hold_labels = ("sideways", "uncertain")
     indicator_warmup = 60  # EMA 50 plus its 10-bar slope
     system_prompt = _system_prompt(
         "Trend Agent",
@@ -95,11 +104,13 @@ class QwenTrendStrategy(SpecialistStrategy):
 
     @property
     def history_bars(self) -> int:
-        return max(super().history_bars, 1000)  # lets EMA 200 converge in every data window
+        return max(super().history_bars, EMA_200_WINDOW)
 
     def context_frame(self, candles: pd.DataFrame) -> pd.DataFrame:
         close, volume = candles["close"], candles["volume"]
-        ema20, ema50, ema200 = ema(close, 20), ema(close, 50), ema(close, 200)
+        # EMA 200 over a fixed window: a plain one still differs in the 5th digit after
+        # 1000 bars depending on where the data starts (live versus backtest windows).
+        ema20, ema50, ema200 = ema(close, 20), ema(close, 50), windowed_ema(close, 200, EMA_200_WINDOW)
         m = macd(close)
         f = pd.DataFrame(index=candles.index)
         f["close"] = close
@@ -127,6 +138,8 @@ class QwenMomentumStrategy(SpecialistStrategy):
     name = "qwen_momentum"
     label = "momentum_state"
     label_values = ("strengthening", "weakening", "neutral")
+    contradicting_votes = {"strengthening": "SELL", "weakening": "BUY"}
+    hold_labels = ("neutral",)
     indicator_warmup = 40
     system_prompt = _system_prompt(
         "Momentum Agent",
@@ -169,6 +182,8 @@ class QwenRiskStrategy(SpecialistStrategy):
     name = "qwen_risk"
     label = "risk_state"
     label_values = ("low", "moderate", "high", "extreme")
+    contradicting_votes = {"low": "SELL", "high": "BUY", "extreme": "BUY"}
+    hold_labels = ("moderate",)
     indicator_warmup = 100  # 100-bar volatility baseline
     default_portfolio_context = True
     system_prompt = _system_prompt(

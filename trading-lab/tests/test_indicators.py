@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from trading_lab.indicators import bollinger_bands, ema, macd, rsi
+from trading_lab.indicators import bollinger_bands, ema, macd, rsi, windowed_ema
 
 # Classic Wilder RSI example (StockCharts "RSI" ChartSchool table).
 WILDER_CLOSES = [
@@ -120,8 +120,9 @@ def test_bollinger_zero_width_gives_nan_percent_b():
         lambda s: ema(s, 20).to_frame(),
         lambda s: macd(s, 12, 26, 9),
         lambda s: bollinger_bands(s, 20, 2.0),
+        lambda s: windowed_ema(s, 20, 60).to_frame(),
     ],
-    ids=["rsi", "ema", "macd", "bollinger"],
+    ids=["rsi", "ema", "macd", "bollinger", "windowed_ema"],
 )
 def test_indicators_are_causal(func, random_close):
     """The value at bar t must not change when future bars are appended."""
@@ -134,3 +135,26 @@ def test_indicators_are_causal(func, random_close):
             rtol=1e-12,
             equal_nan=True,
         )
+
+
+def test_windowed_ema_is_the_ema_of_the_last_window(random_close):
+    out = windowed_ema(random_close, 20, 60)
+    plain = ema(random_close, 20)
+    np.testing.assert_allclose(out.iloc[:60].to_numpy(), plain.iloc[:60].to_numpy(), equal_nan=True)
+    for t in (59, 100, 250, len(random_close) - 1):
+        restarted = ema(random_close.iloc[t - 59 : t + 1], 20).iloc[-1]
+        assert out.iloc[t] == pytest.approx(restarted, rel=1e-12)
+
+
+def test_windowed_ema_does_not_depend_on_where_the_data_starts(random_close):
+    """Two data windows ending at the same bar agree, unlike a plain EMA."""
+    full, later = random_close, random_close.iloc[37:]
+    np.testing.assert_allclose(windowed_ema(later, 20, 60).iloc[60:].to_numpy(),
+                               windowed_ema(full, 20, 60).iloc[97:].to_numpy(), rtol=1e-12)
+    assert abs(ema(later, 20).iloc[60] - ema(full, 20).iloc[97]) > 1e-9
+
+
+@pytest.mark.parametrize("span, window", [(0, 10), (20, 0), (20, 10)])
+def test_windowed_ema_validates(random_close, span, window):
+    with pytest.raises(ValueError):
+        windowed_ema(random_close, span, window)

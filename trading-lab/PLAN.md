@@ -397,13 +397,37 @@ Trade-offs worth knowing:
 - `BacktestResult.relative` (also stored in the run's metrics as `relative`), printed by `backtest` and `report`. Paper runs get it from stored bars through `DashboardData.research`. It also appears in the dashboard, the HTML report tiles and `experiment` summaries.
 - Tests: hand-made curves (identical, half exposure, constant extra return, cash, invalid input); the backtest stored and printed values and their agreement with the metrics; paper runs from bars; experiment summaries.
 
-## 5. Stage 11–13 status summary
+### Stage 14A: Paper-run reconciliation ✅
+- `research/reconcile.py`: `reconcile(store, run_id, market)` takes a paper run's stored bars and config, compares the stored candles with fresh ones (revised or missing bars), then backtests the same period with agents in replay mode and end liquidation off. It compares fills (time, symbol, side, quantity, price) and non-HOLD decisions as multisets. The live fills after the last processed bar and the backtest's own "data ended" expiries are left out.
+- CLI: `trading-lab reconcile RUN_ID [--synthetic SEED] [--limit N]` opens the database read-only, takes the seed of a synthetic run from its exchange name, and exits 1 on any difference.
+- **Fix it found:** the Trend agent's EMA 200 depended in the 5th digit on where the data window started, so a live run (sliding window) and its backtest (growing window) could show the model different numbers and miss each other's cached answers. `indicators.windowed_ema` computes it over exactly the last 1000 bars, which does not depend on the window. Values move by about 1e-5 at most, and only `qwen_trend` cache keys change.
+- Tests: a live run matches its backtest (fills, decisions, bars); late fills left out; other market data and a tampered fill are reported; backtests, unknown runs and runs without bars; agents replayed without model calls, and missing cached answers counted; end liquidation; the CLI (exit codes, the database byte-identical); `windowed_ema` (equal to a restarted EMA, independent of the data start, causal, validated).
+
+### Stage 14B: Market-data quality report ✅
+- `data/quality.py`: `check_candles` (pure) reports errors (fetch failure, no candles, stale data when checking up to now, with a one-candle grace for publishing delay) and warnings (gaps, candles missing at the start or end, zero volume, no price range, extreme moves, opens far from the previous close between consecutive candles). An extreme move has to beat a robust threshold: `max(jump_floor, expm1(jump_sigmas × 1.4826 × MAD of log returns))`. `check_market_data` fetches through any provider. `check_stored_bars` checks a run's stored candles.
+- CLI: `trading-lab data-check [--symbols ...] [--days N | --start/--end] [--run RUN_ID] [--jump-floor F] [--jump-sigmas K] [--strict] [--limit N]`. It exits 1 on errors, and with `--strict` on warnings too.
+- Tests: clean data (a random walk and synthetic candles); gaps and missing edges; zero-volume and flat candles; extreme moves on calm, volatile and strict settings; open gaps (and none after a data gap); stale versus publishing-delay versus a fixed past period; fetch failures and empty data; rule validation; stored bars of a run; the CLI (exit codes, strict, invalid rules, read-only run mode).
+
+### Stage 14C: Agent answer quality ✅
+- The specialist agents declare what their prompt asks for: `contradicting_votes` (label value -> the vote that contradicts it) and `hold_labels` (values that call for HOLD).
+- `research/agent_eval.py`: `evaluate_agents(signals)` and `evaluate_run(store, run_id)` read the decision-bar signals of every agent. They count answers, error kinds, votes, labels, BUY/SELL confidences (zero-confidence votes), short rationales, the most repeated rationale, contradictions, BUY/SELL votes on HOLD labels, and model calls (failures, latency). Warnings flag no usable answer for more than 10% of decisions, contradictions, more than 25% of votes on HOLD labels, missing labels, zero-confidence votes and short rationales. With enough answers (`min_answers`, default 20), they also flag 95% or more HOLD, one rationale in more than half the answers, one-sided votes (90% or more) and two or fewer distinct confidences.
+- CLI: `trading-lab agent-eval [RUN_ID] [--min-answers N] [--limit N] [--json]` (read-only).
+- Tests: a well-behaved fake agent has no warnings; fixed labels, confidence and rationale are flagged (contradictions, HOLD-label votes, flat confidence, boilerplate, always HOLD); one-sided zero-confidence answers with empty rationales; invalid answers by type; small samples; error kinds; runs without agents and unknown runs; the CLI (text, JSON, latest run, exit codes, the database byte-identical).
+
+### Stage 14D: Run export ✅
+- `export.py`: `export_run(store, run_id, dir, holds=False, overwrite=False)` writes `equity_curve.csv`, `trades.csv`, `fills.csv`, `decisions.csv`, `signals.csv` (agent rationale, label, cache, error and reason flattened out of the metadata), `bars.csv` and `summary.json`. The summary holds the run, config, stored or recomputed metrics, decision counts and the rows and SHA-256 of each file. A non-empty directory is refused unless `overwrite` is set, which replaces only the export files.
+- `trades_frame` and `fills_frame` are shared with `backtest --export`, so the two give identical files.
+- CLI: `trading-lab export RUN_ID DIR [--holds] [--force]` (read-only).
+- Tests: backtest export (files, rows, checksums, metrics, equity); identical to `backtest --export`; HOLDs on request; a paper run; agent votes readable and the API key never written; directory protection (non-empty, a file, unknown run, `overwrite` keeps foreign files); the CLI (exit codes, the database byte-identical).
+
+## 5. Stage 11–14 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
 - **Agents:** weights that adapt to each agent's out-of-sample record in walk-forward, without look-ahead (12B).
 - **Operations:** run summaries (11B), push alerts (11C), a readiness check (13A), and a fix so runs from older versions resume.
 - **Evidence:** an HTML report (12D), bootstrap robustness ranges (13C), and alpha/beta against buy & hold (13D).
+- **Verification (14):** live runs reconciled with their backtest (14A, which found and fixed a window-dependent agent feature), market-data quality checks (14B), agent answer-quality diagnostics (14C), and run exports (14D).
 
 ### Later
 Short positions, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and more alert channels (e-mail).

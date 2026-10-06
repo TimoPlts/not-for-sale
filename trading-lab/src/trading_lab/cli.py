@@ -17,6 +17,10 @@
     trading-lab agent-weights [RUN_ID]
     trading-lab doctor [--online]
     trading-lab robustness [RUN_ID] [--samples 5000] [--seed 7]
+    trading-lab reconcile PAPER_RUN_ID [--synthetic SEED]
+    trading-lab data-check [--symbols ...] [--days N | --start/--end] [--run RUN_ID] [--strict]
+    trading-lab agent-eval [RUN_ID] [--min-answers 20] [--json]
+    trading-lab export RUN_ID DIR [--holds] [--force]
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -205,19 +209,13 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     _print_signal_usage(result.signals)
 
     if args.export:
+        from trading_lab.export import fills_frame, trades_frame
+
         out = Path(args.export)
         out.mkdir(parents=True, exist_ok=True)
         result.equity_curve.to_csv(out / "equity_curve.csv")
-        pd.DataFrame([{
-            "symbol": t.symbol, "quantity": t.quantity, "entry_price": t.entry_price,
-            "exit_price": t.exit_price, "pnl": t.pnl, "return_pct": t.return_pct,
-            "opened_at": t.opened_at, "closed_at": t.closed_at,
-        } for t in result.trades]).to_csv(out / "trades.csv", index=False)
-        pd.DataFrame([{
-            "timestamp": f.timestamp, "symbol": f.symbol, "side": f.side.value,
-            "quantity": f.quantity, "reference_price": f.reference_price,
-            "fill_price": f.fill_price, "fee": f.fee,
-        } for f in result.fills]).to_csv(out / "fills.csv", index=False)
+        trades_frame(result.trades).to_csv(out / "trades.csv", index=False)
+        fills_frame(result.fills).to_csv(out / "fills.csv", index=False)
         print(f"\nCSV files written to {out.resolve()}")
 
     if store is not None:
@@ -619,6 +617,33 @@ def cmd_agent_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_agent_eval(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.research import evaluate_run, format_agent_eval
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        run_id = args.run_id or _latest_run_id(store)
+        try:
+            results = evaluate_run(store, run_id, min_answers=args.min_answers)
+        except ValueError as exc:
+            raise TradingLabError(str(exc)) from None
+    if args.json:
+        print(_json.dumps({"run_id": run_id, "agents": {k: v.to_dict() for k, v in results.items()}}, indent=2))
+        return 0
+    print(f"Run {run_id}: answer quality of {len(results)} agent(s) (read-only)")
+    if not results:
+        print("No AI agents voted in this run.")
+    for ev in results.values():
+        print()
+        print(format_agent_eval(ev, limit=args.limit))
+    return 0
+
+
 def _stored_signals(store: Any, run_id: str) -> list[Any]:
     import json as _json
     from types import SimpleNamespace
@@ -875,6 +900,88 @@ def cmd_robustness(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_provider(run: dict[str, Any], cfg: AppConfig, seed: int | None) -> MarketDataProvider:
+    """The data source a stored run used (synthetic runs record their seed in the exchange name)."""
+    if seed is None and str(run["exchange"]).startswith("synthetic-"):
+        seed = int(str(run["exchange"]).split("-", 1)[1])
+    return _provider(cfg, seed)
+
+
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    from trading_lab.research import format_reconciliation, reconcile
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        run = store.get_run(args.run_id)
+        if run is None:
+            raise TradingLabError(f"unknown run id {args.run_id}")
+        stored_cfg = AppConfig.from_dict(run["config"])
+        print(f"Reconciling paper run {args.run_id} with a backtest of the same bars "
+              "(agents replayed from the cache; nothing is written)")
+        try:
+            result = reconcile(store, args.run_id, _run_provider(run, stored_cfg, args.synthetic))
+        except ValueError as exc:
+            raise TradingLabError(str(exc)) from None
+    print(format_reconciliation(result, limit=args.limit))
+    return 0 if result.ok else 1
+
+
+def cmd_data_check(args: argparse.Namespace) -> int:
+    from trading_lab.data.quality import QualityRules, check_market_data, check_stored_bars, format_quality
+    from trading_lab.storage import SQLiteStore
+
+    try:
+        rules = QualityRules(jump_floor=args.jump_floor, jump_sigmas=args.jump_sigmas)
+    except ValueError as exc:
+        raise TradingLabError(str(exc)) from None
+    cfg = _load_config(args)
+    if args.run:
+        if not Path(cfg.storage.db_path).exists():
+            raise TradingLabError(f"no database at {cfg.storage.db_path}")
+        with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+            try:
+                reports = check_stored_bars(store, args.run, rules)
+            except ValueError as exc:
+                raise TradingLabError(str(exc)) from None
+        print(f"Checking the candles stored by run {args.run}")
+    else:
+        now = datetime.now(timezone.utc)
+        start = args.start or (args.end or now) - timedelta(days=args.days)
+        if args.end is not None and args.end <= start:
+            raise TradingLabError("--end must be after --start")
+        provider = _provider(cfg, args.synthetic)
+        print(f"Checking {provider.name} {cfg.market.timeframe} candles"
+              + (" up to now (stale data is an error)" if args.end is None else ""))
+        reports = check_market_data(provider, cfg.market.symbols, cfg.market.timeframe, start, args.end,
+                                    now=now, rules=rules)
+    print(format_quality(reports, limit=args.limit))
+    if any(r.errors for r in reports):
+        return 1
+    return 1 if args.strict and any(r.warnings for r in reports) else 0
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    from trading_lab.export import export_run
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        try:
+            result = export_run(store, args.run_id, args.directory, holds=args.holds, overwrite=args.force)
+        except ValueError as exc:
+            raise TradingLabError(str(exc)) from None
+    print(f"Run {result.run_id} exported to {result.directory.resolve()}")
+    for name, rows in result.files.items():
+        print(f"  {name:<18} {rows:>8} rows")
+    print("  summary.json       run, config, metrics and file checksums")
+    return 0
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from trading_lab.reporting import run_metrics
     from trading_lab.storage import SQLiteStore
@@ -1065,6 +1172,40 @@ def build_parser() -> argparse.ArgumentParser:
     rb.add_argument("--samples", type=int, default=5000)
     rb.add_argument("--seed", type=int, default=7)
     rb.set_defaults(func=cmd_robustness)
+
+    rc = sub.add_parser("reconcile", help="check a paper run against a backtest of the same bars")
+    rc.add_argument("run_id")
+    rc.add_argument("--synthetic", type=int, metavar="SEED", help="data source seed (default: the run's own)")
+    rc.add_argument("--limit", type=int, default=10, help="differences to list (default 10)")
+    rc.set_defaults(func=cmd_reconcile)
+
+    ae = sub.add_parser("agent-eval", help="answer quality of the AI agents in a run (consistency, spread)")
+    ae.add_argument("run_id", nargs="?", help="default: the latest run")
+    ae.add_argument("--min-answers", type=int, default=20,
+                    help="answers needed before judging vote and confidence spread (default 20)")
+    ae.add_argument("--limit", type=int, default=5, help="contradictions listed per agent (default 5)")
+    ae.add_argument("--json", action="store_true", help="machine-readable output")
+    ae.set_defaults(func=cmd_agent_eval)
+
+    dc = sub.add_parser("data-check", help="market-data quality: gaps, stale data, zero volume, extreme moves")
+    market_options(dc)
+    dc.add_argument("--start", type=_date, help="YYYY-MM-DD (UTC)")
+    dc.add_argument("--end", type=_date, help="YYYY-MM-DD (UTC, exclusive); default now (then stale data is an error)")
+    dc.add_argument("--days", type=int, default=30, help="length when --start is omitted (default 30)")
+    dc.add_argument("--run", metavar="RUN_ID", help="check the candles a stored run used instead")
+    dc.add_argument("--jump-floor", type=float, default=0.05, help="smallest move called extreme (default 0.05)")
+    dc.add_argument("--jump-sigmas", type=float, default=10.0,
+                    help="robust standard deviations for an extreme move (default 10)")
+    dc.add_argument("--strict", action="store_true", help="exit 1 on warnings too")
+    dc.add_argument("--limit", type=int, default=5, help="details listed per symbol (default 5)")
+    dc.set_defaults(func=cmd_data_check)
+
+    ex = sub.add_parser("export", help="write a stored run to CSV files and a JSON summary")
+    ex.add_argument("run_id")
+    ex.add_argument("directory", help="a new or empty directory")
+    ex.add_argument("--holds", action="store_true", help="include HOLD decisions (one per symbol and bar)")
+    ex.add_argument("--force", action="store_true", help="replace the export files in a non-empty directory")
+    ex.set_defaults(func=cmd_export)
 
     cp = sub.add_parser("compare", help="compare stored runs side by side")
     cp.add_argument("run_ids", nargs="+")

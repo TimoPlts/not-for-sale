@@ -24,6 +24,28 @@ def ema(series: pd.Series, span: int) -> pd.Series:
     return series.ewm(span=span, adjust=False, min_periods=span).mean()
 
 
+def windowed_ema(series: pd.Series, span: int, window: int) -> pd.Series:
+    """``ema`` restarted ``window - 1`` bars back: the EMA of exactly the last ``window`` bars.
+
+    A plain EMA depends (very slightly) on where the data starts. This one does
+    not, once ``window`` bars exist, so two data windows that end at the same
+    bar give the same value, e.g. a live trader's sliding window and a
+    backtest's growing one. Before ``window`` bars it equals ``ema``.
+    """
+    _check_period("span", span)
+    _check_period("window", window)
+    if window < span:
+        raise ValueError(f"window ({window}) must be at least span ({span})")
+    out = ema(series, span)
+    values = series.to_numpy(dtype="float64")
+    if values.size >= window:
+        alpha = 2.0 / (span + 1)
+        weights = alpha * (1 - alpha) ** np.arange(window, dtype="float64")
+        weights[-1] = (1 - alpha) ** (window - 1)  # the seed: the window's first value
+        out.iloc[window - 1 :] = np.convolve(values, weights, mode="valid")
+    return out
+
+
 def rsi(close: pd.Series, period: int = 14) -> pd.Series:
     """Relative Strength Index with Wilder's smoothing.
 
@@ -121,4 +143,4 @@ def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> 
     return pd.Series(out, index=close.index, name="atr")
 
 
-__all__ = ["atr", "bollinger_bands", "ema", "macd", "rsi"]
+__all__ = ["atr", "bollinger_bands", "ema", "macd", "rsi", "windowed_ema"]

@@ -42,6 +42,10 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 13B (complete):** an optional correlation limit, so the bot does not stack positions in coins that move together.
 - **Stage 13C (complete):** `trading-lab robustness`: bootstrap ranges that show how much of a run's result could be luck (also in the HTML report).
 - **Stage 13D (complete):** performance relative to buy & hold: excess return, alpha, beta, correlation and information ratio.
+- **Stage 14A (complete):** `trading-lab reconcile`: checks that a live paper run did exactly what its backtest does on the same candles.
+- **Stage 14B (complete):** `trading-lab data-check`: a market-data quality report (gaps, stale data, zero volume, extreme moves).
+- **Stage 14C (complete):** `trading-lab agent-eval`: answer-quality diagnostics for the AI agents (contradictions, one-sided voting, flat confidence, boilerplate rationales, errors).
+- **Stage 14D (complete):** `trading-lab export`: any stored run as CSV files plus a JSON summary with checksums.
 
 ### Stage 9/10 summary
 
@@ -207,6 +211,56 @@ A short Markdown report covering:
 * model usage, plus a health warning if cycles are failing.
 
 It only reads the database (opened read-only) and works on backtests and live runs alike.
+
+## Did the live run do what the backtest does? (`reconcile`)
+
+```bash
+trading-lab reconcile vm-paper-1
+trading-lab reconcile pp-1a2b3c4d5e6f --synthetic 4   # a run on offline synthetic data
+```
+
+A paper run follows exactly the backtest's rules. `reconcile` backs that up for one run:
+
+* **Market data:** the candles the run stored are compared with what the exchange returns now. A revised candle explains any difference that follows from it.
+* **Trades and decisions:** a backtest over the run's own period, with the run's stored config, is compared fill by fill and decision by decision with what the run recorded. Agents are replayed from the answer cache, so the model is never called. An answer missing from the cache is counted and replayed as HOLD.
+
+Fills at the open of the candle after the run's last processed bar are left out, because a backtest of those bars cannot have them yet. The database is only read. The exit code is 0 when everything matches and 1 otherwise, so it can run in a script or a timer.
+
+## Is the market data sound? (`data-check`)
+
+```bash
+trading-lab data-check                                  # configured symbols, last 30 days, up to now
+trading-lab data-check --start 2024-01-01 --end 2024-07-01
+trading-lab data-check --run vm-paper-1                 # the candles a run stored
+trading-lab data-check --strict                         # exit 1 on warnings too (for scripts)
+```
+
+A strategy can only be as good as its candles. For each symbol, the report lists:
+
+* **errors** (exit code 1): the exchange failed or returned nothing, or, when checking up to now, the latest closed candles are missing (stale data). The newest candle may lag by one.
+* **warnings:** missing candles (gaps, or none at the start or end of the period), zero-volume candles, candles with no price range, extreme moves, and opens far from the previous close.
+
+An extreme move is a candle that moved more than 10 robust standard deviations of the symbol's own returns, and at least 5%. Both limits can be changed with `--jump-sigmas` and `--jump-floor`. The threshold therefore adapts to each symbol and timeframe. An open far from the previous close only counts between consecutive candles, because a gap in the data explains it. With the CSV cache on, the candles come through the cache, exactly as a backtest gets them. Nothing else is written.
+
+## Exporting a run (`export`)
+
+```bash
+trading-lab export vm-paper-1 exports/vm-paper-1
+trading-lab export <run id> exports/run --holds      # also every HOLD decision
+```
+
+This writes any stored backtest or paper run into a new or empty directory, for a spreadsheet, a notebook or an archive:
+
+| File | Contents |
+|---|---|
+| `equity_curve.csv` | per bar: cash, positions value, equity, realized and unrealized PnL, fees, open positions |
+| `trades.csv`, `fills.csv` | closed trades and simulated fills (same columns as `backtest --export`) |
+| `decisions.csv` | the ensemble's decisions with reasons (HOLDs only with `--holds`) |
+| `signals.csv` | every strategy and agent vote, with each agent's rationale, label, cache status and error in their own columns |
+| `bars.csv` | the candles the run traded on |
+| `summary.json` | the run, its config, its metrics, decision counts, and the row count and SHA-256 of every file |
+
+The database is only read. A non-empty directory is refused unless you pass `--force`. That replaces only the export files and leaves anything else in the directory alone. No secret can appear in an export, because credentials only ever come from environment variables and are never stored.
 
 ## Alerts
 
@@ -474,6 +528,23 @@ The definitions are exact and deterministic. They are spelled out in `src/tradin
 * **Calibration:** correctness and mean signed return per confidence bucket. A well-calibrated agent is right more often when it is more confident.
 
 Every run now also stores the candles it traded on (schema v3 `bars` table), which the outcome statistics need. Older runs show `n/a` for them.
+
+### Are the agent's answers sound? (`agent-eval`)
+
+```bash
+trading-lab agent-eval                 # most recent run
+trading-lab agent-eval <run id> --json
+```
+
+`agent-report` asks whether an agent's votes were right. `agent-eval` asks whether its answers make sense at all, whatever the market did next. Per agent, it reports:
+
+* **availability:** decisions without a usable answer, grouped by error type (timeouts, invalid JSON, answers missing from the cache);
+* **consistency:** votes that contradict the agent's own label (BUY with `regime = bearish_trend`, SELL with `momentum_state = strengthening`, BUY with `risk_state = high`), and BUY/SELL votes on a label for which its prompt asks for HOLD (`sideways`, `neutral`, `moderate`);
+* **spread:** one-sided voting (90% or more of the BUY/SELL votes on one side), almost always HOLD, confidence that barely varies, and BUY/SELL votes with confidence 0 (which carry no weight);
+* **explanations:** empty or very short rationales, and one rationale repeated for most answers;
+* **model calls:** count, failures and mean latency.
+
+The spread checks wait for 20 answers (`--min-answers`), so a short run is not judged on a handful of votes. Each agent declares what its prompt asks for (`contradicting_votes`, `hold_labels` in `agents/specialists.py`). The database is only read.
 
 ### Model usage and cost
 
