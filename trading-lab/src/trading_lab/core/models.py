@@ -216,12 +216,19 @@ class ExecutionReport:
         return self.status is OrderStatus.FILLED
 
 
+LONG, SHORT = "long", "short"
+
+
 @dataclass(frozen=True, slots=True)
 class Position:
-    """An open long position.
+    """An open position: long (the default) or, when shorting is enabled, short.
 
-    ``cost_basis`` is the total quote currency paid for the current quantity,
-    *including* buy fees and slippage.
+    ``cost_basis`` is the total quote currency put in, *including* fees and
+    slippage. For a long that is what was paid. For a short it is the
+    collateral (the entry notional, ``entry_notional``) plus the entry fee:
+    shorts are fully collateralised, so they never use leverage. Covering a
+    short at price ``p`` returns ``2 * entry_notional - quantity * p`` (the
+    collateral plus the price gain, or minus the loss).
     """
 
     symbol: str
@@ -229,13 +236,27 @@ class Position:
     cost_basis: float
     opened_at: datetime
     stop_price: float | None = None
+    side: str = LONG
+    entry_notional: float = 0.0  # quantity x entry fill price, fees excluded (shorts)
+
+    @property
+    def is_short(self) -> bool:
+        return self.side == SHORT
 
     @property
     def avg_entry_price(self) -> float:
-        """Average cost per unit, fees included."""
+        """Break-even price before exit costs: average cost (long) or net proceeds (short) per unit."""
+        if self.is_short:
+            return (2.0 * self.entry_notional - self.cost_basis) / self.quantity
         return self.cost_basis / self.quantity
 
     def market_value(self, price: float) -> float:
+        if self.is_short:
+            return 2.0 * self.entry_notional - self.quantity * price
+        return self.quantity * price
+
+    def exposure(self, price: float) -> float:
+        """Absolute market exposure (quantity x price) on either side."""
         return self.quantity * price
 
     def unrealized_pnl(self, price: float) -> float:
@@ -245,18 +266,19 @@ class Position:
 
 @dataclass(frozen=True, slots=True)
 class ClosedTrade:
-    """A realized (partial or full) exit of a long position."""
+    """A realized (partial or full) exit of a long position, or cover of a short one."""
 
     symbol: str
     quantity: float
-    entry_price: float  # average cost per unit incl. buy fees
-    exit_price: float  # fill price of the sell
+    entry_price: float  # break-even entry per unit incl. entry fees (see Position.avg_entry_price)
+    exit_price: float  # fill price of the exit (sell, or buy-to-cover)
     cost_basis: float  # basis released by this exit
-    proceeds: float  # sell notional minus sell fee
+    proceeds: float  # cash returned by the exit, net of its fees
     pnl: float
     opened_at: datetime
     closed_at: datetime
     exit_order_id: str = ""
+    side: str = LONG
 
     @property
     def return_pct(self) -> float:

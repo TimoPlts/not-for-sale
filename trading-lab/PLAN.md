@@ -442,6 +442,17 @@ Trade-offs worth knowing:
 - `doctor` and `agent-test` know which variables each provider needs. Agents keep their names. Cache keys include the provider and model.
 - Tests: URL forms; the exact request (headers, body, default endpoint); text blocks joined and other blocks ignored; five malformed responses (not retried); 529 retried; 401 fails fast without leaking the key (errors, repr, logs); environment checks (replay needs only the model; custom and invalid URLs); config and factory; the three agents running a backtest on the Messages format; `doctor` and the `agent-test` environment lines.
 
+### Stage 16A: Short-position accounting ✅
+- `Position.side` (`long` or `short`) and `entry_notional`, plus `ClosedTrade.side`. A short's `avg_entry_price` is its break-even (net proceeds per unit), and `market_value(p) = 2 x entry notional - quantity x p`.
+- `Portfolio(allow_short=False)`:
+  - With shorts allowed, a SELL without a long opens or adds to a short and a BUY against a short covers it.
+  - Shorts are fully collateralised: the entry notional plus the fee leaves cash, so there is no leverage. Covering returns the collateral plus the gain, or minus the loss, which can exceed the collateral.
+  - No fill flips a position. `gross_exposure` sums |quantity x price|. The equity invariant holds.
+  - With shorts off, behaviour and messages are unchanged.
+- `PaperExecutor(borrow_bps_per_day=0)`: opens and covers shorts with side-correct slippage. The borrow fee (entry notional x bps x days held) is added to the cover fill's fee, so a portfolio rebuilt from its fills (resume) is identical. Short entries need collateral, and covers can never exceed the short.
+- Storage schema v4: `closed_trades.side` (existing trades are longs). The migration is idempotent, and read-only access to older databases still works.
+- Tests: long-only by default; a round trip with exact cash, fees, PnL and break-even; partial covers and adding to a short; losses beyond the collateral; no flips; collateral required; a randomized 400-fill replay keeping the invariant and rebuilding identically; executor slippage, borrow fee, limits, dust and limit fills; storage of the side; v3 upgrade and read-only access.
+
 ## 5. Stage 11–15 status summary
 
 On top of the Stage 9/10 system:
