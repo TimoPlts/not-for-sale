@@ -18,6 +18,7 @@ from trading_lab.research.experiments import (
     variant_overrides,
 )
 from trading_lab.research.protocol import VariantSummary, sign_test_p, summarize
+from trading_lab.research.robustness import Robustness, bootstrap, format_robustness, robustness_for_run
 from trading_lab.research.sweep import (
     MemoizedProvider,
     SweepResult,
@@ -35,6 +36,10 @@ from trading_lab.research.walkforward import (
 )
 
 __all__ = [
+    "Robustness",
+    "bootstrap",
+    "format_robustness",
+    "robustness_for_run",
     "WeightingRule",
     "adaptive_weights",
     "VariantSummary",

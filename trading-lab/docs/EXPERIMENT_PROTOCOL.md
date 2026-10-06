@@ -107,6 +107,10 @@ JSON contain all of it):
 | agent contribution: votes, correctness, trades influenced, pivotal trades, PnL when agreed or disagreed, calibration | `agent-report` |
 | model usage: calls, failures, latency, tokens | usage block |
 
+For single stored runs (for example the per-variant backtests from step 3),
+`trading-lab robustness <run id>` adds bootstrap ranges for total return and
+Sharpe, and the probability of a loss. Report them next to the point estimates.
+
 Report the in-sample numbers next to the out-of-sample ones. A large gap
 means overfitting.
 

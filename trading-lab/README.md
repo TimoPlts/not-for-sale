@@ -40,6 +40,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 12D (complete):** `trading-lab report RUN_ID --html FILE`, a single self-contained HTML report to share.
 - **Stage 13A (complete):** `trading-lab doctor`, a read-only readiness check before going live.
 - **Stage 13B (complete):** an optional correlation limit, so the bot does not stack positions in coins that move together.
+- **Stage 13C (complete):** `trading-lab robustness`: bootstrap ranges that show how much of a run's result could be luck (also in the HTML report).
 
 ### Stage 9/10 summary
 
@@ -154,6 +155,25 @@ One self-contained file, with no external scripts, styles or fonts, so it opens 
 * every voter's performance (AI agents marked), the latest AI rationales, model usage, breaker trips, closed trades and decision counts.
 
 It follows your system's light/dark setting. The report is built from the read-only data layer, so it never changes the database. All text from the database, including model rationales, is HTML-escaped.
+
+## Could it be luck? (`robustness`)
+
+```bash
+trading-lab robustness <run id>          # 5000 samples, seed 7 (reproducible)
+```
+
+```
+Robustness (5000 bootstrap samples, seed 7; ranges are 5th .. median .. 95th percentile)
+  Actual total return: -0.97%   actual Sharpe: -1.38
+  Trade bootstrap (32 trades): total return -5.42% .. -0.78% .. +4.18%; probability of a loss 60%
+  Block bootstrap (696 bars, blocks of 26): total return -4.53% .. -1.18% .. +2.62%; Sharpe -6.68 .. -1.67 .. +3.77
+  ! the trade-bootstrap range includes both gains and losses
+```
+
+* The **trade bootstrap** redraws the run's closed trades with replacement.
+* The **block bootstrap** redraws blocks of about √n bars of the equity curve's returns, so calm and volatile stretches stay together.
+
+A range that spans both gains and losses, or fewer than 30 trades, means the run alone shows nothing either way. The HTML report includes the same table.
 
 ## Run summary
 

@@ -214,6 +214,12 @@ def build_html_report(db_path: str, run_id: str | None = None, *, horizon: int =
         trades = data.recent_trades(run_id, limit=50)
         rationales = data.latest_rationales(run_id)
         breakers = data.breaker_status(run_id)
+        try:
+            from trading_lab.research.robustness import robustness_for_run
+
+            robust = robustness_for_run(data.store, run_id, samples=2000)
+        except Exception:  # a report must render even without enough data
+            robust = None
         fingerprint = data.store.get_run(run_id)["config_fingerprint"]
         decisions = data.store.load_decisions(run_id, include_holds=False)
     m, b = research["metrics"] or {}, research["benchmark"] or {}
@@ -259,6 +265,23 @@ def build_html_report(db_path: str, run_id: str | None = None, *, horizon: int =
                  _td(_pct(r.drawdown))] for ts, r in daily.iterrows()]
         out.append("<details><summary>Table view (daily close)</summary>"
                    + _table(["Day", "Equity", "Buy & hold", "Drawdown"], rows) + "</details>")
+
+    if robust is not None and robust.bars:
+        def rng(r: Any, pct: bool = True) -> str:
+            if r is None:
+                return "n/a"
+            f = _pct if pct else _num
+            return f"{f(r.low)} … {f(r.median)} … {f(r.high)}"
+
+        rows = [
+            [_td(f"Trade bootstrap ({robust.trades} trades)"), _td(rng(robust.trade_total_return)),
+             _td("n/a" if robust.prob_loss is None else f"{robust.prob_loss:.0%}"), _td("")],
+            [_td(f"Block bootstrap ({robust.bars} bars)"), _td(rng(robust.bar_total_return)), _td(""),
+             _td(rng(robust.sharpe_range, pct=False))],
+        ]
+        out.append("<h2>Robustness</h2><div class=\"card\">" + _table(
+            ["Resampling", "Total return (5% … median … 95%)", "P(loss)", "Sharpe (5% … 95%)"], rows)
+            + "".join(f'<p class="muted">⚠ {_e(w)}</p>' for w in robust.warnings) + "</div>")
 
     if breakers.get("trips"):
         out.append("<h2>Circuit breaker trips</h2><div class=\"card\"><ul>" + "".join(

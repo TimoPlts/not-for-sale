@@ -387,5 +387,10 @@ Trade-offs worth knowing:
 - `entry_filter_reason` counts open, working-limit and already-scheduled entries whose correlation with the new symbol is at or above the threshold (unknown counts as correlated) and blocks the entry when there are `max_correlated_positions` of them. It only blocks new entries.
 - Tests: perfect, independent and too-short correlations and causality; blocking, allowing and unknown; two entries scheduled in the same bar; perfectly correlated twins never held together (and held together without the limit); live equal to the backtest; validation.
 
+### Stage 13C: Robustness ranges ✅
+- `research/robustness.py`: a seeded trade bootstrap (total-return range and probability of a loss) and a block bootstrap of per-bar equity returns (blocks of about √n bars; total-return and Sharpe ranges), with warnings for fewer than 30 trades, ranges spanning gains and losses, and too few bars.
+- CLI: `trading-lab robustness [RUN_ID] [--samples N] [--seed S]` (read-only). It also appears as a section of the HTML report, and the experiment protocol points to it.
+- Tests: deterministic per seed with ordered percentiles; known cases (all winners, a coin flip, constant returns); warnings and edge cases; stored runs agreeing with the metrics (return and Sharpe); the CLI (read-only) and the report section.
+
 ### Later
 Short positions, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and more alert channels (e-mail).
