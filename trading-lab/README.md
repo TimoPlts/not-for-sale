@@ -43,6 +43,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 13C (complete):** `trading-lab robustness`: bootstrap ranges that show how much of a run's result could be luck (also in the HTML report).
 - **Stage 13D (complete):** performance relative to buy & hold: excess return, alpha, beta, correlation and information ratio.
 - **Stage 14A (complete):** `trading-lab reconcile`: checks that a live paper run did exactly what its backtest does on the same candles.
+- **Stage 14B (complete):** `trading-lab data-check`: a market-data quality report (gaps, stale data, zero volume, extreme moves).
 
 ### Stage 9/10 summary
 
@@ -222,6 +223,22 @@ A paper run follows exactly the backtest's rules. `reconcile` backs that up for 
 * **Trades and decisions:** a backtest over the run's own period, with the run's stored config, is compared fill by fill and decision by decision with what the run recorded. Agents are replayed from the answer cache, so the model is never called. An answer missing from the cache is counted and replayed as HOLD.
 
 Fills at the open of the candle after the run's last processed bar are left out, because a backtest of those bars cannot have them yet. The database is only read. The exit code is 0 when everything matches and 1 otherwise, so it can run in a script or a timer.
+
+## Is the market data sound? (`data-check`)
+
+```bash
+trading-lab data-check                                  # configured symbols, last 30 days, up to now
+trading-lab data-check --start 2024-01-01 --end 2024-07-01
+trading-lab data-check --run vm-paper-1                 # the candles a run stored
+trading-lab data-check --strict                         # exit 1 on warnings too (for scripts)
+```
+
+A strategy can only be as good as its candles. For each symbol, the report lists:
+
+* **errors** (exit code 1): the exchange failed or returned nothing, or, when checking up to now, the latest closed candles are missing (stale data). The newest candle may lag by one.
+* **warnings:** missing candles (gaps, or none at the start or end of the period), zero-volume candles, candles with no price range, extreme moves, and opens far from the previous close.
+
+An extreme move is a candle that moved more than 10 robust standard deviations of the symbol's own returns, and at least 5%. Both limits can be changed with `--jump-sigmas` and `--jump-floor`. The threshold therefore adapts to each symbol and timeframe. An open far from the previous close only counts between consecutive candles, because a gap in the data explains it. With the CSV cache on, the candles come through the cache, exactly as a backtest gets them. Nothing else is written.
 
 ## Alerts
 

@@ -403,6 +403,11 @@ Trade-offs worth knowing:
 - **Fix it found:** the Trend agent's EMA 200 depended in the 5th digit on where the data window started, so a live run (sliding window) and its backtest (growing window) could show the model different numbers and miss each other's cached answers. `indicators.windowed_ema` computes it over exactly the last 1000 bars, which does not depend on the window. Values move by about 1e-5 at most, and only `qwen_trend` cache keys change.
 - Tests: a live run matches its backtest (fills, decisions, bars); late fills left out; other market data and a tampered fill are reported; backtests, unknown runs and runs without bars; agents replayed without model calls, and missing cached answers counted; end liquidation; the CLI (exit codes, the database byte-identical); `windowed_ema` (equal to a restarted EMA, independent of the data start, causal, validated).
 
+### Stage 14B: Market-data quality report ✅
+- `data/quality.py`: `check_candles` (pure) reports errors (fetch failure, no candles, stale data when checking up to now, with a one-candle grace for publishing delay) and warnings (gaps, candles missing at the start or end, zero volume, no price range, extreme moves, opens far from the previous close between consecutive candles). An extreme move has to beat a robust threshold: `max(jump_floor, expm1(jump_sigmas × 1.4826 × MAD of log returns))`. `check_market_data` fetches through any provider. `check_stored_bars` checks a run's stored candles.
+- CLI: `trading-lab data-check [--symbols ...] [--days N | --start/--end] [--run RUN_ID] [--jump-floor F] [--jump-sigmas K] [--strict] [--limit N]`. It exits 1 on errors, and with `--strict` on warnings too.
+- Tests: clean data (a random walk and synthetic candles); gaps and missing edges; zero-volume and flat candles; extreme moves on calm, volatile and strict settings; open gaps (and none after a data gap); stale versus publishing-delay versus a fixed past period; fetch failures and empty data; rule validation; stored bars of a run; the CLI (exit codes, strict, invalid rules, read-only run mode).
+
 ## 5. Stage 11–13 status summary
 
 On top of the Stage 9/10 system:

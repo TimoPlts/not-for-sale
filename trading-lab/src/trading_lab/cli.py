@@ -18,6 +18,7 @@
     trading-lab doctor [--online]
     trading-lab robustness [RUN_ID] [--samples 5000] [--seed 7]
     trading-lab reconcile PAPER_RUN_ID [--synthetic SEED]
+    trading-lab data-check [--symbols ...] [--days N | --start/--end] [--run RUN_ID] [--strict]
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -905,6 +906,40 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
     return 0 if result.ok else 1
 
 
+def cmd_data_check(args: argparse.Namespace) -> int:
+    from trading_lab.data.quality import QualityRules, check_market_data, check_stored_bars, format_quality
+    from trading_lab.storage import SQLiteStore
+
+    try:
+        rules = QualityRules(jump_floor=args.jump_floor, jump_sigmas=args.jump_sigmas)
+    except ValueError as exc:
+        raise TradingLabError(str(exc)) from None
+    cfg = _load_config(args)
+    if args.run:
+        if not Path(cfg.storage.db_path).exists():
+            raise TradingLabError(f"no database at {cfg.storage.db_path}")
+        with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+            try:
+                reports = check_stored_bars(store, args.run, rules)
+            except ValueError as exc:
+                raise TradingLabError(str(exc)) from None
+        print(f"Checking the candles stored by run {args.run}")
+    else:
+        now = datetime.now(timezone.utc)
+        start = args.start or (args.end or now) - timedelta(days=args.days)
+        if args.end is not None and args.end <= start:
+            raise TradingLabError("--end must be after --start")
+        provider = _provider(cfg, args.synthetic)
+        print(f"Checking {provider.name} {cfg.market.timeframe} candles"
+              + (" up to now (stale data is an error)" if args.end is None else ""))
+        reports = check_market_data(provider, cfg.market.symbols, cfg.market.timeframe, start, args.end,
+                                    now=now, rules=rules)
+    print(format_quality(reports, limit=args.limit))
+    if any(r.errors for r in reports):
+        return 1
+    return 1 if args.strict and any(r.warnings for r in reports) else 0
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from trading_lab.reporting import run_metrics
     from trading_lab.storage import SQLiteStore
@@ -1101,6 +1136,19 @@ def build_parser() -> argparse.ArgumentParser:
     rc.add_argument("--synthetic", type=int, metavar="SEED", help="data source seed (default: the run's own)")
     rc.add_argument("--limit", type=int, default=10, help="differences to list (default 10)")
     rc.set_defaults(func=cmd_reconcile)
+
+    dc = sub.add_parser("data-check", help="market-data quality: gaps, stale data, zero volume, extreme moves")
+    market_options(dc)
+    dc.add_argument("--start", type=_date, help="YYYY-MM-DD (UTC)")
+    dc.add_argument("--end", type=_date, help="YYYY-MM-DD (UTC, exclusive); default now (then stale data is an error)")
+    dc.add_argument("--days", type=int, default=30, help="length when --start is omitted (default 30)")
+    dc.add_argument("--run", metavar="RUN_ID", help="check the candles a stored run used instead")
+    dc.add_argument("--jump-floor", type=float, default=0.05, help="smallest move called extreme (default 0.05)")
+    dc.add_argument("--jump-sigmas", type=float, default=10.0,
+                    help="robust standard deviations for an extreme move (default 10)")
+    dc.add_argument("--strict", action="store_true", help="exit 1 on warnings too")
+    dc.add_argument("--limit", type=int, default=5, help="details listed per symbol (default 5)")
+    dc.set_defaults(func=cmd_data_check)
 
     cp = sub.add_parser("compare", help="compare stored runs side by side")
     cp.add_argument("run_ids", nargs="+")
