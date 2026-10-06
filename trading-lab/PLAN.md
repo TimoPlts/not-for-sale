@@ -89,7 +89,7 @@ trading bot.
 | `metrics/`     | Performance metrics | 3 |
 | `live/`        | `LivePaperTrader` loop (public data, simulated fills, resumable state) | 4 |
 | `cli.py`       | `trading-lab backtest`, `trading-lab paper`, `trading-lab report` | 4 |
-| `agents/`      | Agent interface, context, record/replay cache, `AgentStrategy` adapter, LLM-backed strategies | 6, 9 |
+| `agents/`      | Agent interface, context, record/replay cache, `AgentStrategy` adapter, LLM-backed and specialist (Trend/Momentum/Risk) strategies | 6, 9 |
 | `llm/`         | Provider-agnostic LLM clients (`LLMProvider`); Qwen via OpenAI-compatible chat completions | 9 |
 
 ### Key interfaces
@@ -233,6 +233,15 @@ average trade return.
 - `[agents]` gains `provider`, `request_timeout_seconds`, `max_retries`, `retry_backoff_seconds`, `temperature` and `max_output_tokens`. These are non-secret, and old configs still load.
 - `LLMProviderStrategy` (the base for model-backed agents) and the registered `llm_analyst` strategy. `configure_agents` builds one shared provider and fails fast when variables are missing. In replay only `QWEN_MODEL` is required, and the model is never called.
 - Tests: missing variables, request and response format, malformed bodies and answers, timeouts, retries, client errors, failure → HOLD (including a whole backtest against a failing endpoint), record reuse, replay offline, live always asking, secret redaction, and a real local HTTP server for the transport and its timeout. New safety tests: no hard-coded tokens in the source, and no credential fields in the config.
+
+### Stage 9B: Specialist Qwen agents ✅
+- `agents/specialists.py`: `qwen_trend`, `qwen_momentum` and `qwen_risk` share the configured provider. Each has its own system prompt, its own causal feature frame and a strictly validated extra label (`regime`, `momentum_state` or `risk_state`). Answers missing the label, or with an unknown value, become HOLD.
+- Portfolio-aware agents: `Strategy.uses_portfolio`, `signal_at(…, portfolio)` and `generate_signals_at(…)`. `TradingSession.close_bar` accepts lazy signal sources and evaluates them after stops, marks and breakers, with a coarse, read-only `portfolio_view`: position, return, bars held, stop distance, exposure, open positions, drawdown, daily PnL, recent stop-outs, kill switch and entry block. Recent stop-outs are tracked in the session.
+- `qwen_risk` is portfolio-aware by default. The other two are market-only by default, so their cached answers are shared by all experiments; `portfolio_context = true` adds position status.
+- The backtester evaluates strategies only for bars inside the period, so agents are not asked about the warm-up history.
+- `weight = 0` means not taking part: the strategy is not built, not evaluated and casts no vote. The three agents ship in the default config with weight 0.
+- The ATR indicator (Wilder) is added, and `parse_agent_json` takes required labels.
+- Tests: config defaults and the environment, prompts, causal features, label validation, labels through the cache, the portfolio view, the risk agent unable to override the kill switch, three agents voting, in-period-only calls, record/replay with a portfolio-aware agent, and unchanged baseline results.
 
 ### Later
 Stages 9B–10E (specialised Qwen agents, agent attribution, experiments, usage accounting, smoke test, live integration, dashboard, VM operation, failure recovery, experiment protocol). After that: short positions, trailing stops and order-book data.

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar, Mapping
+from typing import Any, ClassVar, Mapping, Sequence
 
 import pandas as pd
 
@@ -118,6 +118,34 @@ class Strategy(ABC):
         return [
             self.generate_signal(symbol, candles.iloc[: i + 1]) for i in range(len(candles))
         ]
+
+    # ------------------------------------------------- selected bars / portfolio
+    @property
+    def uses_portfolio(self) -> bool:
+        """True if signals depend on the simulated portfolio (see ``signal_at``).
+
+        Such strategies are evaluated bar by bar inside the trading session, after
+        stops and circuit breakers have been updated for the bar, and receive a
+        read-only ``portfolio`` view. Every other strategy is a pure function of candles.
+        """
+        return False
+
+    def generate_signals_at(
+        self, symbol: str, candles: pd.DataFrame, positions: Sequence[int]
+    ) -> list[Signal]:
+        """Signals for the bars at ``positions`` only (same values as ``generate_signals``).
+
+        Engines use this to skip bars that are never traded, which matters for
+        strategies that are slow or costly to evaluate (AI agents).
+        """
+        signals = self.generate_signals(symbol, candles)
+        return [signals[i] for i in positions]
+
+    def signal_at(
+        self, symbol: str, candles: pd.DataFrame, position: int, portfolio: Mapping[str, Any] | None = None
+    ) -> Signal:
+        """Signal for the bar at ``position``; ``portfolio`` is used only if ``uses_portfolio``."""
+        return self.generate_signal(symbol, candles.iloc[: position + 1])
 
 
 class IndicatorStrategy(Strategy):

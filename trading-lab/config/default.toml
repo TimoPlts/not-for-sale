@@ -74,12 +74,34 @@ liquidate_at_end = false      # true = sell open positions at the final close
 [storage]
 db_path = "data/trading_lab.db"   # SQLite history of runs, signals, decisions, trades
 
-# Model-backed agents (e.g. [strategies.llm_analyst]) are off unless enabled:
+# Qwen agents (one shared model, three roles; see README "Qwen agents").
+# weight = 0 switches an agent off completely: it is never called and casts no vote.
+# Set a positive weight to let it vote; QWEN_API_URL/QWEN_MODEL/QWEN_API_KEY must then be set.
+[strategies.qwen_trend]
+enabled = true
+weight = 0.0
+lookback = 40                 # candles shown to the model
+decision_interval = 4         # ask every N candles (HOLD in between)
+# portfolio_context = false   # true adds position status (answers then depend on the trade path)
+
+[strategies.qwen_momentum]
+enabled = true
+weight = 0.0
+lookback = 30
+decision_interval = 4
+
+[strategies.qwen_risk]
+enabled = true
+weight = 0.0
+lookback = 30
+decision_interval = 4
+# portfolio_context = true    # default: sees exposure, open positions, stop-outs, breakers
+
+# A general-purpose model analyst is also available:
 # [strategies.llm_analyst]
-# enabled = true
 # weight = 1.0
-# lookback = 30               # candles shown to the model
-# decision_interval = 4       # ask every N candles
+# lookback = 30
+# decision_interval = 4
 
 [agents]
 mode = "record"               # record | replay | live (see README: AI agents)

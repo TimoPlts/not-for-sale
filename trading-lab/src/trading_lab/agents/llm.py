@@ -15,7 +15,7 @@ paper executor always sit between the model and any simulated trade.
 from __future__ import annotations
 
 import hashlib
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Mapping, Sequence
 
 from trading_lab.agents.base import Agent, AgentResponse, AgentResponseError
 from trading_lab.agents.context import MarketContext
@@ -30,9 +30,19 @@ class ProviderAgent(Agent):
 
     version = "1"
 
-    def __init__(self, name: str, system_prompt: str = RESPONSE_INSTRUCTIONS) -> None:
+    def __init__(
+        self,
+        name: str,
+        system_prompt: str = RESPONSE_INSTRUCTIONS,
+        *,
+        labels: Mapping[str, Sequence[str]] | None = None,
+        version: str | None = None,
+    ) -> None:
         self.name = name  # type: ignore[misc]  # one agent identity per strategy
+        if version is not None:
+            self.version = version  # type: ignore[misc]
         self.system_prompt = system_prompt
+        self.labels = {k: tuple(v) for k, v in (labels or {}).items()}
         self.provider: LLMProvider | None = None
 
     @property
@@ -50,7 +60,7 @@ class ProviderAgent(Agent):
             raise ProviderConfigError(f"{self.name}: no LLM provider attached")
         completion = self.provider.chat(self.system_prompt, self.user_prompt(context))
         try:
-            return parse_agent_json(completion.text)
+            return parse_agent_json(completion.text, self.labels)
         except AgentResponseError as exc:
             if completion.finish_reason == "length":
                 raise AgentResponseError(

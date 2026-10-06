@@ -225,6 +225,10 @@ DEFAULT_STRATEGIES: tuple[StrategySpec, ...] = (
     StrategySpec("rsi", params={"period": 14, "oversold": 30.0, "overbought": 70.0}),
     StrategySpec("macd", params={"fast": 12, "slow": 26, "signal": 9}),
     StrategySpec("bollinger", params={"period": 20, "num_std": 2.0}),
+    # Qwen agents: weight 0 = off (never built, never called). Set a weight to let one vote.
+    StrategySpec("qwen_trend", weight=0.0, params={"lookback": 40, "decision_interval": 4}),
+    StrategySpec("qwen_momentum", weight=0.0, params={"lookback": 30, "decision_interval": 4}),
+    StrategySpec("qwen_risk", weight=0.0, params={"lookback": 30, "decision_interval": 4}),
 )
 
 
@@ -352,7 +356,13 @@ class AppConfig:
 
     @property
     def enabled_strategies(self) -> tuple[StrategySpec, ...]:
-        return tuple(s for s in self.strategies if s.enabled)
+        """Strategies that take part: enabled and with a positive weight.
+
+        A weight of 0 switches a strategy off completely: it is not built, not
+        evaluated (an AI agent is never called) and casts no vote, so it cannot
+        count towards ``voting.min_agreeing`` either.
+        """
+        return tuple(s for s in self.strategies if s.enabled and s.weight > 0)
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> AppConfig:

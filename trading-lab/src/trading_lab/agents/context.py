@@ -23,7 +23,7 @@ from trading_lab.indicators import bollinger_bands, macd, rsi
 SIGNIFICANT_DIGITS = 6
 
 
-def _round(value: Any) -> float | None:
+def _round(value: Any, digits: int = SIGNIFICANT_DIGITS) -> float | None:
     if value is None:
         return None
     value = float(value)
@@ -31,7 +31,7 @@ def _round(value: Any) -> float | None:
         return None
     if value == 0:
         return 0.0
-    return float(f"{value:.{SIGNIFICANT_DIGITS}g}")
+    return float(f"{value:.{digits}g}")
 
 
 def indicator_frame(candles: pd.DataFrame) -> pd.DataFrame:
@@ -55,19 +55,25 @@ class MarketContext:
     bar_time: str  # ISO open time of the decision bar (decided at its close)
     candles: tuple[dict[str, float | str | None], ...]  # oldest first
     indicators: dict[str, float | None] = field(default_factory=dict)
+    # Portfolio state at the decision (see ``TradingSession.portfolio_view``), or
+    # None for market-only agents. Part of the fingerprint when present.
+    portfolio: dict[str, Any] | None = None
 
     @property
     def last_close(self) -> float:
         return float(self.candles[-1]["close"])  # type: ignore[arg-type]
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "symbol": self.symbol,
             "timeframe": self.timeframe,
             "bar_time": self.bar_time,
             "candles": [dict(c) for c in self.candles],
             "indicators": dict(self.indicators),
         }
+        if self.portfolio is not None:  # absent for market-only agents (keeps old cache keys)
+            data["portfolio"] = json.loads(json.dumps(self.portfolio, sort_keys=True, default=str))
+        return data
 
     def fingerprint(self) -> str:
         canonical = json.dumps(self.to_json(), sort_keys=True, separators=(",", ":"))
@@ -83,6 +89,10 @@ class MarketContext:
         ]
         for key, value in self.indicators.items():
             lines.append(f"  {key}: {'n/a' if value is None else value}")
+        if self.portfolio is not None:
+            lines += ["", "Simulated portfolio at that close:"]
+            for key, value in self.portfolio.items():
+                lines.append(f"  {key}: {'n/a' if value is None else value}")
         lines += ["", "Recent candles (oldest first): time, open, high, low, close, volume"]
         for c in self.candles:
             lines.append(f"  {c['time']}, {c['open']}, {c['high']}, {c['low']}, {c['close']}, {c['volume']}")
@@ -96,8 +106,15 @@ def build_context(
     indicators: pd.DataFrame,
     position: int,
     lookback: int,
+    portfolio: dict[str, Any] | None = None,
+    digits: int = SIGNIFICANT_DIGITS,
 ) -> MarketContext:
-    """Context for the bar at ``position`` using only rows ``<= position``."""
+    """Context for the bar at ``position`` using only rows ``<= position``.
+
+    ``digits`` is the number of significant digits kept for indicator values:
+    fewer digits make the context (and so the cache key) more robust to tiny
+    floating-point differences between data windows.
+    """
     window = candles.iloc[max(0, position - lookback + 1) : position + 1]
     rows = tuple(
         {
@@ -116,5 +133,6 @@ def build_context(
         timeframe=timeframe,
         bar_time=candles.index[position].strftime("%Y-%m-%dT%H:%M"),
         candles=rows,
-        indicators={k: _round(v) for k, v in ind.items()},
+        indicators={k: _round(v, digits) for k, v in ind.items()},
+        portfolio=portfolio,
     )

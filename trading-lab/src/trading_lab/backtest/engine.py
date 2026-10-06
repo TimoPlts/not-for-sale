@@ -197,14 +197,34 @@ class BacktestEngine:
         symbols = list(cfg.market.symbols)
         candles = self._load(start, end)
 
-        # Signals are computed in one vectorised pass per strategy. This is
-        # equivalent to bar-by-bar evaluation because indicators are causal
-        # (enforced by tests).
-        strategy_signals = {
-            sym: [s.generate_signals(sym, candles[sym]) for s in self._strategies]
+        start_ts = pd.Timestamp(start)
+        position = {sym: {ts: i for i, ts in enumerate(candles[sym].index)} for sym in symbols}
+        # Signals of pure strategies are computed in one vectorised pass per
+        # strategy, only for bars inside the period (agents are never asked about
+        # the warm-up history). This is equivalent to bar-by-bar evaluation because
+        # indicators are causal (enforced by tests). Strategies that look at the
+        # portfolio are evaluated bar by bar inside the session instead.
+        in_period = {
+            sym: [i for ts, i in position[sym].items() if ts >= start_ts] for sym in symbols
+        }
+        precomputed = {
+            sym: [
+                None if s.uses_portfolio
+                else dict(zip(in_period[sym], s.generate_signals_at(sym, candles[sym], in_period[sym])))
+                for s in self._strategies
+            ]
             for sym in symbols
         }
-        position = {sym: {ts: i for i, ts in enumerate(candles[sym].index)} for sym in symbols}
+
+        def sources(sym: str, i: int) -> list:  # type: ignore[type-arg]
+            out = []
+            for strategy, signals in zip(self._strategies, precomputed[sym]):
+                if signals is None:
+                    out.append(lambda view, s=strategy: s.signal_at(sym, candles[sym], i, view))
+                else:
+                    out.append(signals[i])
+            return out
+
         ohlcv = {
             sym: tuple(frame[c].to_numpy() for c in ("open", "high", "low", "close", "volume"))
             for sym, frame in candles.items()
@@ -214,7 +234,6 @@ class BacktestEngine:
             sym: stats_series(market_stats_frame(frame, lookback)) for sym, frame in candles.items()
         }
 
-        start_ts = pd.Timestamp(start)
         timeline = sorted(
             set().union(*(frame.index[frame.index >= start_ts] for frame in candles.values()))
         )
@@ -235,10 +254,7 @@ class BacktestEngine:
             bars = {sym: Bar(*(float(col[i]) for col in ohlcv[sym])) for sym, i in idx.items()}
             stats = {sym: market_stats[sym][i] for sym, i in idx.items()}
             session.open_bar(ts, {sym: bar.open for sym, bar in bars.items()}, stats)
-            session.close_bar(
-                ts, bars, {sym: [per_bar[i] for per_bar in strategy_signals[sym]] for sym, i in idx.items()},
-                stats,
-            )
+            session.close_bar(ts, bars, {sym: sources(sym, i) for sym, i in idx.items()}, stats)
 
         last_ts = timeline[-1].to_pydatetime()
         session.expire_pending(last_ts)
