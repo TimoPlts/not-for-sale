@@ -46,6 +46,12 @@ def portfolio_section(data: DashboardData, run_id: str) -> None:
     st.subheader("Portfolio")
     st.caption(f"Run {run_id} · {o['kind']} · {o['status']} · {o['timeframe']} · {', '.join(o['symbols'])} · "
                f"data {o['data_source']} · agents {o['agents_mode']} · last bar {o.get('last_bar') or '-'}")
+    health = o.get("health") or {}
+    if health.get("consecutive_errors"):
+        st.warning(f"The last {health['consecutive_errors']} cycle(s) could not be processed (retrying with "
+                   f"back-off): {health.get('last_error')}. No new trades are made while this lasts.")
+    if health.get("last_cycle_at"):
+        st.caption(f"Last trader check: {health['last_cycle_at']}")
     if o.get("equity") is None:
         st.info("No closed bar recorded for this run yet.")
         return

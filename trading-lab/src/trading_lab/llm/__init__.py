@@ -11,6 +11,7 @@ from trading_lab.llm.base import (
     ProviderError,
     ProviderResponseError,
     ProviderTimeoutError,
+    ProviderUnavailableError,
 )
 from trading_lab.llm.factory import PROVIDERS, build_llm_provider
 from trading_lab.llm.openai_compat import (
@@ -49,6 +50,7 @@ __all__ = [
     "ProviderError",
     "ProviderResponseError",
     "ProviderTimeoutError",
+    "ProviderUnavailableError",
     "QwenProvider",
     "TransportConnectionError",
     "TransportTimeout",

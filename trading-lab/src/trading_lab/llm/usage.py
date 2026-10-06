@@ -54,7 +54,8 @@ class CallRecord:
 
 @dataclass(slots=True)
 class UsageStats:
-    calls: int = 0
+    calls: int = 0  # requests actually sent to the endpoint (retries counted separately)
+    skipped: int = 0  # not sent: the endpoint's circuit breaker was open
     cache_hits: int = 0
     cache_misses: int = 0
     failures: int = 0  # the endpoint did not answer (after retries)
@@ -68,6 +69,9 @@ class UsageStats:
     total_latency_seconds: float = 0.0
 
     def add_call(self, record: CallRecord, *, valid: bool) -> None:
+        if record.attempts == 0:  # paused by the circuit breaker: nothing was sent
+            self.skipped += 1
+            return
         self.calls += 1
         self.retries += max(record.attempts - 1, 0)
         self.total_latency_seconds += record.latency_seconds
@@ -163,7 +167,8 @@ def format_usage(per_agent: Mapping[str, UsageStats], title: str = "Model usage"
     lines = [
         f"{title}:",
         f"  calls: {total.calls}   cache hits: {total.cache_hits}   cache misses: {total.cache_misses}   "
-        f"failures: {total.failures}   invalid answers: {total.invalid_answers}   retries: {total.retries}",
+        f"failures: {total.failures}   invalid answers: {total.invalid_answers}   retries: {total.retries}"
+        + (f"   skipped (endpoint paused): {total.skipped}" if total.skipped else ""),
         f"  avg latency: {avg}   total latency: {_duration(total.total_latency_seconds)}",
         f"  input tokens: {total.input_tokens:,}{est}   output tokens: {total.output_tokens:,}{est}   "
         f"(input chars {total.input_chars:,}, output chars {total.output_chars:,})",

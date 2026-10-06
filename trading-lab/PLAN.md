@@ -288,5 +288,12 @@ average trade return.
 - `docs/DEPLOYMENT.md`: install, secrets, agent-test, configuration, the services, the SSH tunnel for the dashboard, file locations, stopping/restarting/resuming, backups and updates, and a security checklist.
 - Tests: named runs, run-id validation, the log file, the stop event, SIGTERM through the CLI, the unit templates, placeholder-only secrets, git-ignore rules, and guide coverage.
 
+### Stage 10D: Failure recovery ✅
+- Model endpoint circuit breaker (`[agents] failure_threshold`, `failure_cooldown_seconds`). After N failed calls in a row, calls are paused (`ProviderUnavailableError`, no request sent, agents vote HOLD at once), then a single probe call is made. Usage reports count paused calls as `skipped`.
+- Live trader: exchange or network outages (`DataError`, `OSError`) leave the state untouched and are retried with exponential back-off (at most 15 minutes). If a cycle's transaction fails with an SQLite operational error, the trader reloads its state from the database and retries the same bars, reusing cached answers. Each cycle records `health` (last check, consecutive errors, last error) in the run state. `CycleReport.agent_errors` counts HOLDs caused by failures.
+- The CLI reports retries and agent failures; the dashboard shows the last check time and an outage warning.
+- `docs/FAILURE_RECOVERY.md` lists every failure, what happens, and whether it is recovered or stops the process.
+- Tests: the breaker opens, probes, recovers and can be disabled; paused agents vote HOLD and count as skipped; data outages back off (DataError, connection reset, timeout) and recover; the back-off cap; a locked database mid-cycle gives no lost or duplicate orders or decisions and no repeated question; health in the dashboard; guide coverage.
+
 ### Later
 Stages 9B–10E (specialised Qwen agents, agent attribution, experiments, usage accounting, smoke test, live integration, dashboard, VM operation, failure recovery, experiment protocol). After that: short positions, trailing stops and order-book data.

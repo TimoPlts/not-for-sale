@@ -40,6 +40,10 @@ class ProviderResponseError(ProviderError):
     """The endpoint answered, but not with a usable completion."""
 
 
+class ProviderUnavailableError(ProviderError):
+    """Calls are paused after repeated failures (circuit breaker); no request was sent."""
+
+
 @dataclass(frozen=True, slots=True)
 class Completion:
     """One model answer plus the facts needed for usage accounting."""

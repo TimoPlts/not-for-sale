@@ -30,5 +30,7 @@ def build_llm_provider(config: AgentsConfig, **overrides: Any) -> LLMProvider:
         retry_backoff_seconds=config.retry_backoff_seconds,
         temperature=config.temperature,
         max_output_tokens=config.max_output_tokens,
+        failure_threshold=config.failure_threshold,
+        failure_cooldown_seconds=config.failure_cooldown_seconds,
         **overrides,
     )

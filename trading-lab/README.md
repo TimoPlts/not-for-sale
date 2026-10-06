@@ -29,6 +29,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 10A (complete):** a read-only dashboard data layer (`trading_lab.dashboard.DashboardData`, `trading-lab dashboard-data`).
 - **Stage 10B (complete):** a lightweight, read-only web dashboard (Streamlit, `trading-lab dashboard`).
 - **Stage 10C (complete):** 24/7 operation on a Linux VM: systemd templates, environment files, named runs (`--run-id`), log files and graceful SIGTERM shutdown. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- **Stage 10D (complete):** failure recovery for overnight use: a circuit breaker for the model endpoint, back-off during data outages, database-error recovery and health reporting. See [docs/FAILURE_RECOVERY.md](docs/FAILURE_RECOVERY.md).
 
 ## Quick start
 
@@ -103,6 +104,17 @@ The pieces that make unattended operation work:
 * `trading-lab paper --run-id NAME` starts the named run, or resumes it if it already exists. Restarts therefore always continue the same run.
 * SIGTERM (`systemctl stop`) finishes the current cycle, saves it and marks the run `stopped`.
 * `--log-file PATH` (global option) writes a rotating log (10 MB × 5) of all paper activity and warnings. `--log-level` controls its detail.
+
+### When things fail
+
+Failures prefer **HOLD / no new trade** over guessing:
+
+* Model timeouts, errors and malformed answers make that agent vote HOLD.
+* After 5 failures in a row the model is not called for 5 minutes (`failure_threshold`, `failure_cooldown_seconds`), so a dead endpoint never stalls a cycle.
+* Exchange or network outages leave the trader untouched and are retried with back-off of up to 15 minutes. Missed candles are then caught up in order.
+* A cycle that cannot be saved is rolled back, and the trader reloads its state from the database before retrying.
+
+Only a broken database or a bug stops the process; systemd then restarts it and the run resumes. The full table is in [docs/FAILURE_RECOVERY.md](docs/FAILURE_RECOVERY.md).
 
 ## Setup (Windows / PowerShell)
 

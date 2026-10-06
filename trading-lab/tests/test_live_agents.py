@@ -161,7 +161,9 @@ def test_model_failures_never_stop_live_trading(tmp_path):
         rows = store.load_signals(t.run_id)
     agent_rows = rows[rows["strategy"].isin(AGENTS) & rows["metadata_json"].str.contains('"called"')]
     assert len(agent_rows) > 0 and set(agent_rows["direction"]) == {"hold"}
-    assert agent_rows["metadata_json"].str.contains("ProviderTimeoutError").all()
+    assert agent_rows["metadata_json"].str.contains("ProviderTimeoutError|ProviderUnavailableError").all()
+    # after 5 failures in a row the endpoint's circuit breaker pauses calls (no more waiting on timeouts)
+    assert agent_rows["metadata_json"].str.contains("ProviderUnavailableError").any()
 
 
 def test_live_mode_asks_only_about_new_bars_across_resume(tmp_path):

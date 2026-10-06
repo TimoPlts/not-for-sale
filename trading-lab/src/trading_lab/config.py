@@ -297,6 +297,10 @@ class AgentsConfig:
     retry_backoff_seconds: float = 1.0  # doubles after each failed attempt
     temperature: float = 0.0  # 0 = as deterministic as the model allows
     max_output_tokens: int = 512
+    # Circuit breaker for the model endpoint: after this many failed calls in a row,
+    # skip calls (agents vote HOLD at once) for the cooldown, then try again. 0 disables.
+    failure_threshold: int = 5
+    failure_cooldown_seconds: float = 300.0
 
     def __post_init__(self) -> None:
         _require(self.mode in AGENT_MODES, f"agents.mode must be one of {AGENT_MODES}, got {self.mode!r}")
@@ -323,6 +327,13 @@ class AgentsConfig:
             and 16 <= self.max_output_tokens <= 32768,
             f"agents.max_output_tokens must be an integer in [16, 32768], got {self.max_output_tokens!r}",
         )
+        _require(
+            isinstance(self.failure_threshold, int)
+            and not isinstance(self.failure_threshold, bool)
+            and 0 <= self.failure_threshold <= 1000,
+            f"agents.failure_threshold must be an integer in [0, 1000], got {self.failure_threshold!r}",
+        )
+        _number(self, "failure_cooldown_seconds", low=0.0, high=86_400.0)
 
 
 @dataclass(frozen=True, slots=True)

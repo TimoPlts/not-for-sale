@@ -261,8 +261,11 @@ def cmd_paper(args: argparse.Namespace) -> int:
         def on_cycle(report: CycleReport) -> None:
             stamp = f"[{report.checked_at:%Y-%m-%d %H:%M:%S} UTC]"
             if report.error:
-                _say(f"{stamp} data error, will retry: {report.error}")
+                _say(f"{stamp} cycle not processed, will retry (attempt {trader.consecutive_errors}): "
+                     f"{report.error}")
                 return
+            if report.agent_errors:
+                _say(f"{stamp} {report.agent_errors} agent answer(s) unavailable this cycle; they voted HOLD")
             if report.warning:
                 _say(f"{stamp} warning: {report.warning}")
             for d in report.decisions:

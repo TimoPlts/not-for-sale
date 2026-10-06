@@ -165,7 +165,8 @@ class DashboardData:
             "agents_mode": config.agents.mode, "error": run["error"],
         }
         if curve.empty:
-            return _clean({**out, "last_bar": None})
+            return _clean({**out, "last_bar": None,
+                           "health": (self.store.load_state(run_id) or {}).get("health")})
         last = curve.iloc[-1]
         equity = float(last["equity"])
         peak = max(initial, float(curve["equity"].max()))
@@ -190,6 +191,7 @@ class DashboardData:
             "daily_pnl_pct": equity / start_of_day - 1.0 if start_of_day > 0 else None,
         })
         out["breakers"] = self.breaker_status(run_id)
+        out["health"] = (self.store.load_state(run_id) or {}).get("health")
         return _clean(out)
 
     def breaker_status(self, run_id: str) -> dict[str, Any]:

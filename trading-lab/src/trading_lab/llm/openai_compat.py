@@ -35,6 +35,7 @@ from trading_lab.llm.base import (
     ProviderError,
     ProviderResponseError,
     ProviderTimeoutError,
+    ProviderUnavailableError,
 )
 
 logger = logging.getLogger(__name__)
@@ -120,6 +121,8 @@ class OpenAICompatibleProvider(LLMProvider):
         retry_backoff_seconds: float = 1.0,
         temperature: float = 0.0,
         max_output_tokens: int = 512,
+        failure_threshold: int = 5,
+        failure_cooldown_seconds: float = 300.0,
         env: Mapping[str, str] | None = None,
         transport: HttpTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
@@ -141,6 +144,10 @@ class OpenAICompatibleProvider(LLMProvider):
         self._transport: HttpTransport = transport or UrllibTransport()
         self._sleep = sleep
         self._clock = clock
+        self.failure_threshold = int(failure_threshold)
+        self.failure_cooldown_seconds = float(failure_cooldown_seconds)
+        self.consecutive_failures = 0
+        self._paused_until: float | None = None
 
     @classmethod
     def env_var(cls, suffix: str) -> str:
@@ -202,8 +209,36 @@ class OpenAICompatibleProvider(LLMProvider):
             hint = f" (check {self.env_var('API_URL')} and {self.env_var('MODEL')})"
         return f"{self.name}: HTTP {status} from {self.endpoint}{hint}: {excerpt or '<empty body>'}"
 
+    @property
+    def paused_for(self) -> float:
+        """Seconds until calls resume (0 when the circuit breaker is closed)."""
+        if self._paused_until is None:
+            return 0.0
+        return max(0.0, self._paused_until - self._clock())
+
     def chat(self, system_prompt: str, user_prompt: str) -> Completion:
         self.check_ready(need_credentials=True)
+        if self.paused_for > 0:
+            raise ProviderUnavailableError(
+                f"{self.name}: {self.consecutive_failures} failed calls in a row; calls paused for "
+                f"another {self.paused_for:.0f}s", attempts=0,
+            )
+        try:
+            completion = self._chat(system_prompt, user_prompt)
+        except ProviderError:
+            self.consecutive_failures += 1
+            if self.failure_threshold and self.consecutive_failures >= self.failure_threshold:
+                self._paused_until = self._clock() + self.failure_cooldown_seconds
+                logger.warning("%s: %d failed calls in a row; pausing calls for %.0fs (agents vote HOLD)",
+                               self.name, self.consecutive_failures, self.failure_cooldown_seconds)
+            raise
+        if self.consecutive_failures:
+            logger.warning("%s: calls succeed again after %d failure(s)", self.name, self.consecutive_failures)
+        self.consecutive_failures = 0
+        self._paused_until = None
+        return completion
+
+    def _chat(self, system_prompt: str, user_prompt: str) -> Completion:
         url = chat_completions_url(self._url)
         body = json.dumps({
             "model": self._model,
