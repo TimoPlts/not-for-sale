@@ -32,6 +32,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 10D (complete):** failure recovery for overnight use: a circuit breaker for the model endpoint, back-off during data outages, database-error recovery and health reporting. See [docs/FAILURE_RECOVERY.md](docs/FAILURE_RECOVERY.md).
 - **Stage 10E (complete):** a reproducible protocol for "does Qwen improve out-of-sample performance?", with the variant comparison (folds won, sign test) computed by `experiment --walkforward`. See [docs/EXPERIMENT_PROTOCOL.md](docs/EXPERIMENT_PROTOCOL.md).
 - **Stage 11A (complete):** optional trailing stops and take-profit exits (long-only, no look-ahead, identical in backtests and live, kept across resume).
+- **Stage 11B (complete):** `trading-lab summary`: what a run did over the last N hours, in Markdown.
 
 ### Stage 9/10 summary
 
@@ -131,6 +132,24 @@ It opens the database in SQLite's **read-only** mode, so it cannot write anythin
 trading-lab dashboard-data            # summary of the running paper run (or the latest run)
 trading-lab dashboard-data <run id> --json
 ```
+
+## Run summary
+
+```bash
+trading-lab summary                    # the latest run, last 24 hours
+trading-lab summary vm-paper-1 --hours 168
+```
+
+A short Markdown report covering:
+
+* equity and its change over the window, return since start, current and worst drawdown, and the market's move;
+* the closed trades (wins, realized PnL, best and worst);
+* open positions and the count of each decision type;
+* circuit-breaker trips;
+* each agent's BUY/SELL/HOLD votes with its latest rationale;
+* model usage, plus a health warning if cycles are failing.
+
+It only reads the database (opened read-only) and works on backtests and live runs alike.
 
 ## Running on a Linux VM
 

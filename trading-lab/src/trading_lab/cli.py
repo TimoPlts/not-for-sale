@@ -12,6 +12,7 @@
     trading-lab agent-test [qwen | qwen_trend | qwen_momentum | qwen_risk] [--synthetic SEED]
     trading-lab dashboard-data [RUN_ID] [--json]
     trading-lab dashboard [--host 127.0.0.1] [--port 8501]
+    trading-lab summary [RUN_ID] [--hours 24]
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -744,6 +745,19 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     return subprocess.call(command, env={**os.environ, "TRADING_LAB_DB": str(db)})
 
 
+def cmd_summary(args: argparse.Namespace) -> int:
+    from trading_lab.storage import SQLiteStore
+    from trading_lab.summary import build_summary, format_summary
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        run_id = args.run_id or _latest_run_id(store)
+        print(format_summary(build_summary(store, run_id, hours=args.hours)))
+    return 0
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from trading_lab.reporting import run_metrics
     from trading_lab.storage import SQLiteStore
@@ -895,6 +909,11 @@ def build_parser() -> argparse.ArgumentParser:
                      help="address to listen on (default 127.0.0.1; use an SSH tunnel to view it remotely)")
     db_.add_argument("--port", type=int, default=8501)
     db_.set_defaults(func=cmd_dashboard)
+
+    sm = sub.add_parser("summary", help="what happened in a run over the last N hours (Markdown)")
+    sm.add_argument("run_id", nargs="?", help="default: the most recent run")
+    sm.add_argument("--hours", type=float, default=24.0, help="window length (default 24)")
+    sm.set_defaults(func=cmd_summary)
 
     cp = sub.add_parser("compare", help="compare stored runs side by side")
     cp.add_argument("run_ids", nargs="+")

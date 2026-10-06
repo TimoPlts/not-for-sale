@@ -332,5 +332,10 @@ Trade-offs worth knowing:
 - Trailing state (`trailing`: highest high and raised stop) is saved with live runs and re-applied after the portfolio is rebuilt from fills on resume. The dashboard shows the current stop.
 - Tests: ratcheting and a profitable trailing exit without cooldown; a raised stop applying only from the next bar (gap rule); activation; take-profit with a gap; the stop winning a tie; unchanged defaults; validation; backtest equal to live with these exits; trailed stops surviving a resume; the dashboard stop.
 
+### Stage 11B: Run summaries ✅
+- `summary.py`: `build_summary(store, run_id, hours=24)` (equity and its change in the window, return since start, current and in-window drawdown, the market's equal-weight move, closed trades, open positions, decision counts, breaker trips, per-agent votes and latest rationale, model usage, health) and `format_summary` (Markdown). It uses reads only.
+- CLI: `trading-lab summary [RUN_ID] [--hours N]`, which opens the database read-only.
+- Tests: the whole-run summary equals the backtest result; window filtering of trades, equity change and votes; the Markdown content; breaker, health and empty runs; the database byte-identical after the command.
+
 ### Later
 Short positions, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and alerting on breaker trips or long outages.
