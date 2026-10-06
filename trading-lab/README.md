@@ -47,6 +47,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 14C (complete):** `trading-lab agent-eval`: answer-quality diagnostics for the AI agents (contradictions, one-sided voting, flat confidence, boilerplate rationales, errors).
 - **Stage 14D (complete):** `trading-lab export`: any stored run as CSV files plus a JSON summary with checksums.
 - **Stage 15A (complete):** `trading-lab demo`: one offline command that builds a sample backtest, a paper run and HTML reports. Start here.
+- **Stage 15B (complete):** e-mail alerts over encrypted SMTP, alongside or instead of the webhook (settings only from the environment).
 
 ### Stage 9/10 summary
 
@@ -286,6 +287,7 @@ The database is only read. A non-empty directory is refused unless you pass `--f
 ```toml
 [alerts]
 enabled = true
+channels = ["webhook"]   # webhook and/or email
 format = "ntfy"          # ntfy | slack | discord | json
 min_level = "warning"    # "info" also reports every entry and exit
 daily_summary = true
@@ -302,6 +304,18 @@ Live paper runs then push:
 * **every day:** a summary (`trading-lab summary`).
 
 Recoveries are reported too, and repeats of the same alert are suppressed for an hour. Alert settings come from the current config, even when resuming an older run. A webhook that fails never affects trading, and its URL is never logged.
+
+**E-mail instead of, or as well as, a webhook:** set `channels = ["email"]` (or `["webhook", "email"]`). The SMTP settings come only from the environment:
+
+```bash
+export TRADING_LAB_SMTP_HOST=smtp.gmail.com          # STARTTLS on 587 by default
+export TRADING_LAB_SMTP_USER=you@gmail.com
+export TRADING_LAB_SMTP_PASSWORD='an app password'   # secret: environment only
+export TRADING_LAB_ALERT_EMAIL_TO=you@gmail.com      # comma-separated for several
+trading-lab alert-test --channel email
+```
+
+The connection is always encrypted: STARTTLS by default, or `TRADING_LAB_SMTP_SECURITY=ssl` for port 465. Without encryption (`none`), only a local relay without a login is accepted, so a password is never sent in clear text. The password is never logged or shown, and `doctor` only reports whether the settings are complete. With several channels, an alert counts as delivered when any channel delivers it.
 
 ## Readiness check
 

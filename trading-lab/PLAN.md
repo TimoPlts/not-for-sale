@@ -426,6 +426,16 @@ Trade-offs worth knowing:
 - **Bug it found:** a run without losing trades stores its profit factor as the text `"inf"`, which crashed the HTML report and the dashboard formatters. They now show text values as text, escaped in HTML.
 - Tests: a complete sample (files, runs, paper bars ending at the last closed candle, reports); deterministic per time and seed; existing files never touched; next steps; the CLI (writes only the demo directory, and the result reconciles from the command line); text metrics in the HTML report and the dashboard.
 
+### Stage 15B: E-mail alerts ✅
+- `[alerts] channels` is a list of `"webhook"` and/or `"email"`, default `["webhook"]`, so behaviour is unchanged unless you opt in.
+- `alerts.EmailNotifier` sends a plain-text e-mail over SMTP. The settings (`TRADING_LAB_SMTP_HOST`, `_PORT`, `_SECURITY`, `_USER`, `_PASSWORD`, `TRADING_LAB_ALERT_EMAIL_TO`, `_FROM`) come only from the environment.
+  - Security is `starttls` (default, port 587), `ssl` (465), or `none` for a local relay without a login only, so a login is never sent unencrypted.
+  - Addresses are validated (no header injection) and titles are put on one line.
+  - Failures become `ConnectionError`s that name only the host, port and error type, never the login.
+- `MultiNotifier` delivers to every channel and fails only when none delivered. `build_notifier` builds the configured channels and fails fast on missing settings.
+- `alert-test` tests each configured channel (or `--channel`). `doctor` reports each channel without values.
+- Tests: an encrypted e-mail (STARTTLS before login, headers, body); SSL and a local relay; ten invalid settings; the login never shown (repr, errors, logs); unreachable servers never raise from the manager; header injection; several channels; config validation (no credential-like fields); `doctor` and `alert-test`.
+
 ## 5. Stage 11–14 status summary
 
 On top of the Stage 9/10 system:

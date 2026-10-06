@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Callable, Mapping
 
 from trading_lab.config import AppConfig, load_config
-from trading_lab.core.errors import TradingLabError
+from trading_lab.core.errors import ConfigError, TradingLabError
 from trading_lab.core.symbols import timeframe_to_seconds
 
 OK, WARN, FAIL, SKIP = "ok", "warn", "fail", "skip"
@@ -108,11 +108,23 @@ def run_checks(
         state = ", ".join(f"{prefix}_{s} {'missing' if f'{prefix}_{s}' in missing else 'set'}" for s in required)
         add("model", FAIL if missing else OK, f"{cfg.agents.provider}, mode {cfg.agents.mode}: {state}")
 
-    from trading_lab.alerts import URL_ENV
+    from trading_lab.alerts import URL_ENV, EmailNotifier, build_notifier
 
     if cfg.alerts.enabled:
-        url = env.get(URL_ENV, "").strip()
-        add("alerts", OK if url else FAIL, f"{cfg.alerts.format}, {URL_ENV} {'set' if url else 'missing'}")
+        details = []
+        for channel in cfg.alerts.channels:
+            try:
+                notifier = build_notifier(cfg, env, channels=[channel])
+            except ConfigError as exc:
+                add("alerts", FAIL, f"{channel}: {exc}")
+                break
+            if isinstance(notifier, EmailNotifier):
+                details.append(f"email to {len(notifier.recipients)} recipient(s) via {notifier.host}:"
+                               f"{notifier.port} ({notifier.security})")
+            else:
+                details.append(f"{cfg.alerts.format}, {URL_ENV} set")
+        else:
+            add("alerts", OK, "; ".join(details))
     else:
         add("alerts", SKIP, "disabled ([alerts] enabled = false)")
 

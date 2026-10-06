@@ -14,7 +14,7 @@
     trading-lab dashboard-data [RUN_ID] [--json]
     trading-lab dashboard [--host 127.0.0.1] [--port 8501]
     trading-lab summary [RUN_ID] [--hours 24]
-    trading-lab alert-test [--format ntfy|slack|discord|json]
+    trading-lab alert-test [--channel webhook|email] [--format ntfy|slack|discord|json]
     trading-lab agent-weights [RUN_ID]
     trading-lab doctor [--online]
     trading-lab robustness [RUN_ID] [--samples 5000] [--seed 7]
@@ -832,17 +832,26 @@ def cmd_summary(args: argparse.Namespace) -> int:
 
 
 def cmd_alert_test(args: argparse.Namespace) -> int:
-    from trading_lab.alerts import URL_ENV, AlertManager, WebhookNotifier
+    from trading_lab.alerts import URL_ENV, AlertManager, MultiNotifier, WebhookNotifier, build_notifier
 
     cfg = _load_config(args)
-    notifier = WebhookNotifier.from_env(args.format or cfg.alerts.format)
-    print(f"Sending a test alert ({notifier.fmt}) to {notifier.host} (URL from {URL_ENV}, not shown)")
-    manager = AlertManager(notifier, min_level="info")
-    if manager.emit("info", "Test alert", "If you can read this, trading-lab alerts work. Nothing was traded."):
-        print("OK")
-        return 0
-    print("FAILED: see the warning above", file=sys.stderr)
-    return 1
+    if args.format:
+        cfg = cfg.with_overrides({"alerts": {"format": args.format}})
+    notifier = build_notifier(cfg, channels=[args.channel] if args.channel else None)
+    failed = 0
+    for n in notifier.notifiers if isinstance(notifier, MultiNotifier) else (notifier,):
+        if isinstance(n, WebhookNotifier):
+            print(f"Sending a test alert ({n.fmt}) to {n.host} (URL from {URL_ENV}, not shown)")
+        else:
+            print(f"Sending a test e-mail to {len(n.recipients)} recipient(s) via {n.host}:{n.port} "
+                  f"({n.security}; login from the environment, not shown)")
+        manager = AlertManager(n, min_level="info")
+        if manager.emit("info", "Test alert", "If you can read this, trading-lab alerts work. Nothing was traded."):
+            print("OK")
+        else:
+            failed += 1
+            print("FAILED: see the warning above", file=sys.stderr)
+    return 1 if failed else 0
 
 
 def cmd_agent_weights(args: argparse.Namespace) -> int:
@@ -1183,8 +1192,10 @@ def build_parser() -> argparse.ArgumentParser:
     sm.add_argument("--hours", type=float, default=24.0, help="window length (default 24)")
     sm.set_defaults(func=cmd_summary)
 
-    al = sub.add_parser("alert-test", help="send one test notification to TRADING_LAB_ALERT_URL")
+    al = sub.add_parser("alert-test", help="send one test notification through each configured channel")
     al.add_argument("--format", choices=("ntfy", "slack", "discord", "json"), help="default: [alerts] format")
+    al.add_argument("--channel", choices=("webhook", "email"),
+                    help="test only this channel (default: [alerts] channels)")
     al.set_defaults(func=cmd_alert_test)
 
     aw = sub.add_parser("agent-weights", help="suggest AI agent weights from a stored run's record")

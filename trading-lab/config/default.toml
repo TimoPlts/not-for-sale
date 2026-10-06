@@ -139,7 +139,8 @@ failure_cooldown_seconds = 300.0  # ... for 5 minutes (agents vote HOLD meanwhil
 # Push notifications from live paper trading. The webhook URL comes ONLY from the
 # TRADING_LAB_ALERT_URL environment variable (e.g. https://ntfy.sh/<your-secret-topic>).
 enabled = false
-format = "ntfy"               # ntfy | slack | discord | json
+channels = ["webhook"]        # webhook and/or email (SMTP settings ONLY from TRADING_LAB_SMTP_* variables)
+format = "ntfy"               # ntfy | slack | discord | json (webhook only)
 min_level = "warning"         # "info" also reports every entry and exit
 daily_summary = true          # a run summary after each UTC day
 outage_after_cycles = 3       # alert when this many cycles in a row could not be processed
