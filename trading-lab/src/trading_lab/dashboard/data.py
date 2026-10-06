@@ -121,10 +121,21 @@ class DashboardData:
         )
 
     def _portfolio(self, run_id: str, config: AppConfig) -> Portfolio:
-        portfolio = Portfolio(config.portfolio.initial_cash, config.portfolio.quote_currency)
+        portfolio = Portfolio(config.portfolio.initial_cash, config.portfolio.quote_currency,
+                              allow_short=config.risk.allow_short)
         for fill in self.store.load_fill_objects(run_id):
             portfolio.apply_fill(fill)
         return portfolio
+
+    def _exposure(self, run_id: str, config: AppConfig, positions_value: float) -> float:
+        """Absolute market exposure. For longs that is the positions' value; a short's value is
+        its collateral plus gain, so with shorts open use quantity x price instead."""
+        if not config.risk.allow_short:
+            return positions_value
+        positions = self.open_positions(run_id)
+        if not any(p["side"] == "short" for p in positions):
+            return positions_value
+        return float(sum(p["value"] or 0.0 for p in positions))
 
     def _last_prices(self, run_id: str) -> dict[str, float]:
         state = self.store.load_state(run_id) or {}
@@ -144,6 +155,7 @@ class DashboardData:
             unrealized = None if price is None else pos.unrealized_pnl(price)
             out.append(_clean({
                 "symbol": sym,
+                "side": pos.side,
                 "quantity": pos.quantity,
                 "entry_price": pos.avg_entry_price,
                 "current_price": price,
@@ -181,7 +193,8 @@ class DashboardData:
             "equity": equity,
             "cash": float(last["cash"]),
             "positions_value": float(last["positions_value"]),
-            "exposure_pct": float(last["positions_value"]) / equity if equity > 0 else 0.0,
+            "exposure_pct": self._exposure(run_id, config, float(last["positions_value"])) / equity
+            if equity > 0 else 0.0,
             "realized_pnl": float(last["realized_pnl"]),
             "unrealized_pnl": float(last["unrealized_pnl"]),
             "fees_paid": float(last["fees_paid"]),
@@ -224,7 +237,8 @@ class DashboardData:
     def recent_trades(self, run_id: str, limit: int = 20) -> list[dict[str, Any]]:
         trades = self.store.load_closed_trades(run_id)[-limit:]
         return [_clean({
-            "symbol": t.symbol, "quantity": t.quantity, "entry_price": t.entry_price, "exit_price": t.exit_price,
+            "symbol": t.symbol, "side": t.side, "quantity": t.quantity, "entry_price": t.entry_price,
+            "exit_price": t.exit_price,
             "pnl": t.pnl, "return_pct": t.return_pct, "opened_at": t.opened_at, "closed_at": t.closed_at,
         }) for t in reversed(trades)]
 

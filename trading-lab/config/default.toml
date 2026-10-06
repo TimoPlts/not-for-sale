@@ -22,6 +22,7 @@ entry_order_type = "market"   # "market" or "limit" entries
 limit_offset_bps = 10.0       # limit entries: buy limit this far below the open
 limit_ttl_bars = 3            # limit entries: cancel the unfilled rest after N bars
 maker_fee_rate = 0.001        # fee for limit (maker) fills
+short_borrow_bps_per_day = 2.0  # borrow cost of a simulated short per day held (0.02%/day), paid on cover
 
 [risk]
 max_position_pct = 0.25       # max value of one position as a fraction of equity
@@ -30,12 +31,14 @@ stop_loss_pct = 0.05          # stop distance below the entry fill price
 max_open_positions = 4
 max_total_exposure_pct = 1.0  # 1.0 = fully invested, no leverage
 allow_pyramiding = false      # add to an existing position?
+allow_short = false           # true = an ensemble SELL with no long open opens a simulated short
+                              # (fully collateralised, no leverage; borrow cost in [execution])
 # Circuit breakers (0 disables). They block NEW entries; exits are always allowed.
 max_drawdown_pct = 0.25       # kill switch: stop opening trades after a 25% drawdown
 daily_loss_limit_pct = 0.05   # pause new entries for the rest of a UTC day after -5%
 stop_loss_cooldown_bars = 3   # wait 3 bars before re-entering a symbol after a stop-out
 flatten_on_halt = false       # true = also close all positions when the kill switch trips
-# Optional exits (0 disables). Long-only: stops only ever move up.
+# Optional exits (0 disables). Mirrored for shorts: their stops sit above and only move down.
 trailing_stop_pct = 0.0       # e.g. 0.04 = stop trails 4% below the highest high since entry
 trailing_activation_pct = 0.0 # e.g. 0.02 = only start trailing after a 2% gain over the average cost
 take_profit_pct = 0.0         # e.g. 0.10 = take profit at average cost + 10%

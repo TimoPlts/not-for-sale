@@ -442,7 +442,55 @@ Trade-offs worth knowing:
 - `doctor` and `agent-test` know which variables each provider needs. Agents keep their names. Cache keys include the provider and model.
 - Tests: URL forms; the exact request (headers, body, default endpoint); text blocks joined and other blocks ignored; five malformed responses (not retried); 529 retried; 401 fails fast without leaking the key (errors, repr, logs); environment checks (replay needs only the model; custom and invalid URLs); config and factory; the three agents running a backtest on the Messages format; `doctor` and the `agent-test` environment lines.
 
-## 5. Stage 11–15 status summary
+### Stage 16A: Short-position accounting ✅
+- `Position.side` (`long` or `short`) and `entry_notional`, plus `ClosedTrade.side`. A short's `avg_entry_price` is its break-even (net proceeds per unit), and `market_value(p) = 2 x entry notional - quantity x p`.
+- `Portfolio(allow_short=False)`:
+  - With shorts allowed, a SELL without a long opens or adds to a short and a BUY against a short covers it.
+  - Shorts are fully collateralised: the entry notional plus the fee leaves cash, so there is no leverage. Covering returns the collateral plus the gain, or minus the loss, which can exceed the collateral.
+  - No fill flips a position. `gross_exposure` sums |quantity x price|. The equity invariant holds.
+  - With shorts off, behaviour and messages are unchanged.
+- `PaperExecutor(borrow_bps_per_day=0)`: opens and covers shorts with side-correct slippage. The borrow fee (entry notional x bps x days held) is added to the cover fill's fee, so a portfolio rebuilt from its fills (resume) is identical. Short entries need collateral, and covers can never exceed the short.
+- Storage schema v4: `closed_trades.side` (existing trades are longs). The migration is idempotent, and read-only access to older databases still works.
+- Tests: long-only by default; a round trip with exact cash, fees, PnL and break-even; partial covers and adding to a short; losses beyond the collateral; no flips; collateral required; a randomized 400-fill replay keeping the invariant and rebuilding identically; executor slippage, borrow fee, limits, dust and limit fills; storage of the side; v3 upgrade and read-only access.
+
+### Stage 16B: Shorts in the trading session ✅
+- Config: `risk.allow_short` (default false) and `execution.short_borrow_bps_per_day` (default 2.0, used only by shorts).
+- `TradingSession`:
+  - An ensemble SELL with no long open schedules a short entry, and a BUY covers it. A long is closed before any short (no flips). With shorts off, every message and branch is unchanged.
+  - Stops trigger on the high, filling at the stop or at a higher gapped open. Take-profit triggers on the low. Trailing stops follow the lowest low and only move down.
+  - Limit short entries rest at `open x (1 + offset)` and fill when the high trades through. A BUY signal cancels a working short entry.
+  - The trend filter is mirrored. The portfolio view reports `short` and the stop distance above.
+- `RiskManager`: `evaluate_entry(side=SELL)` is mirrored. The stop is above. The loss at the stop is the buy-back cost minus the net sale proceeds. Exposure is absolute (`gross_exposure`). The cash limit is the collateral. `evaluate_exit` buys back shorts. `stop_triggered` uses the high for shorts.
+- The live trader and the dashboard rebuild portfolios with shorts allowed when the run allowed them.
+- Tests:
+  - long-only by default (and validation);
+  - SELL opens and BUY covers;
+  - stops on the high and gaps;
+  - take-profit, and stop first;
+  - trailing stops that never loosen;
+  - long closed before a short;
+  - pyramiding;
+  - mirrored sizing, including short exposure;
+  - mirrored filters;
+  - the kill switch covering shorts;
+  - limit short entries;
+  - the portfolio view;
+  - backtest equal to live with both sides traded and borrow fees charged;
+  - a short surviving a resume.
+
+### Stage 16C: Shorts in reports ✅
+- Attribution: a trade's entry vote is BUY for a long and SELL for a short. `agreed`, `disagreed` and `pivotal` follow it. `_counterfactual` replays the voting rules for both directions.
+- Trade side in:
+  - `report` (a column);
+  - `backtest` (shorts per symbol, only when shorts are allowed, so long-only output is unchanged);
+  - `export` and `backtest --export` (a `side` column);
+  - the HTML report (a Side column);
+  - the dashboard (side of open positions and recent trades);
+  - `summary` ("N short").
+- Dashboard exposure counts quantity x price while shorts are open, since a short's book value is its collateral plus gain.
+- Tests: SELL votes agreeing and pivotal for a short trade (and BUY disagreeing); the CLI report and unchanged long-only backtest output; export, HTML and dashboard trades; open shorts on the dashboard (side, stop above, value, exposure) and in the summary.
+
+## 5. Stage 11–16 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -451,6 +499,7 @@ On top of the Stage 9/10 system:
 - **Evidence:** an HTML report (12D), bootstrap robustness ranges (13C), and alpha/beta against buy & hold (13D).
 - **Verification (14):** live runs reconciled with their backtest (14A, which found and fixed a window-dependent agent feature), market-data quality checks (14B), agent answer-quality diagnostics (14C), and run exports (14D).
 - **Usability and reach (15):** an offline demo (15A), e-mail alerts (15B) and Claude as a second model provider (15C).
+- **Shorts (16):** opt-in simulated short selling: fully collateralised accounting with borrow fees (16A), mirrored entries, exits, sizing and filters (16B), and the trade side in every report (16C).
 
 ### Later
-Short positions, order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.
+Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

@@ -22,10 +22,11 @@ same run always gives the same numbers.
 * **Trade attribution:** every closed trade is linked to its entry signal,
   the last ensemble ENTER_SIGNAL for that symbol before the trade opened. At
   that bar the voter:
-    - **agreed** (voted BUY), **disagreed** (voted SELL) or abstained;
+    - **agreed** (voted BUY for a long, SELL for a short), **disagreed** (the
+      opposite) or abstained;
     - **influenced** the trade when it agreed or disagreed;
     - was **pivotal** when removing its vote would have turned the ensemble's
-      BUY into no entry.
+      entry vote (BUY, or SELL for a short) into no entry.
   ``pnl_agreed`` / ``pnl_disagreed`` sum those trades' realised PnL (fees
   included), also shown as a percentage of the initial cash.
 """
@@ -42,7 +43,7 @@ from typing import Any, Iterable, Mapping, Sequence
 import pandas as pd
 
 from trading_lab.config import AppConfig, VotingConfig
-from trading_lab.core.models import ClosedTrade, Decision, DecisionAction, Signal
+from trading_lab.core.models import SHORT, ClosedTrade, Decision, DecisionAction, Signal
 from trading_lab.ensemble.voting import ENSEMBLE_NAME
 
 CONFIDENCE_BUCKETS: tuple[float, ...] = (0.0, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0 + 1e-9)
@@ -108,14 +109,24 @@ def _mean(values: Sequence[float]) -> float | None:
 
 def _counterfactual_buy(votes: Sequence[Mapping[str, Any]], without: str, cfg: VotingConfig) -> bool:
     """Would the ensemble still say BUY without ``without``'s vote?"""
+    return _counterfactual(votes, without, cfg) == "buy"
+
+
+def _counterfactual(votes: Sequence[Mapping[str, Any]], without: str, cfg: VotingConfig) -> str:
+    """The ensemble's direction without ``without``'s vote (same rules as ``VotingEngine``)."""
     rest = [v for v in votes if v["strategy"] != without]
     total = sum(float(v["weight"]) for v in rest)
     if total <= 0:
-        return False
+        return "hold"
     buy = sum(float(v["weight"]) * float(v["confidence"]) for v in rest if v["direction"] == "buy") / total
     sell = sum(float(v["weight"]) * float(v["confidence"]) for v in rest if v["direction"] == "sell") / total
     n_buy = sum(v["direction"] == "buy" for v in rest)
-    return buy - sell >= cfg.buy_threshold and n_buy >= cfg.min_agreeing
+    n_sell = sum(v["direction"] == "sell" for v in rest)
+    if buy - sell >= cfg.buy_threshold and n_buy >= cfg.min_agreeing:
+        return "buy"
+    if sell - buy >= cfg.sell_threshold and n_sell >= cfg.min_agreeing:
+        return "sell"
+    return "hold"
 
 
 def _entry_bars(decisions: Iterable[Decision], trades: Sequence[ClosedTrade]) -> list[datetime | None]:
@@ -201,10 +212,11 @@ def attribute(
             vote = by_bar.get((trade.symbol, bar))
             if vote is None or vote.direction.value == "hold":
                 continue
-            (agreed if vote.direction.value == "buy" else disagreed).append(trade)
+            entry = "sell" if trade.side == SHORT else "buy"  # the vote that opened this trade
+            (agreed if vote.direction.value == entry else disagreed).append(trade)
             ens = ensemble.get((trade.symbol, bar))
-            if (vote.direction.value == "buy" and ens is not None
-                    and not _counterfactual_buy(ens.metadata.get("votes", []), name, voting)):
+            if (vote.direction.value == entry and ens is not None
+                    and _counterfactual(ens.metadata.get("votes", []), name, voting) != entry):
                 pivotal += 1
 
         def pnl(ts: Sequence[ClosedTrade]) -> float:

@@ -156,7 +156,8 @@ class LivePaperTrader:
                 "use LivePaperTrader.resume() to load the stored config"
             )
         cfg = self._config
-        portfolio = Portfolio(cfg.portfolio.initial_cash, cfg.portfolio.quote_currency)
+        portfolio = Portfolio(cfg.portfolio.initial_cash, cfg.portfolio.quote_currency,
+                              allow_short=cfg.risk.allow_short)
         for fill in self._store.load_fill_objects(self.run_id):  # event-sourced rebuild
             portfolio.apply_fill(fill)
         state = self._store.load_state(self.run_id) or {}

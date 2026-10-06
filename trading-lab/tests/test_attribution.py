@@ -150,7 +150,7 @@ def test_schema_v2_databases_are_upgraded(tmp_path):
     conn.executescript("DROP TABLE bars; DROP TABLE research_results; PRAGMA user_version = 2;")
     conn.close()
     with SQLiteStore(path) as store:
-        assert store.schema_version == SCHEMA_VERSION == 3
+        assert store.schema_version == SCHEMA_VERSION == 4
         assert store.load_closes("missing") == {}
         store.add_research_result("experiment", "x", {"a": 1})
         assert store.list_research_results()[0]["payload"] == {"a": 1}

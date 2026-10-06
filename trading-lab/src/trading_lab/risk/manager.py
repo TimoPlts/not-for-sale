@@ -69,6 +69,11 @@ class RiskManager:
     Entries are also rejected when the open-position limit is reached, when
     pyramiding is disabled and a position already exists, or when the result
     is below ``min_notional``.
+
+    Short entries (``side=Side.SELL``, only when the portfolio allows shorts)
+    are sized the same way, mirrored: the stop sits above the entry, the loss
+    at the stop is the cost of buying back there, exposure counts absolute
+    position values, and the cash limit is the collateral (notional plus fee).
     """
 
     def __init__(
@@ -96,8 +101,12 @@ class RiskManager:
             return min(max(raw, cfg.atr_stop_min_pct), cfg.atr_stop_max_pct), "atr"
         return cfg.stop_loss_pct, "percent"  # also the fallback when ATR is not known yet
 
-    def stop_price_for(self, entry_fill_price: float, stats: MarketStats | None = None) -> float:
-        return entry_fill_price * (1.0 - self.stop_distance_pct(entry_fill_price, stats)[0])
+    def stop_price_for(
+        self, entry_fill_price: float, stats: MarketStats | None = None, side: Side = Side.BUY
+    ) -> float:
+        """Initial stop: below a long entry, above a short one."""
+        distance = self.stop_distance_pct(entry_fill_price, stats)[0]
+        return entry_fill_price * (1.0 + distance if side is Side.SELL else 1.0 - distance)
 
     def evaluate_entry(
         self,
@@ -106,19 +115,25 @@ class RiskManager:
         portfolio: Portfolio,
         prices: Mapping[str, float],
         stats: MarketStats | None = None,
+        side: Side = Side.BUY,
     ) -> RiskDecision:
-        """Size a new long entry. ``prices`` must contain marks for all open positions."""
+        """Size a new long (``side=BUY``) or short (``SELL``) entry. ``prices`` must mark all open positions."""
         cfg = self._config
+        short = side is Side.SELL
 
         def reject(reason: str, **sizing: float | str) -> RiskDecision:
             return RiskDecision(
-                False, symbol, Side.BUY, 0.0, reason, reference_price=reference_price, sizing=sizing
+                False, symbol, side, 0.0, reason, reference_price=reference_price, sizing=sizing
             )
 
         if not (math.isfinite(reference_price) and reference_price > 0):
             return reject(f"invalid reference price {reference_price!r}")
+        if short and not portfolio.allow_short:
+            return reject("short entries are disabled (risk.allow_short = false)")
 
         existing = portfolio.position(symbol)
+        if existing is not None and existing.is_short != short:
+            return reject(f"a {existing.side} position is open; close it before entering the other side")
         if existing is not None and not cfg.allow_pyramiding:
             return reject("position already open and pyramiding is disabled")
         if existing is None and len(portfolio.positions) >= cfg.max_open_positions:
@@ -129,21 +144,29 @@ class RiskManager:
         if equity <= 0:
             return reject("non-positive equity")
 
-        fill_price = self._costs.fill_price(Side.BUY, reference_price)
+        fill_price = self._costs.fill_price(side, reference_price)
         stop_distance, stop_basis = self.stop_distance_pct(fill_price, stats)
-        stop_price = fill_price * (1.0 - stop_distance)
-        loss_per_unit = self._costs.entry_cost_per_unit(
-            reference_price
-        ) - self._costs.exit_proceeds_per_unit(stop_price)
+        if short:  # sold at the entry, bought back at the stop
+            stop_price = fill_price * (1.0 + stop_distance)
+            loss_per_unit = self._costs.entry_cost_per_unit(stop_price) - self._costs.exit_proceeds_per_unit(
+                reference_price
+            )
+            cash_limit = self._costs.fee_model.max_notional(portfolio.cash) / fill_price  # collateral + fee
+        else:
+            stop_price = fill_price * (1.0 - stop_distance)
+            loss_per_unit = self._costs.entry_cost_per_unit(
+                reference_price
+            ) - self._costs.exit_proceeds_per_unit(stop_price)
+            cash_limit = self._costs.max_buy_quantity(portfolio.cash, reference_price)
 
-        existing_value = existing.market_value(reference_price) if existing else 0.0
-        total_value = portfolio.positions_value(marks)
+        existing_value = existing.exposure(reference_price) if existing else 0.0
+        total_value = portfolio.gross_exposure(marks)
 
         candidates: dict[str, float] = {
             "risk_per_trade": equity * cfg.risk_per_trade_pct / loss_per_unit,
             "max_position_size": (equity * cfg.max_position_pct - existing_value) / fill_price,
             "max_total_exposure": (equity * cfg.max_total_exposure_pct - total_value) / fill_price,
-            "available_cash": self._costs.max_buy_quantity(portfolio.cash, reference_price),
+            "available_cash": cash_limit,
         }
         if self._max_participation > 0 and stats is not None:
             candidates["liquidity"] = self._max_participation * stats.avg_quote_volume / fill_price
@@ -168,22 +191,27 @@ class RiskManager:
         return RiskDecision(
             True,
             symbol,
-            Side.BUY,
+            side,
             quantity,
-            f"entry approved (limited by {binding})",
+            f"{'short ' if short else ''}entry approved (limited by {binding})",
             reference_price=reference_price,
             stop_price=stop_price,
             sizing=sizing,
         )
 
     def evaluate_exit(self, symbol: str, portfolio: Portfolio, reason: str = "exit") -> RiskDecision:
-        """Close the full position. Exits are always allowed when a position exists."""
+        """Close the full position (sell a long, buy back a short). Exits are always allowed."""
         position = portfolio.position(symbol)
         if position is None:
             return RiskDecision(False, symbol, Side.SELL, 0.0, "long-only: no open position to exit")
-        return RiskDecision(True, symbol, Side.SELL, position.quantity, reason)
+        side = Side.BUY if position.is_short else Side.SELL
+        return RiskDecision(True, symbol, side, position.quantity, reason)
 
     @staticmethod
-    def stop_triggered(position: Position, low_price: float) -> bool:
-        """True if the bar's low reached the position's stop price."""
-        return position.stop_price is not None and low_price <= position.stop_price
+    def stop_triggered(position: Position, low_price: float, high_price: float | None = None) -> bool:
+        """True if the bar reached the stop: its low for a long, its high for a short."""
+        if position.stop_price is None:
+            return False
+        if position.is_short:
+            return high_price is not None and high_price >= position.stop_price
+        return low_price <= position.stop_price

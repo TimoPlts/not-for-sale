@@ -4,7 +4,7 @@
 
 =====================  ======================================================
 ``equity_curve.csv``   one row per bar: cash, positions, equity, PnL, fees
-``trades.csv``         closed trades (same columns as ``backtest --export``)
+``trades.csv``         closed trades with their side (same columns as ``backtest --export``)
 ``fills.csv``          simulated fills (same columns as ``backtest --export``)
 ``decisions.csv``      the ensemble's decisions (HOLDs only with ``holds``)
 ``signals.csv``        every strategy and agent vote, with the agent's
@@ -41,9 +41,9 @@ def trades_frame(trades: Iterable[ClosedTrade]) -> pd.DataFrame:
     return pd.DataFrame([{
         "symbol": t.symbol, "quantity": t.quantity, "entry_price": t.entry_price,
         "exit_price": t.exit_price, "pnl": t.pnl, "return_pct": t.return_pct,
-        "opened_at": t.opened_at, "closed_at": t.closed_at,
+        "opened_at": t.opened_at, "closed_at": t.closed_at, "side": t.side,
     } for t in trades], columns=["symbol", "quantity", "entry_price", "exit_price", "pnl", "return_pct",
-                                 "opened_at", "closed_at"])
+                                 "opened_at", "closed_at", "side"])
 
 
 def fills_frame(fills: Iterable[Fill]) -> pd.DataFrame:

@@ -13,7 +13,7 @@ import math
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 import pandas as pd
 
@@ -27,7 +27,7 @@ from trading_lab.core.models import (
     Signal,
 )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA_V1 = """
 CREATE TABLE runs (
@@ -163,8 +163,17 @@ CREATE TABLE research_results (
 );
 """
 
-# version -> SQL that upgrades from version-1 to version.
-_MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3}
+def _schema_v4(conn: sqlite3.Connection) -> None:
+    """Closed trades record their side (long or short); existing trades are longs."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(closed_trades)")}
+    if "side" not in columns:
+        conn.execute("ALTER TABLE closed_trades ADD COLUMN side TEXT NOT NULL DEFAULT 'long'")
+
+
+# version -> SQL (or a function) that upgrades from version-1 to version.
+_MIGRATIONS: dict[int, str | Callable[[sqlite3.Connection], None]] = {
+    1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _schema_v4,
+}
 
 
 def _ts(value: datetime) -> str:
@@ -269,8 +278,12 @@ class SQLiteStore:
                 f"database schema v{current} is newer than this code (v{SCHEMA_VERSION})"
             )
         for version in range(current + 1, SCHEMA_VERSION + 1):
+            migration = _MIGRATIONS[version]
             with self._conn:
-                self._conn.executescript(_MIGRATIONS[version])
+                if callable(migration):
+                    migration(self._conn)
+                else:
+                    self._conn.executescript(migration)
                 self._conn.execute(f"PRAGMA user_version = {version}")
 
     # ------------------------------------------------------------------ runs
@@ -473,8 +486,8 @@ class SQLiteStore:
         with self._tx():
             self._conn.executemany(
                 "INSERT INTO closed_trades (run_id, symbol, quantity, entry_price, exit_price, "
-                "cost_basis, proceeds, pnl, return_pct, opened_at, closed_at, exit_order_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "cost_basis, proceeds, pnl, return_pct, opened_at, closed_at, exit_order_id, side) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     (
                         run_id,
@@ -489,6 +502,7 @@ class SQLiteStore:
                         _ts(t.opened_at),
                         _ts(t.closed_at),
                         t.exit_order_id,
+                        t.side,
                     )
                     for t in trades
                 ),
@@ -537,10 +551,14 @@ class SQLiteStore:
         )
         return frame.set_index("timestamp")
 
+    def has_column(self, table: str, column: str) -> bool:
+        return any(row[1] == column for row in self._conn.execute(f"PRAGMA table_info({table})"))
+
     def load_closed_trades(self, run_id: str) -> list[ClosedTrade]:
+        side = "side" if self.has_column("closed_trades", "side") else "'long'"  # read-only, before v4
         cur = self._conn.execute(
             "SELECT symbol, quantity, entry_price, exit_price, cost_basis, proceeds, pnl, "
-            "opened_at, closed_at, exit_order_id FROM closed_trades WHERE run_id = ? ORDER BY id",
+            f"opened_at, closed_at, exit_order_id, {side} FROM closed_trades WHERE run_id = ? ORDER BY id",
             (run_id,),
         )
         return [
@@ -555,6 +573,7 @@ class SQLiteStore:
                 opened_at=_parse_ts(r[7]),
                 closed_at=_parse_ts(r[8]),
                 exit_order_id=r[9],
+                side=r[10],
             )
             for r in cur.fetchall()
         ]

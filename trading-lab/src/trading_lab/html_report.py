@@ -337,12 +337,12 @@ def build_html_report(db_path: str, run_id: str | None = None, *, horizon: int =
 
     out.append(f"<h2>Closed trades ({len(trades)} most recent)</h2>")
     if trades:
-        rows = [[_td(t["symbol"]), _td(_when(t["opened_at"])), _td(_when(t["closed_at"])),
+        rows = [[_td(t["symbol"]), _td(t.get("side", "long")), _td(_when(t["opened_at"])), _td(_when(t["closed_at"])),
                  _td(f'{t["quantity"]:.6g}'), _td(f'{t["entry_price"]:.6g}'), _td(f'{t["exit_price"]:.6g}'),
                  _td(_num(t["pnl"]), _cls(t["pnl"])), _td(_pct(t["return_pct"]), _cls(t["return_pct"]))]
                 for t in trades]
-        out.append('<div class="card">' + _table(["Symbol", "Opened", "Closed", "Qty", "Entry", "Exit", "PnL",
-                                                  "Return"], rows) + "</div>")
+        out.append('<div class="card">' + _table(["Symbol", "Side", "Opened", "Closed", "Qty", "Entry", "Exit",
+                                                  "PnL", "Return"], rows) + "</div>")
     else:
         out.append('<div class="card"><p class="muted">No closed trades.</p></div>')
 

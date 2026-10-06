@@ -98,7 +98,7 @@ def positions_section(data: DashboardData, run_id: str) -> None:
     st.subheader("Open positions")
     positions = data.open_positions(run_id)
     if positions:
-        frame = pd.DataFrame(positions)[["symbol", "entry_price", "current_price", "quantity", "value",
+        frame = pd.DataFrame(positions)[["symbol", "side", "entry_price", "current_price", "quantity", "value",
                                          "unrealized_pnl", "unrealized_pct", "stop_price", "opened_at"]]
         st.dataframe(frame, hide_index=True, width="stretch")
     else:

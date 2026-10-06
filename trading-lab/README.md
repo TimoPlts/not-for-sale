@@ -49,6 +49,12 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 15A (complete):** `trading-lab demo`: one offline command that builds a sample backtest, a paper run and HTML reports. Start here.
 - **Stage 15B (complete):** e-mail alerts over encrypted SMTP, alongside or instead of the webhook (settings only from the environment).
 - **Stage 15C (complete):** an Anthropic (Claude) provider as an alternative to Qwen (`[agents] provider = "anthropic"`, key only from the environment).
+- **Stage 16A (complete):** simulated short-position accounting: fully collateralised (no leverage), with a borrow fee on cover and a trade side stored in the database (schema v4). Strategies use it from 16B.
+- **Stage 16B (complete):** `[risk] allow_short = true` lets the bot short (simulated): an ensemble SELL opens a short, and stops, take-profit, trailing stops, limit entries and filters are all mirrored. Off by default.
+- **Stage 16C (complete):** shorts in every report:
+  - trade side in `report`, `export`, the HTML report, the dashboard and summaries;
+  - short exposure on the dashboard;
+  - agent attribution that credits SELL votes for short trades.
 
 ### Stage 9/10 summary
 
@@ -275,7 +281,7 @@ This writes any stored backtest or paper run into a new or empty directory, for 
 | File | Contents |
 |---|---|
 | `equity_curve.csv` | per bar: cash, positions value, equity, realized and unrealized PnL, fees, open positions |
-| `trades.csv`, `fills.csv` | closed trades and simulated fills (same columns as `backtest --export`) |
+| `trades.csv`, `fills.csv` | closed trades with their side (long or short) and simulated fills (same columns as `backtest --export`) |
 | `decisions.csv` | the ensemble's decisions with reasons (HOLDs only with `--holds`) |
 | `signals.csv` | every strategy and agent vote, with each agent's rationale, label, cache status and error in their own columns |
 | `bars.csv` | the candles the run traded on |
@@ -573,7 +579,7 @@ The definitions are exact and deterministic. They are spelled out in `src/tradin
 * **Votes** count decision bars only. Warm-up bars and bars skipped by `decision_interval` are not votes. Failed or invalid answers are counted as `errors`.
 * **Directional correctness:** did the price move the voted way over the next N bars (`--horizon`, default 4)? Raw prices are used, without fees.
 * **Avg outcome after BUY/SELL:** the mean N-bar forward return after each kind of vote.
-* **Trades influenced:** each closed trade is linked to the ensemble's entry signal. An agent *agreed* (voted BUY), *disagreed* (SELL) or abstained at that bar. It was *pivotal* if the entry would not have happened without its vote.
+* **Trades influenced:** each closed trade is linked to the ensemble's entry signal. An agent *agreed* or *disagreed* with the trade, or abstained, at that bar. For a long, agreeing is a BUY vote and disagreeing a SELL; for a short (with `allow_short`), it is the other way round. It was *pivotal* if the entry would not have happened without its vote.
 * **PnL when agreed/disagreed:** the realised PnL of those trades, fees included, as a share of the initial cash.
 * **Calibration:** correctness and mean signed return per confidence bucket. A well-calibrated agent is right more often when it is more confident.
 
@@ -655,6 +661,35 @@ trading-lab walkforward --param strategies.qwen_trend.weight=0,1 --param strateg
 ```
 
 All runs in a sweep, walk-forward or experiment share one model provider and the answer cache. In `record` mode a market-only agent is asked about each bar **once**, and every variant, combination and overlapping training window reuses that answer. The comparison therefore measures the ensemble, not the model's randomness, and later replays are free. `qwen_risk` sees the portfolio, so it is asked again wherever the trades differ. Missing Qwen environment variables stop the command before the first backtest. The global `--agent-mode record|replay|live` option overrides `[agents] mode` for any command.
+
+## Short selling (simulated, off by default)
+
+```toml
+[risk]
+allow_short = true
+
+[execution]
+short_borrow_bps_per_day = 2.0   # borrow cost per day held (0.02%/day), paid when the short is covered
+```
+
+By default the bot is long-only: a SELL vote only closes a long. With `allow_short = true`:
+
+* **Entries and exits:** an ensemble SELL with no long open opens a short at the next candle's open, and an ensemble BUY covers it. A long is never turned into a short in one step: the SELL closes the long first, and only a later SELL opens a short.
+* **No leverage:** a short is fully collateralised. Its value is set aside from cash, plus the fee, exactly like buying. Losses can still exceed the collateral if the price more than doubles, so keep the stop-loss on.
+* **Mirrored risk:** sizing risks the same share of equity per trade, with the stop *above* the entry.
+  * Stops trigger on the candle's high, filling at the stop, or at the open if it gapped above.
+  * Take-profit triggers on the low.
+  * Trailing stops follow the lowest low and only ever move down.
+  * ATR stops work the same way.
+  * Limit entries rest above the open and fill when a candle trades through them.
+* **Filters and breakers:**
+  * The trend filter allows shorts only while the close is *below* its average.
+  * The correlation and risk-state filters, the circuit breakers and the kill switch apply to both sides. The kill switch also covers shorts when `flatten_on_halt` is set.
+* **Costs:** besides fees and slippage, covering pays the borrow fee for the days held. It is included in the cover's fee.
+
+Backtests, paper runs, resume and `reconcile` handle shorts exactly like longs. Every report shows each trade's side: `report`, `export`, the HTML report, the dashboard (open positions and exposure) and `summary`. `agent-report` credits a SELL vote as agreeing with a short trade.
+
+This changes what a SELL vote does, from the AI agents too. Compare `allow_short = true` and `false` on the same period with `experiment` or `walkforward` before relying on it.
 
 ## Trailing stops and take-profit
 
