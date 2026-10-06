@@ -195,17 +195,42 @@ def _json(value: Any) -> str:
     return json.dumps(clean(value), default=default, sort_keys=True, allow_nan=False)
 
 
-class SQLiteStore:
-    """Thin repository over one SQLite database (``":memory:"`` is supported)."""
+BUSY_TIMEOUT_SECONDS = 30.0  # wait this long for another process's lock (e.g. the dashboard)
 
-    def __init__(self, path: str | Path) -> None:
+
+class SQLiteStore:
+    """Thin repository over one SQLite database (``":memory:"`` is supported).
+
+    With ``readonly=True`` the file is opened in SQLite's read-only mode: any
+    write fails inside SQLite itself, and no schema migration is attempted.
+    """
+
+    def __init__(self, path: str | Path, *, readonly: bool = False) -> None:
         self._path = str(path)
-        if self._path != ":memory:":
-            Path(self._path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self._path)
+        self.readonly = readonly
+        if readonly:
+            if self._path == ":memory:" or not Path(self._path).exists():
+                raise FileNotFoundError(f"database not found: {self._path}")
+            uri = f"{Path(self._path).resolve().as_uri()}?mode=ro"
+            self._conn = sqlite3.connect(uri, uri=True, timeout=BUSY_TIMEOUT_SECONDS)
+        else:
+            if self._path != ":memory:":
+                Path(self._path).parent.mkdir(parents=True, exist_ok=True)
+            self._conn = sqlite3.connect(self._path, timeout=BUSY_TIMEOUT_SECONDS)
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._in_atomic = False
-        self._migrate()
+        if not readonly:
+            self._migrate()
+        elif self.schema_version > SCHEMA_VERSION:
+            raise RuntimeError(
+                f"database schema v{self.schema_version} is newer than this code (v{SCHEMA_VERSION})"
+            )
+
+    def has_table(self, name: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
+        ).fetchone()
+        return row is not None
 
     @contextlib.contextmanager
     def atomic(self):  # type: ignore[no-untyped-def]
@@ -561,14 +586,35 @@ class SQLiteStore:
             sql += " AND action != 'hold'"
         return self._frame(sql + " ORDER BY id", (run_id,), ["timestamp"])
 
-    def load_signals(self, run_id: str, symbol: str | None = None) -> pd.DataFrame:
+    def load_signals(
+        self,
+        run_id: str,
+        symbol: str | None = None,
+        *,
+        since: datetime | None = None,
+        strategies: Sequence[str] | None = None,
+    ) -> pd.DataFrame:
         sql, params = "SELECT * FROM signals WHERE run_id = ?", [run_id]
         if symbol is not None:
             sql += " AND symbol = ?"
             params.append(symbol)
+        if since is not None:
+            sql += " AND timestamp >= ?"
+            params.append(_ts(since))
+        if strategies is not None:
+            sql += f" AND strategy IN ({', '.join('?' * len(strategies))})"
+            params.extend(strategies)
         return self._frame(sql + " ORDER BY id", params, ["timestamp"])
 
+    def latest_signal_time(self, run_id: str) -> datetime | None:
+        row = self._conn.execute("SELECT MAX(timestamp) FROM signals WHERE run_id = ?", (run_id,)).fetchone()
+        return _parse_ts(row[0]) if row and row[0] else None
+
     def load_bars(self, run_id: str, symbol: str | None = None) -> pd.DataFrame:
+        if not self.has_table("bars"):  # a database opened read-only before its v3 upgrade
+            frame = pd.DataFrame(columns=["symbol", "timestamp", "open", "high", "low", "close", "volume"])
+            frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True)
+            return frame
         sql, params = "SELECT symbol, timestamp, open, high, low, close, volume FROM bars WHERE run_id = ?", [run_id]
         if symbol is not None:
             sql += " AND symbol = ?"

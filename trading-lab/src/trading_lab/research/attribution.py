@@ -164,7 +164,7 @@ def attribute(
         values = series.to_numpy(dtype="float64")
         for k, ts in enumerate(series.index):
             if k + horizon < len(values) and values[k] > 0:
-                forward[(sym, ts.to_pydatetime())] = values[k + horizon] / values[k] - 1.0
+                forward[(sym, ts.to_pydatetime())] = float(values[k + horizon] / values[k] - 1.0)
 
     entry_bars = _entry_bars(decisions, trades)
     out: dict[str, Attribution] = {}
@@ -184,7 +184,7 @@ def attribute(
                 if r is not None:
                     signed.append(r if s.direction.value == "buy" else -r)
             buckets.append(CalibrationBucket(
-                low, min(high, 1.0), len(members), len(signed), sum(r > 0 for r in signed), _mean(signed),
+                low, min(high, 1.0), len(members), len(signed), int(sum(r > 0 for r in signed)), _mean(signed),
             ))
         after_buy = [r for s in directional if s.direction.value == "buy"
                      if (r := forward.get((s.symbol, s.timestamp))) is not None]

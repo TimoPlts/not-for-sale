@@ -10,6 +10,7 @@
     trading-lab agent-report [RUN_ID] [--horizon N] [--all]
     trading-lab experiment [--variants baseline,trend,...] [--walkforward] [--param ...]
     trading-lab agent-test [qwen | qwen_trend | qwen_momentum | qwen_risk] [--synthetic SEED]
+    trading-lab dashboard-data [RUN_ID] [--json]
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -607,6 +608,45 @@ def cmd_agent_test(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_dashboard_data(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.dashboard import DashboardData
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    with DashboardData(cfg.storage.db_path) as data:
+        snap = data.snapshot(args.run_id, horizon=args.horizon)
+    if args.json:
+        print(_json.dumps(snap, indent=2, default=str))
+        return 0
+    if snap["run_id"] is None:
+        print("No runs stored yet.")
+        return 0
+    o = snap["overview"]
+    print(f"Run {o['run_id']} ({o['kind']}, {o['status']}) | {o['timeframe']} | {', '.join(o['symbols'])} | "
+          f"last bar {o.get('last_bar') or '-'}")
+    if o.get("equity") is not None:
+        b = o["breakers"]
+        print(f"Equity {o['equity']:,.2f}  cash {o['cash']:,.2f}  return {o['total_return']:+.2%}  "
+              f"drawdown {o['drawdown']:.2%}  daily PnL {o['daily_pnl']:+,.2f}  exposure {o['exposure_pct']:.0%}")
+        print(f"Breakers: kill switch {'ACTIVE' if b['kill_switch_active'] else 'off'}"
+              + (f" ({b['halted_reason']})" if b.get("halted_reason") else "")
+              + (f", daily limit hit {b['daily_blocked_day']}" if b.get("daily_blocked_day") else ""))
+    for p in snap["open_positions"]:
+        print(f"  {p['symbol']:<10} qty {p['quantity']:.6g} entry {p['entry_price']:.6g} "
+              f"now {p['current_price']:.6g} unrealized {p['unrealized_pnl']:+,.2f}")
+    for sym, d in snap["latest_decision"].get("symbols", {}).items():
+        votes = ", ".join(f"{v['strategy']}={v['direction'].upper()}" for v in d["votes"])
+        ens = d["ensemble"] or {}
+        print(f"  {sym:<10} {votes} -> {str(ens.get('direction', '-')).upper()}")
+    usage = snap["usage"]["total"]
+    if usage:
+        print(f"Model usage: {usage['calls']} calls, {usage['cache_hits']} cache hits, {usage['failures']} failures")
+    return 0
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from trading_lab.reporting import run_metrics
     from trading_lab.storage import SQLiteStore
@@ -741,6 +781,12 @@ def build_parser() -> argparse.ArgumentParser:
     at.add_argument("--timeframe", help="e.g. 1h")
     at.add_argument("--synthetic", type=int, metavar="SEED", help="offline synthetic data for agent tests")
     at.set_defaults(func=cmd_agent_test)
+
+    dd = sub.add_parser("dashboard-data", help="read-only snapshot of a run (what the dashboard shows)")
+    dd.add_argument("run_id", nargs="?", help="default: the running paper run, else the latest run")
+    dd.add_argument("--json", action="store_true", help="print the full snapshot as JSON")
+    dd.add_argument("--horizon", type=int, default=4, help="bars ahead for agent outcome statistics")
+    dd.set_defaults(func=cmd_dashboard_data)
 
     cp = sub.add_parser("compare", help="compare stored runs side by side")
     cp.add_argument("run_ids", nargs="+")

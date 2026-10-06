@@ -270,5 +270,11 @@ average trade return.
 - The session state persists recent stop-outs (`stop_events`) next to the breakers, working limit orders, scheduled orders and last prices, so the risk agent's context is identical after `--resume`.
 - Tests: live with three mocked agents equals the backtest and asks only about traded bars on decision bars; stop and resume equals an uninterrupted run (fills, every decision, breakers, working limits, stop-outs, no repeated question), with market and limit entries; a crash after the agents answered leaves nothing behind, and the restart reuses the cached answers and duplicates no order; model failures become HOLD while trading continues; live mode never re-asks processed bars across a resume.
 
+### Stage 10A: Dashboard data layer ✅
+- `dashboard/data.py`, `DashboardData`: a read-only facade over the SQLite history covering the overview (equity, cash, realized/unrealized PnL, current and max drawdown, daily PnL, exposure, breakers from saved state or decisions), open positions rebuilt from fills, working orders, equity curve with drawdown and a buy & hold benchmark computed from stored bars, recent trades, fills and signals, the latest decision (every vote, the ensemble, the actions taken), latest agent rationales, attribution, model usage, and research results. Everything is JSON-safe, and `snapshot()` returns it all at once.
+- `SQLiteStore(readonly=True)` uses SQLite's read-only URI mode and never migrates. Stores now wait up to 30 s for locks, and signal queries can be filtered by time and strategy.
+- CLI: `trading-lab dashboard-data [RUN_ID] [--json]`.
+- Tests: the snapshot matches the run (equity, return, drawdown, positions, benchmark, votes, rationales, attribution, usage); the paper-run state, breakers and working orders; reading leaves the file byte-identical; writes fail; old databases are read without migrating; the dashboard source contains no write or order paths.
+
 ### Later
 Stages 9B–10E (specialised Qwen agents, agent attribution, experiments, usage accounting, smoke test, live integration, dashboard, VM operation, failure recovery, experiment protocol). After that: short positions, trailing stops and order-book data.

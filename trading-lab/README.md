@@ -26,6 +26,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 9E (complete):** model usage accounting: calls, cache hits and misses, failures, retries, latency, and tokens (reported or estimated).
 - **Stage 9F (complete):** `trading-lab agent-test`: a connectivity and agent smoke test that never trades.
 - **Stage 9G (complete):** the Qwen agents in live paper trading, resumable, asking only about newly closed candles.
+- **Stage 10A (complete):** a read-only dashboard data layer (`trading_lab.dashboard.DashboardData`, `trading-lab dashboard-data`).
 
 ## Quick start
 
@@ -48,6 +49,22 @@ Run these from this folder in PowerShell. The `trading-lab` command lives in the
 To type just `trading-lab`, activate the environment first with `.venv\Scripts\Activate.ps1`.
 
 **How paper trading works:** the trader acts once per *closed* candle. It computes signals at the close and fills any resulting order at the open price of the candle that just started, with fees and slippage. Stops are checked against candle lows. These are the same rules as the backtester, so paper results are directly comparable with backtests. Every signal, decision, fill and equity value is saved to `data/trading_lab.db`, and a stopped run continues exactly where it left off with `--resume`. No orders are ever sent to an exchange.
+
+## Dashboard data (read-only)
+
+`trading_lab.dashboard.DashboardData` reads the SQLite history and returns plain dicts and DataFrames:
+
+* the portfolio: equity, cash, realized and unrealized PnL, drawdown, daily PnL, exposure, open positions, working orders and breaker state;
+* the equity curve with drawdown and the buy & hold benchmark;
+* recent signals, the latest ensemble decision with every vote, and the latest agent rationales;
+* per-agent performance (attribution), model usage, recent trades, and research results (metrics, benchmark, saved experiments).
+
+It opens the database in SQLite's **read-only** mode, so it cannot write anything, and it has no order code at all. Tests check both.
+
+```bash
+trading-lab dashboard-data            # summary of the running paper run (or the latest run)
+trading-lab dashboard-data <run id> --json
+```
 
 ## Setup (Windows / PowerShell)
 
