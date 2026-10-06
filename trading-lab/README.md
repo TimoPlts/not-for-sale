@@ -39,6 +39,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 12C (complete):** optional entry filters (trend filter and a `qwen_risk` risk-state veto) that only ever block new entries.
 - **Stage 12D (complete):** `trading-lab report RUN_ID --html FILE`, a single self-contained HTML report to share.
 - **Stage 13A (complete):** `trading-lab doctor`, a read-only readiness check before going live.
+- **Stage 13B (complete):** an optional correlation limit, so the bot does not stack positions in coins that move together.
 
 ### Stage 9/10 summary
 
@@ -532,6 +533,7 @@ Two optional filters in `[risk]`. They can only **block new entries**. They neve
 |---------|--------|
 | `trend_filter_period = 200` | no new entry while the close is below its 200-bar **simple** moving average. A simple average is used so live and backtest see the same value. With too little history to compute it, entries are blocked. |
 | `block_entries_on_risk_states = ["extreme"]` | no new entry while the latest `risk_state` reported for that symbol (by `qwen_risk`) is in the list, for up to `risk_state_max_age_bars` (8) bars after the answer. The last reported state is saved with live runs, so it survives `--resume`. |
+| `max_correlated_positions = 1` | no new entry while that many open, working or already-scheduled positions moved with it: their per-bar log-return correlation over the last `correlation_lookback` (48) bars is at least `correlation_threshold` (0.8). BTC, ETH, SOL and DOGE often move together, so this keeps one market move from hitting several positions at once. An unknown correlation (too little data) counts as correlated. |
 
 ## Agent weights from their track record
 

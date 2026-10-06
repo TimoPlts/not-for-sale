@@ -382,5 +382,10 @@ Trade-offs worth knowing:
 - `docs/DEPLOYMENT.md` runs it after the environment file is created.
 - Tests: a fresh install is ready and creates nothing; agents without or with variables (no secret printed); replay requirements; alert URL; an invalid config; an existing or newer database (left byte-identical); online fresh, stale and down data and the model call; CLI exit codes.
 
+### Stage 13B: Correlation-aware exposure ✅
+- `[risk] max_correlated_positions` (0 = off), `correlation_threshold` and `correlation_lookback`. `engine/filters.correlation_lookup` computes the rolling log-return correlation between every pair of symbols up to the signal bar (fixed window, time-aligned, gaps give unknown), and the engines pass it to the session.
+- `entry_filter_reason` counts open, working-limit and already-scheduled entries whose correlation with the new symbol is at or above the threshold (unknown counts as correlated) and blocks the entry when there are `max_correlated_positions` of them. It only blocks new entries.
+- Tests: perfect, independent and too-short correlations and causality; blocking, allowing and unknown; two entries scheduled in the same bar; perfectly correlated twins never held together (and held together without the limit); live equal to the backtest; validation.
+
 ### Later
 Short positions, order-book data, more LLM providers (OpenAI, Anthropic, Gemini as `LLMProvider` subclasses), and more alert channels (e-mail).

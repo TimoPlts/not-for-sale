@@ -42,7 +42,7 @@ from trading_lab.core.models import Decision, DecisionAction, Fill
 from trading_lab.core.timeutils import ensure_utc
 from trading_lab.data.base import MarketDataProvider, timeframe_delta
 from trading_lab.engine import Bar, Intent, TradingSession
-from trading_lab.engine.filters import filter_columns
+from trading_lab.engine.filters import correlation_lookup, filter_columns
 from trading_lab.engine.session import RestingLimit
 from trading_lab.execution.costs import market_stats_frame, next_bar_stats, stats_series
 from trading_lab.alerts import AlertManager
@@ -104,7 +104,8 @@ class LivePaperTrader:
         )
         self._voting = build_voting(config, self._strategies)
         self._step = timeframe_delta(config.market.timeframe)
-        self._history = max(max(s.history_bars for s in self._strategies), config.risk.trend_filter_period + 1)
+        self._history = max(max(s.history_bars for s in self._strategies), config.risk.trend_filter_period + 1,
+                            config.risk.correlation_lookback + 2 if config.risk.max_correlated_positions else 0)
 
         existing = store.get_run(run_id) if run_id else None
         if existing is not None:
@@ -285,6 +286,7 @@ class LivePaperTrader:
                 for sym, frame in candles.items()
             }
             filters = {sym: filter_columns(frame, cfg.risk) for sym, frame in candles.items()}
+            correlations = correlation_lookup(candles, cfg.risk)
             columns = ("open", "high", "low", "close", "volume")
             for t in new_bars:
                 ts = t.to_pydatetime()
@@ -295,7 +297,8 @@ class LivePaperTrader:
                 stats = {sym: market_stats[sym][i] for sym, i in idx.items()}
                 self._session.open_bar(ts, {sym: b.open for sym, b in bars.items()}, stats)
                 self._session.close_bar(ts, bars, {sym: sources(sym, i) for sym, i in idx.items()}, stats,
-                                        {sym: filters[sym][i] for sym, i in idx.items()})
+                                        {sym: {**filters[sym][i], "correlations": correlations[sym].get(t, {})}
+                                         for sym, i in idx.items()})
                 self._last_processed = t
 
         # Fill freshly scheduled orders at the open of the candle that just started.
