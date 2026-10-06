@@ -11,6 +11,7 @@
     trading-lab experiment [--variants baseline,trend,...] [--walkforward] [--param ...]
     trading-lab agent-test [qwen | qwen_trend | qwen_momentum | qwen_risk] [--synthetic SEED]
     trading-lab dashboard-data [RUN_ID] [--json]
+    trading-lab dashboard [--host 127.0.0.1] [--port 8501]
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -647,6 +648,25 @@ def cmd_dashboard_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    import importlib.util
+    import os
+    import subprocess
+
+    cfg = _load_config(args)
+    if importlib.util.find_spec("streamlit") is None:
+        raise TradingLabError('the dashboard needs Streamlit: pip install -e ".[dashboard]"')
+    db = Path(cfg.storage.db_path).resolve()
+    app = Path(__file__).resolve().parent / "dashboard" / "app.py"
+    print(f"Dashboard (read-only) for {db} on http://{args.host}:{args.port}  (Ctrl+C to stop)")
+    command = [
+        sys.executable, "-m", "streamlit", "run", str(app),
+        "--server.address", args.host, "--server.port", str(args.port),
+        "--server.headless", "true", "--browser.gatherUsageStats", "false",
+    ]
+    return subprocess.call(command, env={**os.environ, "TRADING_LAB_DB": str(db)})
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     from trading_lab.reporting import run_metrics
     from trading_lab.storage import SQLiteStore
@@ -787,6 +807,12 @@ def build_parser() -> argparse.ArgumentParser:
     dd.add_argument("--json", action="store_true", help="print the full snapshot as JSON")
     dd.add_argument("--horizon", type=int, default=4, help="bars ahead for agent outcome statistics")
     dd.set_defaults(func=cmd_dashboard_data)
+
+    db_ = sub.add_parser("dashboard", help="read-only web dashboard (Streamlit)")
+    db_.add_argument("--host", default="127.0.0.1",
+                     help="address to listen on (default 127.0.0.1; use an SSH tunnel to view it remotely)")
+    db_.add_argument("--port", type=int, default=8501)
+    db_.set_defaults(func=cmd_dashboard)
 
     cp = sub.add_parser("compare", help="compare stored runs side by side")
     cp.add_argument("run_ids", nargs="+")

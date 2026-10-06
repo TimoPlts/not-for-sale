@@ -27,6 +27,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 9F (complete):** `trading-lab agent-test`: a connectivity and agent smoke test that never trades.
 - **Stage 9G (complete):** the Qwen agents in live paper trading, resumable, asking only about newly closed candles.
 - **Stage 10A (complete):** a read-only dashboard data layer (`trading_lab.dashboard.DashboardData`, `trading-lab dashboard-data`).
+- **Stage 10B (complete):** a lightweight, read-only web dashboard (Streamlit, `trading-lab dashboard`).
 
 ## Quick start
 
@@ -50,7 +51,28 @@ To type just `trading-lab`, activate the environment first with `.venv\Scripts\A
 
 **How paper trading works:** the trader acts once per *closed* candle. It computes signals at the close and fills any resulting order at the open price of the candle that just started, with fees and slippage. Stops are checked against candle lows. These are the same rules as the backtester, so paper results are directly comparable with backtests. Every signal, decision, fill and equity value is saved to `data/trading_lab.db`, and a stopped run continues exactly where it left off with `--resume`. No orders are ever sent to an exchange.
 
-## Dashboard data (read-only)
+## Dashboard (read-only)
+
+```bash
+pip install -e ".[dashboard]"          # Streamlit, optional
+trading-lab dashboard                  # http://127.0.0.1:8501 ; --host/--port to change
+```
+
+One page, refreshed automatically (every 60 s by default):
+
+* **Portfolio:** equity, daily PnL, drawdown, exposure, realized/unrealized PnL, breaker status (with a banner when the kill switch or daily limit is active).
+* **Equity curve** against equal-weight buy & hold, and the **drawdown** chart.
+* **Open positions** (entry, current price, size, unrealized PnL, stop) and working simulated orders.
+* **Latest decision:** every vote (RSI, MACD, Bollinger, Qwen Trend, Momentum, Risk) with confidence, weight and label, the ensemble result and the actions taken.
+* **AI rationales:** one card per agent and symbol.
+* **Agent performance** leaderboard: votes, confidence, correctness, trades influenced, pivotal trades, PnL when agreed or disagreed.
+* **Research:** strategy versus buy & hold return, max drawdown, Sharpe and profit factor, plus saved experiments and walk-forward results.
+* **Qwen usage:** calls, cache hits, failures, retries, latency and tokens.
+* **Recent trades and signals.**
+
+The sidebar only chooses what to *view*: run, outcome horizon and refresh interval. There are no buttons or forms, and the database is opened read-only. The dashboard listens on 127.0.0.1 by default. To see it from another machine, use an SSH tunnel (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)) rather than exposing it.
+
+### Dashboard data layer
 
 `trading_lab.dashboard.DashboardData` reads the SQLite history and returns plain dicts and DataFrames:
 

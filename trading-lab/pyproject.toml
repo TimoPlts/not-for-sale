@@ -19,6 +19,7 @@ trading-lab = "trading_lab.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+dashboard = ["streamlit>=1.50"]  # read-only web dashboard (trading-lab dashboard)
 
 [tool.setuptools.packages.find]
 where = ["src"]

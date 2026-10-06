@@ -276,5 +276,10 @@ average trade return.
 - CLI: `trading-lab dashboard-data [RUN_ID] [--json]`.
 - Tests: the snapshot matches the run (equity, return, drawdown, positions, benchmark, votes, rationales, attribution, usage); the paper-run state, breakers and working orders; reading leaves the file byte-identical; writes fail; old databases are read without migrating; the dashboard source contains no write or order paths.
 
+### Stage 10B: Read-only web dashboard ✅
+- `dashboard/app.py` (Streamlit, the optional `[dashboard]` extra) is built only on `DashboardData`. Sections: portfolio tiles with breaker banners, equity versus buy & hold, drawdown, open positions and working orders, the latest decision with every vote and the ensemble, AI rationale cards, the agent performance leaderboard, research (metrics and saved experiments), Qwen usage, recent trades and signals. Auto-refresh uses a Streamlit fragment, and the sidebar holds view controls only.
+- CLI: `trading-lab dashboard [--host 127.0.0.1] [--port 8501]` launches Streamlit with `TRADING_LAB_DB` set.
+- Tests (Streamlit AppTest, headless): every section renders; the database is byte-identical afterwards; no buttons or inputs exist; the kill-switch banner shows; empty and missing databases are handled; the launcher's command and environment are correct.
+
 ### Later
 Stages 9B–10E (specialised Qwen agents, agent attribution, experiments, usage accounting, smoke test, live integration, dashboard, VM operation, failure recovery, experiment protocol). After that: short positions, trailing stops and order-book data.
