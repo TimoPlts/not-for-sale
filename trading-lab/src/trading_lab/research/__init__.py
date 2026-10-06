@@ -1,5 +1,6 @@
 """Research tools: parameter sweeps, walk-forward evaluation and agent attribution."""
 
+from trading_lab.research.agent_eval import AgentEval, evaluate_agents, evaluate_run, format_agent_eval
 from trading_lab.research.attribution import (
     Attribution,
     CalibrationBucket,
@@ -37,6 +38,10 @@ from trading_lab.research.walkforward import (
 )
 
 __all__ = [
+    "AgentEval",
+    "evaluate_agents",
+    "evaluate_run",
+    "format_agent_eval",
     "Reconciliation",
     "format_reconciliation",
     "reconcile",

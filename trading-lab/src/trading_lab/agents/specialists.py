@@ -68,6 +68,10 @@ class SpecialistStrategy(LLMProviderStrategy):
     label: ClassVar[str]
     label_values: ClassVar[tuple[str, ...]]
     context_digits: ClassVar[int] = 5  # robust contexts: tiny float noise must not change cache keys
+    # What the prompt asks for, used by ``trading-lab agent-eval`` to spot inconsistent answers:
+    # the vote that contradicts a label value, and the label values that call for HOLD.
+    contradicting_votes: ClassVar[dict[str, str]] = {}
+    hold_labels: ClassVar[tuple[str, ...]] = ()
     agent_version: ClassVar[str] = "1"  # bump when features or the prompt layout change
 
     def build_agent(self, **params: Any) -> Agent:
@@ -86,6 +90,8 @@ class QwenTrendStrategy(SpecialistStrategy):
     name = "qwen_trend"
     label = "regime"
     label_values = ("bullish_trend", "bearish_trend", "sideways", "uncertain")
+    contradicting_votes = {"bullish_trend": "SELL", "bearish_trend": "BUY"}
+    hold_labels = ("sideways", "uncertain")
     indicator_warmup = 60  # EMA 50 plus its 10-bar slope
     system_prompt = _system_prompt(
         "Trend Agent",
@@ -132,6 +138,8 @@ class QwenMomentumStrategy(SpecialistStrategy):
     name = "qwen_momentum"
     label = "momentum_state"
     label_values = ("strengthening", "weakening", "neutral")
+    contradicting_votes = {"strengthening": "SELL", "weakening": "BUY"}
+    hold_labels = ("neutral",)
     indicator_warmup = 40
     system_prompt = _system_prompt(
         "Momentum Agent",
@@ -174,6 +182,8 @@ class QwenRiskStrategy(SpecialistStrategy):
     name = "qwen_risk"
     label = "risk_state"
     label_values = ("low", "moderate", "high", "extreme")
+    contradicting_votes = {"low": "SELL", "high": "BUY", "extreme": "BUY"}
+    hold_labels = ("moderate",)
     indicator_warmup = 100  # 100-bar volatility baseline
     default_portfolio_context = True
     system_prompt = _system_prompt(

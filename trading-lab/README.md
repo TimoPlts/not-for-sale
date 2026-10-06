@@ -44,6 +44,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 13D (complete):** performance relative to buy & hold: excess return, alpha, beta, correlation and information ratio.
 - **Stage 14A (complete):** `trading-lab reconcile`: checks that a live paper run did exactly what its backtest does on the same candles.
 - **Stage 14B (complete):** `trading-lab data-check`: a market-data quality report (gaps, stale data, zero volume, extreme moves).
+- **Stage 14C (complete):** `trading-lab agent-eval`: answer-quality diagnostics for the AI agents (contradictions, one-sided voting, flat confidence, boilerplate rationales, errors).
 
 ### Stage 9/10 summary
 
@@ -506,6 +507,23 @@ The definitions are exact and deterministic. They are spelled out in `src/tradin
 * **Calibration:** correctness and mean signed return per confidence bucket. A well-calibrated agent is right more often when it is more confident.
 
 Every run now also stores the candles it traded on (schema v3 `bars` table), which the outcome statistics need. Older runs show `n/a` for them.
+
+### Are the agent's answers sound? (`agent-eval`)
+
+```bash
+trading-lab agent-eval                 # most recent run
+trading-lab agent-eval <run id> --json
+```
+
+`agent-report` asks whether an agent's votes were right. `agent-eval` asks whether its answers make sense at all, whatever the market did next. Per agent, it reports:
+
+* **availability:** decisions without a usable answer, grouped by error type (timeouts, invalid JSON, answers missing from the cache);
+* **consistency:** votes that contradict the agent's own label (BUY with `regime = bearish_trend`, SELL with `momentum_state = strengthening`, BUY with `risk_state = high`), and BUY/SELL votes on a label for which its prompt asks for HOLD (`sideways`, `neutral`, `moderate`);
+* **spread:** one-sided voting (90% or more of the BUY/SELL votes on one side), almost always HOLD, confidence that barely varies, and BUY/SELL votes with confidence 0 (which carry no weight);
+* **explanations:** empty or very short rationales, and one rationale repeated for most answers;
+* **model calls:** count, failures and mean latency.
+
+The spread checks wait for 20 answers (`--min-answers`), so a short run is not judged on a handful of votes. Each agent declares what its prompt asks for (`contradicting_votes`, `hold_labels` in `agents/specialists.py`). The database is only read.
 
 ### Model usage and cost
 

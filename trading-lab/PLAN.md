@@ -408,6 +408,12 @@ Trade-offs worth knowing:
 - CLI: `trading-lab data-check [--symbols ...] [--days N | --start/--end] [--run RUN_ID] [--jump-floor F] [--jump-sigmas K] [--strict] [--limit N]`. It exits 1 on errors, and with `--strict` on warnings too.
 - Tests: clean data (a random walk and synthetic candles); gaps and missing edges; zero-volume and flat candles; extreme moves on calm, volatile and strict settings; open gaps (and none after a data gap); stale versus publishing-delay versus a fixed past period; fetch failures and empty data; rule validation; stored bars of a run; the CLI (exit codes, strict, invalid rules, read-only run mode).
 
+### Stage 14C: Agent answer quality ✅
+- The specialist agents declare what their prompt asks for: `contradicting_votes` (label value -> the vote that contradicts it) and `hold_labels` (values that call for HOLD).
+- `research/agent_eval.py`: `evaluate_agents(signals)` and `evaluate_run(store, run_id)` read the decision-bar signals of every agent. They count answers, error kinds, votes, labels, BUY/SELL confidences (zero-confidence votes), short rationales, the most repeated rationale, contradictions, BUY/SELL votes on HOLD labels, and model calls (failures, latency). Warnings flag no usable answer for more than 10% of decisions, contradictions, more than 25% of votes on HOLD labels, missing labels, zero-confidence votes and short rationales. With enough answers (`min_answers`, default 20), they also flag 95% or more HOLD, one rationale in more than half the answers, one-sided votes (90% or more) and two or fewer distinct confidences.
+- CLI: `trading-lab agent-eval [RUN_ID] [--min-answers N] [--limit N] [--json]` (read-only).
+- Tests: a well-behaved fake agent has no warnings; fixed labels, confidence and rationale are flagged (contradictions, HOLD-label votes, flat confidence, boilerplate, always HOLD); one-sided zero-confidence answers with empty rationales; invalid answers by type; small samples; error kinds; runs without agents and unknown runs; the CLI (text, JSON, latest run, exit codes, the database byte-identical).
+
 ## 5. Stage 11–13 status summary
 
 On top of the Stage 9/10 system:

@@ -19,6 +19,7 @@
     trading-lab robustness [RUN_ID] [--samples 5000] [--seed 7]
     trading-lab reconcile PAPER_RUN_ID [--synthetic SEED]
     trading-lab data-check [--symbols ...] [--days N | --start/--end] [--run RUN_ID] [--strict]
+    trading-lab agent-eval [RUN_ID] [--min-answers 20] [--json]
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -621,6 +622,33 @@ def cmd_agent_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_agent_eval(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.research import evaluate_run, format_agent_eval
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        run_id = args.run_id or _latest_run_id(store)
+        try:
+            results = evaluate_run(store, run_id, min_answers=args.min_answers)
+        except ValueError as exc:
+            raise TradingLabError(str(exc)) from None
+    if args.json:
+        print(_json.dumps({"run_id": run_id, "agents": {k: v.to_dict() for k, v in results.items()}}, indent=2))
+        return 0
+    print(f"Run {run_id}: answer quality of {len(results)} agent(s) (read-only)")
+    if not results:
+        print("No AI agents voted in this run.")
+    for ev in results.values():
+        print()
+        print(format_agent_eval(ev, limit=args.limit))
+    return 0
+
+
 def _stored_signals(store: Any, run_id: str) -> list[Any]:
     import json as _json
     from types import SimpleNamespace
@@ -1136,6 +1164,14 @@ def build_parser() -> argparse.ArgumentParser:
     rc.add_argument("--synthetic", type=int, metavar="SEED", help="data source seed (default: the run's own)")
     rc.add_argument("--limit", type=int, default=10, help="differences to list (default 10)")
     rc.set_defaults(func=cmd_reconcile)
+
+    ae = sub.add_parser("agent-eval", help="answer quality of the AI agents in a run (consistency, spread)")
+    ae.add_argument("run_id", nargs="?", help="default: the latest run")
+    ae.add_argument("--min-answers", type=int, default=20,
+                    help="answers needed before judging vote and confidence spread (default 20)")
+    ae.add_argument("--limit", type=int, default=5, help="contradictions listed per agent (default 5)")
+    ae.add_argument("--json", action="store_true", help="machine-readable output")
+    ae.set_defaults(func=cmd_agent_eval)
 
     dc = sub.add_parser("data-check", help="market-data quality: gaps, stale data, zero volume, extreme moves")
     market_options(dc)
