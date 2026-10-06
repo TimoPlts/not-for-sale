@@ -195,13 +195,15 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         if result.relative is not None:
             print(result.relative.format_line())
     per_symbol: dict[str, list[float]] = defaultdict(list)
+    shorts: dict[str, int] = defaultdict(int)
     for t in result.trades:
         per_symbol[t.symbol].append(t.pnl)
+        shorts[t.symbol] += t.side == "short"
     print("\n=== Closed trades per symbol ===")
     for symbol in cfg.market.symbols:
         pnls = per_symbol.get(symbol, [])
         print(f"{symbol:<10} trades={len(pnls):<5} wins={sum(p > 0 for p in pnls):<5} "
-              f"pnl={sum(pnls):+,.2f} USDT")
+              f"pnl={sum(pnls):+,.2f} USDT" + (f"  (shorts={shorts[symbol]})" if cfg.risk.allow_short else ""))
     open_positions = int(result.equity_curve["open_positions"].iloc[-1])
     if open_positions:
         print(f"({open_positions} position(s) still open at the end; counted in equity, not in trades)")
@@ -397,7 +399,7 @@ def cmd_report(args: argparse.Namespace) -> int:
         trades = store.load_closed_trades(args.run_id)
         print(f"\n=== Closed trades ({len(trades)}) - last {args.limit} ===")
         for t in trades[-args.limit:]:
-            print(f"  {t.closed_at:%Y-%m-%d %H:%M}  {t.symbol:<10} qty={t.quantity:<12.6g} "
+            print(f"  {t.closed_at:%Y-%m-%d %H:%M}  {t.symbol:<10} {t.side:<5} qty={t.quantity:<12.6g} "
                   f"entry={t.entry_price:<12.6g} exit={t.exit_price:<12.6g} pnl={t.pnl:+9.2f} "
                   f"({t.return_pct:+.2%})")
         decisions = store.load_decisions(args.run_id, include_holds=False)

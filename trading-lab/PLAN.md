@@ -478,7 +478,19 @@ Trade-offs worth knowing:
   - backtest equal to live with both sides traded and borrow fees charged;
   - a short surviving a resume.
 
-## 5. Stage 11–15 status summary
+### Stage 16C: Shorts in reports ✅
+- Attribution: a trade's entry vote is BUY for a long and SELL for a short. `agreed`, `disagreed` and `pivotal` follow it. `_counterfactual` replays the voting rules for both directions.
+- Trade side in:
+  - `report` (a column);
+  - `backtest` (shorts per symbol, only when shorts are allowed, so long-only output is unchanged);
+  - `export` and `backtest --export` (a `side` column);
+  - the HTML report (a Side column);
+  - the dashboard (side of open positions and recent trades);
+  - `summary` ("N short").
+- Dashboard exposure counts quantity x price while shorts are open, since a short's book value is its collateral plus gain.
+- Tests: SELL votes agreeing and pivotal for a short trade (and BUY disagreeing); the CLI report and unchanged long-only backtest output; export, HTML and dashboard trades; open shorts on the dashboard (side, stop above, value, exposure) and in the summary.
+
+## 5. Stage 11–16 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -487,6 +499,7 @@ On top of the Stage 9/10 system:
 - **Evidence:** an HTML report (12D), bootstrap robustness ranges (13C), and alpha/beta against buy & hold (13D).
 - **Verification (14):** live runs reconciled with their backtest (14A, which found and fixed a window-dependent agent feature), market-data quality checks (14B), agent answer-quality diagnostics (14C), and run exports (14D).
 - **Usability and reach (15):** an offline demo (15A), e-mail alerts (15B) and Claude as a second model provider (15C).
+- **Shorts (16):** opt-in simulated short selling: fully collateralised accounting with borrow fees (16A), mirrored entries, exits, sizing and filters (16B), and the trade side in every report (16C).
 
 ### Later
-Short positions, order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.
+Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

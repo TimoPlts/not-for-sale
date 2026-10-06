@@ -95,7 +95,7 @@ def build_summary(store: SQLiteStore, run_id: str, *, hours: float = 24.0, now: 
         out.market_change_pct = sum(moves) / len(moves) if moves else None
 
     out.trades = [
-        {"symbol": t.symbol, "pnl": t.pnl, "return_pct": t.return_pct, "opened_at": t.opened_at,
+        {"symbol": t.symbol, "side": t.side, "pnl": t.pnl, "return_pct": t.return_pct, "opened_at": t.opened_at,
          "closed_at": t.closed_at}
         for t in store.load_closed_trades(run_id) if t.closed_at >= start
     ]
@@ -152,7 +152,9 @@ def format_summary(s: RunSummary) -> str:
         wins = sum(t["pnl"] > 0 for t in s.trades)
         best = max(s.trades, key=lambda t: t["pnl"])
         worst = min(s.trades, key=lambda t: t["pnl"])
-        lines.append(f"- Closed trades: {len(s.trades)} ({wins} won), realized {s.realized_pnl:+,.2f}; best "
+        shorts = sum(t.get("side") == "short" for t in s.trades)
+        split = f", {shorts} short" if shorts else ""
+        lines.append(f"- Closed trades: {len(s.trades)} ({wins} won{split}), realized {s.realized_pnl:+,.2f}; best "
                      f"{best['symbol']} {best['pnl']:+,.2f}, worst {worst['symbol']} {worst['pnl']:+,.2f}")
     else:
         lines.append("- Closed trades: none")

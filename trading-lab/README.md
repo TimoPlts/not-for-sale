@@ -51,6 +51,10 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 15C (complete):** an Anthropic (Claude) provider as an alternative to Qwen (`[agents] provider = "anthropic"`, key only from the environment).
 - **Stage 16A (complete):** simulated short-position accounting: fully collateralised (no leverage), with a borrow fee on cover and a trade side stored in the database (schema v4). Strategies use it from 16B.
 - **Stage 16B (complete):** `[risk] allow_short = true` lets the bot short (simulated): an ensemble SELL opens a short, and stops, take-profit, trailing stops, limit entries and filters are all mirrored. Off by default.
+- **Stage 16C (complete):** shorts in every report:
+  - trade side in `report`, `export`, the HTML report, the dashboard and summaries;
+  - short exposure on the dashboard;
+  - agent attribution that credits SELL votes for short trades.
 
 ### Stage 9/10 summary
 
@@ -277,7 +281,7 @@ This writes any stored backtest or paper run into a new or empty directory, for 
 | File | Contents |
 |---|---|
 | `equity_curve.csv` | per bar: cash, positions value, equity, realized and unrealized PnL, fees, open positions |
-| `trades.csv`, `fills.csv` | closed trades and simulated fills (same columns as `backtest --export`) |
+| `trades.csv`, `fills.csv` | closed trades with their side (long or short) and simulated fills (same columns as `backtest --export`) |
 | `decisions.csv` | the ensemble's decisions with reasons (HOLDs only with `--holds`) |
 | `signals.csv` | every strategy and agent vote, with each agent's rationale, label, cache status and error in their own columns |
 | `bars.csv` | the candles the run traded on |
@@ -575,7 +579,7 @@ The definitions are exact and deterministic. They are spelled out in `src/tradin
 * **Votes** count decision bars only. Warm-up bars and bars skipped by `decision_interval` are not votes. Failed or invalid answers are counted as `errors`.
 * **Directional correctness:** did the price move the voted way over the next N bars (`--horizon`, default 4)? Raw prices are used, without fees.
 * **Avg outcome after BUY/SELL:** the mean N-bar forward return after each kind of vote.
-* **Trades influenced:** each closed trade is linked to the ensemble's entry signal. An agent *agreed* (voted BUY), *disagreed* (SELL) or abstained at that bar. It was *pivotal* if the entry would not have happened without its vote.
+* **Trades influenced:** each closed trade is linked to the ensemble's entry signal. An agent *agreed* or *disagreed* with the trade, or abstained, at that bar. For a long, agreeing is a BUY vote and disagreeing a SELL; for a short (with `allow_short`), it is the other way round. It was *pivotal* if the entry would not have happened without its vote.
 * **PnL when agreed/disagreed:** the realised PnL of those trades, fees included, as a share of the initial cash.
 * **Calibration:** correctness and mean signed return per confidence bucket. A well-calibrated agent is right more often when it is more confident.
 
@@ -683,7 +687,7 @@ By default the bot is long-only: a SELL vote only closes a long. With `allow_sho
   * The correlation and risk-state filters, the circuit breakers and the kill switch apply to both sides. The kill switch also covers shorts when `flatten_on_halt` is set.
 * **Costs:** besides fees and slippage, covering pays the borrow fee for the days held. It is included in the cover's fee.
 
-Backtests, paper runs, resume and `reconcile` handle shorts exactly like longs. Trades record their side.
+Backtests, paper runs, resume and `reconcile` handle shorts exactly like longs. Every report shows each trade's side: `report`, `export`, the HTML report, the dashboard (open positions and exposure) and `summary`. `agent-report` credits a SELL vote as agreeing with a short trade.
 
 This changes what a SELL vote does, from the AI agents too. Compare `allow_short = true` and `false` on the same period with `experiment` or `walkforward` before relying on it.
 
