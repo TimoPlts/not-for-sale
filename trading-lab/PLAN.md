@@ -281,5 +281,12 @@ average trade return.
 - CLI: `trading-lab dashboard [--host 127.0.0.1] [--port 8501]` launches Streamlit with `TRADING_LAB_DB` set.
 - Tests (Streamlit AppTest, headless): every section renders; the database is byte-identical afterwards; no buttons or inputs exist; the kill-switch banner shows; empty and missing databases are handled; the launcher's command and environment are correct.
 
+### Stage 10C: VM-friendly 24/7 operation ✅
+- `deploy/systemd/trading-lab-paper.service` (loads `/etc/trading-lab/trading-lab.env`, `paper --run-id`, SIGTERM, restart on failure, hardened, writes only data and logs) and `trading-lab-dashboard.service` (no secrets, 127.0.0.1, read-only paths). These are templates; nothing is installed automatically.
+- `deploy/trading-lab.env.example` holds placeholders only. `.env`, `*.env` and `.env.*` are git-ignored, except the examples.
+- `paper --run-id NAME` resumes the run or starts it. The global `--log-file` and `--log-level` write a rotating log file that mirrors paper activity. `run_forever(stop_event=…)` and a SIGTERM handler let the current cycle finish, save and mark the run `stopped`.
+- `docs/DEPLOYMENT.md`: install, secrets, agent-test, configuration, the services, the SSH tunnel for the dashboard, file locations, stopping/restarting/resuming, backups and updates, and a security checklist.
+- Tests: named runs, run-id validation, the log file, the stop event, SIGTERM through the CLI, the unit templates, placeholder-only secrets, git-ignore rules, and guide coverage.
+
 ### Later
 Stages 9B–10E (specialised Qwen agents, agent attribution, experiments, usage accounting, smoke test, live integration, dashboard, VM operation, failure recovery, experiment protocol). After that: short positions, trailing stops and order-book data.

@@ -1,0 +1,36 @@
+# Read-only web dashboard. Template: review it, then install it yourself (see docs/DEPLOYMENT.md):
+#   sudo cp deploy/systemd/trading-lab-dashboard.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now trading-lab-dashboard
+# It listens on 127.0.0.1 only. View it through an SSH tunnel:
+#   ssh -L 8501:127.0.0.1:8501 you@your-vm   then open http://localhost:8501
+
+[Unit]
+Description=trading-lab read-only dashboard
+Wants=network-online.target
+After=network-online.target trading-lab-paper.service
+
+[Service]
+Type=simple
+User=tradinglab
+Group=tradinglab
+WorkingDirectory=/opt/trading-lab/trading-lab
+# No EnvironmentFile: the dashboard needs no secrets and never calls the model.
+ExecStart=/opt/trading-lab/trading-lab/.venv/bin/trading-lab \
+    --config /opt/trading-lab/trading-lab/config/default.toml \
+    dashboard --host 127.0.0.1 --port 8501
+Restart=on-failure
+RestartSec=30
+StateDirectory=trading-lab-dashboard
+Environment=HOME=/var/lib/trading-lab-dashboard PYTHONUNBUFFERED=1
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+# The database is opened read-only by the dashboard.
+ReadOnlyPaths=/opt/trading-lab/trading-lab
+
+[Install]
+WantedBy=multi-user.target

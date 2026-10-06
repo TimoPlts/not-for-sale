@@ -25,6 +25,7 @@ carries on.
 
 from __future__ import annotations
 
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -335,11 +336,16 @@ class LivePaperTrader:
         sleep: Callable[[float], None] = time.sleep,
         on_cycle: Callable[[CycleReport], None] | None = None,
         on_wait: Callable[[float], None] | None = None,
+        stop_event: threading.Event | None = None,
     ) -> int:
-        """Run cycles until ``max_cycles`` or Ctrl+C. Always leaves the run resumable."""
+        """Run cycles until ``max_cycles``, Ctrl+C or ``stop_event``. Always leaves the run resumable.
+
+        Setting ``stop_event`` (e.g. from a SIGTERM handler) lets the current
+        cycle finish and save, ends any wait at once, and stops the run cleanly.
+        """
         cycles = 0
         try:
-            while max_cycles is None or cycles < max_cycles:
+            while (max_cycles is None or cycles < max_cycles) and not (stop_event and stop_event.is_set()):
                 report = self.run_cycle()
                 cycles += 1
                 if on_cycle is not None:
@@ -347,9 +353,14 @@ class LivePaperTrader:
                 if max_cycles is not None and cycles >= max_cycles:
                     break
                 wait = poll_seconds if report.error else self.seconds_until_next_check(poll_seconds)
+                if stop_event is not None and stop_event.is_set():
+                    break
                 if on_wait is not None:
                     on_wait(wait)
-                sleep(wait)
+                if stop_event is not None:
+                    stop_event.wait(wait)
+                else:
+                    sleep(wait)
         except KeyboardInterrupt:
             pass
         finally:

@@ -28,6 +28,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 9G (complete):** the Qwen agents in live paper trading, resumable, asking only about newly closed candles.
 - **Stage 10A (complete):** a read-only dashboard data layer (`trading_lab.dashboard.DashboardData`, `trading-lab dashboard-data`).
 - **Stage 10B (complete):** a lightweight, read-only web dashboard (Streamlit, `trading-lab dashboard`).
+- **Stage 10C (complete):** 24/7 operation on a Linux VM: systemd templates, environment files, named runs (`--run-id`), log files and graceful SIGTERM shutdown. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Quick start
 
@@ -87,6 +88,21 @@ It opens the database in SQLite's **read-only** mode, so it cannot write anythin
 trading-lab dashboard-data            # summary of the running paper run (or the latest run)
 trading-lab dashboard-data <run id> --json
 ```
+
+## Running on a Linux VM
+
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) covers the whole setup:
+
+* the venv and installation;
+* the Qwen environment file (`/etc/trading-lab/trading-lab.env`, never committed; `deploy/trading-lab.env.example` is the template);
+* systemd templates for the paper trader and the dashboard (`deploy/systemd/`, not installed automatically);
+* log and SQLite locations, safe shutdown, resuming, backups and updates.
+
+The pieces that make unattended operation work:
+
+* `trading-lab paper --run-id NAME` starts the named run, or resumes it if it already exists. Restarts therefore always continue the same run.
+* SIGTERM (`systemctl stop`) finishes the current cycle, saves it and marks the run `stopped`.
+* `--log-file PATH` (global option) writes a rotating log (10 MB × 5) of all paper activity and warnings. `--log-level` controls its detail.
 
 ## Setup (Windows / PowerShell)
 

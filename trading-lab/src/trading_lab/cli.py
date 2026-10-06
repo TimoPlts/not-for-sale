@@ -23,7 +23,11 @@ order is ever sent to an exchange.
 from __future__ import annotations
 
 import argparse
+import logging
+import re
+import signal
 import sys
+import threading
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -37,6 +41,43 @@ from trading_lab.core.models import DecisionAction
 from trading_lab.data import MarketDataProvider, SyntheticProvider, build_provider
 
 DEFAULT_CONFIG = "config/default.toml"
+RUN_ID_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+log = logging.getLogger("trading_lab.cli")
+
+
+def _configure_logging(level: str, log_file: str | None) -> None:
+    """Warnings (e.g. model retries) go to stderr; with --log-file, everything at ``level``
+    and above also goes to a size-rotated file (10 MB x 5)."""
+    import logging.handlers
+
+    root = logging.getLogger("trading_lab")
+    for handler in [h for h in root.handlers if getattr(h, "_trading_lab_cli", False)]:
+        root.removeHandler(handler)
+        handler.close()
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    console = logging.StreamHandler(sys.stderr)
+    console.setLevel(logging.WARNING)
+    console.setFormatter(fmt)
+    handlers: list[logging.Handler] = [console]
+    if log_file:
+        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file, maxBytes=10_000_000, backupCount=5, encoding="utf-8"
+        )
+        file_handler.setLevel(getattr(logging, level))
+        file_handler.setFormatter(fmt)
+        handlers.append(file_handler)
+    for handler in handlers:
+        handler._trading_lab_cli = True  # type: ignore[attr-defined]
+        root.addHandler(handler)
+    root.setLevel(min(logging.WARNING, getattr(logging, level)))
+
+
+def _say(message: str = "") -> None:
+    """Print to stdout and record it in the log file (if one is configured)."""
+    print(message)
+    if message.strip():
+        log.info(message.strip())
 
 
 # ----------------------------------------------------------------- helpers
@@ -184,11 +225,18 @@ def cmd_paper(args: argparse.Namespace) -> int:
     from trading_lab.storage import SQLiteStore
 
     cfg = _load_config(args)
+    if args.run_id is not None and not re.fullmatch(RUN_ID_PATTERN, args.run_id):
+        raise TradingLabError("--run-id may only contain letters, digits, '.', '_' and '-' (max 64)")
+    if args.run_id and args.resume:
+        raise TradingLabError("use either --run-id or --resume, not both")
     store = SQLiteStore(cfg.storage.db_path)
     try:
+        if args.run_id and store.get_run(args.run_id) is not None:
+            args.resume = args.run_id  # restart of a named run: continue it
         if args.resume:
             if args.symbols or args.timeframe:
-                raise TradingLabError("--symbols/--timeframe cannot be changed when resuming a run")
+                raise TradingLabError("--symbols/--timeframe cannot be changed when resuming a run "
+                                      "(the run keeps the config it was started with)")
             run = store.get_run(args.resume)
             if run is None:
                 raise TradingLabError(f"unknown run id {args.resume}")
@@ -199,10 +247,11 @@ def cmd_paper(args: argparse.Namespace) -> int:
                 seed = int(run["exchange"].split("-", 1)[1])
             stored_cfg = AppConfig.from_dict(run["config"])
             trader = LivePaperTrader.resume(store, args.resume, _provider(stored_cfg, seed))
-            print(f"Resuming paper run {trader.run_id}")
+            _say(f"Resuming paper run {trader.run_id}")
         else:
-            trader = LivePaperTrader(cfg, _provider(cfg, args.synthetic), store, notes=args.notes)
-            print(f"Started paper run {trader.run_id}")
+            trader = LivePaperTrader(cfg, _provider(cfg, args.synthetic), store, notes=args.notes,
+                                     run_id=args.run_id)
+            _say(f"Started paper run {trader.run_id}")
         tcfg = trader.config
         print(f"{tcfg.market.timeframe} candles | {', '.join(tcfg.market.symbols)} | "
               f"starting cash {tcfg.portfolio.initial_cash:,.2f} USDT | simulated fills only")
@@ -212,10 +261,10 @@ def cmd_paper(args: argparse.Namespace) -> int:
         def on_cycle(report: CycleReport) -> None:
             stamp = f"[{report.checked_at:%Y-%m-%d %H:%M:%S} UTC]"
             if report.error:
-                print(f"{stamp} data error, will retry: {report.error}")
+                _say(f"{stamp} data error, will retry: {report.error}")
                 return
             if report.warning:
-                print(f"{stamp} warning: {report.warning}")
+                _say(f"{stamp} warning: {report.warning}")
             for d in report.decisions:
                 if d.action in (DecisionAction.ENTER, DecisionAction.EXIT, DecisionAction.STOP_LOSS,
                                 DecisionAction.REJECTED, DecisionAction.ENTER_SIGNAL,
@@ -225,26 +274,37 @@ def cmd_paper(args: argparse.Namespace) -> int:
                         detail = f" qty={d.quantity:.8g} @ ~{d.reference_price:,.6g}"
                     if d.stop_price is not None:
                         detail += f" stop={d.stop_price:,.6g}"
-                    print(f"{stamp} {d.timestamp:%m-%d %H:%M} {d.symbol:<10} "
+                    _say(f"{stamp} {d.timestamp:%m-%d %H:%M} {d.symbol:<10} "
                           f"{d.action.value.upper():<12}{detail}  ({d.reason})")
             p = trader.portfolio
             held = ", ".join(f"{s} {pos.quantity:.6g}" for s, pos in p.positions.items()) or "none"
             equity = "n/a" if report.equity is None else f"{report.equity:,.2f}"
             last = "-" if report.last_bar is None else f"{report.last_bar:%Y-%m-%d %H:%M}"
-            print(f"{stamp} new candles={report.new_bars} last={last} | equity {equity} | "
+            _say(f"{stamp} new candles={report.new_bars} last={last} | equity {equity} | "
                   f"cash {p.cash:,.2f} | positions: {held}")
 
         def on_wait(seconds: float) -> None:
             wake = datetime.now(timezone.utc) + timedelta(seconds=seconds)
             print(f"   next check at {wake:%H:%M:%S} UTC")
 
-        trader.run_forever(
-            poll_seconds=args.poll,
-            max_cycles=1 if args.once else args.max_cycles,
-            on_cycle=on_cycle,
-            on_wait=on_wait,
-        )
-        print(f"\nPaper run {trader.run_id} stopped. Resume with: trading-lab paper --resume {trader.run_id}")
+        stop_event = threading.Event()
+
+        def request_stop(signum: int, frame: Any) -> None:
+            _say(f"received signal {signum}: finishing the current cycle, then stopping")
+            stop_event.set()
+
+        previous = signal.signal(signal.SIGTERM, request_stop)  # systemctl stop / kill
+        try:
+            trader.run_forever(
+                poll_seconds=args.poll,
+                max_cycles=1 if args.once else args.max_cycles,
+                on_cycle=on_cycle,
+                on_wait=on_wait,
+                stop_event=stop_event,
+            )
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+        _say(f"\nPaper run {trader.run_id} stopped. Resume with: trading-lab paper --resume {trader.run_id}")
         print(f"Report:  trading-lab report {trader.run_id}")
     finally:
         store.close()
@@ -712,6 +772,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", default=DEFAULT_CONFIG, help=f"TOML config (default {DEFAULT_CONFIG})")
     parser.add_argument("--db", help="SQLite file (overrides [storage] db_path)")
+    parser.add_argument("--log-file", help="also write a rotating log file (e.g. /var/log/trading-lab/paper.log)")
+    parser.add_argument("--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR"),
+                        help="level for --log-file (default INFO)")
     parser.add_argument("--agent-mode", choices=("record", "replay", "live"),
                         help="override [agents] mode (replay = fully offline, cached answers only)")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -735,6 +798,8 @@ def build_parser() -> argparse.ArgumentParser:
     pp = sub.add_parser("paper", help="live paper trading on public real-time data")
     market_options(pp)
     pp.add_argument("--resume", metavar="RUN_ID", help="continue a stopped paper run")
+    pp.add_argument("--run-id", metavar="ID",
+                    help="named run: start it if it does not exist, otherwise resume it (for services)")
     pp.add_argument("--once", action="store_true", help="run one cycle and exit")
     pp.add_argument("--max-cycles", type=int, help="stop after N cycles")
     pp.add_argument("--poll", type=float, default=30.0, help="seconds between retries (default 30)")
@@ -823,6 +888,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    _configure_logging(args.log_level, args.log_file)
     try:
         return int(args.func(args))
     except TradingLabError as exc:
