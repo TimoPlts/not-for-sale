@@ -27,6 +27,7 @@ from trading_lab.ensemble import VotingEngine
 from trading_lab.llm import PROVIDERS, LLMProvider, OpenAICompatibleProvider, ProviderError, build_llm_provider
 from trading_lab.strategies.registry import create_strategy, strategy_class
 
+_HIDDEN_SUFFIXES = ("API_KEY",)  # values of these variables are never printed
 SMOKE_SYSTEM = (
     "You are a connectivity check for a paper-trading research tool. "
     "Reply with exactly one JSON object and nothing else."
@@ -55,7 +56,7 @@ def environment_lines(provider: LLMProvider) -> list[str]:
         present = bool(os.environ.get(var, "").strip())
         if not present:
             shown = "MISSING"
-        elif suffix == "API_KEY":
+        elif suffix in _HIDDEN_SUFFIXES:
             shown = "set (hidden)"
         elif suffix == "API_URL":
             shown = f"set -> {provider.endpoint}"
