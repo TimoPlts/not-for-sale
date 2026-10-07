@@ -613,7 +613,14 @@ Trade-offs worth knowing:
 - The `telegram` channel works in `[alerts] channels` (alone or with the others), `alert-test --channel telegram` and `doctor`. The environment template, the README and `DEPLOYMENT.md` explain the setup.
 - Tests: the exact request (URL, chat, text, run id, truncation); settings validation; the token never in `repr`, errors or logs, and an unreachable API never raises from the manager; channel combinations; `doctor` and `alert-test`.
 
-## 5. Stage 11–20 status summary
+### Stage 21C: Config presets ✅
+- `presets.py`: four presets (`trend`, `trend-shorts`, `conservative`, `mean-reversion`) as overrides on the defaults.
+  - `render` writes TOML with only the differing settings, nested tables as sub-tables (no empty parent headers), and the strategies table in full when it changed, because a `[strategies]` table replaces the defaults.
+  - `preset_toml` adds an explanatory header.
+- CLI: `trading-lab init-config [PRESET] [PATH] [--force]` lists the presets, or writes one (default `config/PRESET.toml`). It never overwrites without `--force`, checks that the file loads, and prints the `checkup` and `ab` next steps.
+- Tests: every preset round-trips exactly through its file, differs from the defaults and backtests; files list only the changes (including regime weights and full strategy tables); the CLI (listing, default path, no overwrite, `--force`, a custom path, an unknown preset).
+
+## 5. Stage 11–21 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -627,6 +634,7 @@ On top of the Stage 9/10 system:
 - **Decisions and operations (18):** A/B tests of whole configs over independent windows (18A), a watchdog with a systemd timer (18B), and volatility-targeted sizing (18C).
 - **Not fooling yourself (19):** a permutation test against shuffled markets (19A), sweep stability scores (19B), and market regimes in the report and dashboard (19C).
 - **One verdict and smarter exits (20):** a one-command strategy checkup (20A), a time stop (20B), and regime-dependent strategy weights (20C).
+- **Readability and reach (21):** monthly returns, Calmar and the longest drawdown (21A), Telegram alerts (21B), and config presets (21C).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

@@ -1,6 +1,7 @@
 """``trading-lab`` command-line interface.
 
     trading-lab demo     [DIR]   (offline sample: a backtest, a paper run and HTML reports)
+    trading-lab init-config PRESET [PATH] [--force]   (trend | trend-shorts | conservative | mean-reversion)
     trading-lab backtest [--start DATE] [--end DATE] [--symbols ...] [--timeframe TF] [--synthetic SEED]
     trading-lab paper    [--symbols ...] [--timeframe TF] [--resume RUN_ID] [--once] [--synthetic SEED]
     trading-lab report   [RUN_ID] [--limit N] [--html FILE]
@@ -1198,6 +1199,30 @@ def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_init_config(args: argparse.Namespace) -> int:
+    from trading_lab.presets import PRESETS, preset_toml
+
+    if args.preset is None:
+        print("Presets (each a short file of changes from the defaults; test before use):")
+        for p in PRESETS.values():
+            print(f"  {p.name:<15} {p.summary}")
+        print("\nWrite one with: trading-lab init-config PRESET [PATH]")
+        return 0
+    if args.preset not in PRESETS:
+        raise TradingLabError(f"unknown preset {args.preset!r}; choose from {', '.join(PRESETS)}")
+    path = Path(args.path or f"config/{args.preset}.toml")
+    if path.exists() and not args.force:
+        raise TradingLabError(f"{path} already exists (use --force to overwrite it)")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(preset_toml(args.preset), encoding="utf-8")
+    load_config(path)  # what was written must load
+    print(f"Wrote {path} ({PRESETS[args.preset].summary}).")
+    print("Next:")
+    print(f"  trading-lab --config {path} checkup --days 180          # is it any good?")
+    print(f"  trading-lab ab config/default.toml {path} --days 180    # better than the defaults?")
+    return 0
+
+
 def cmd_demo(args: argparse.Namespace) -> int:
     from trading_lab.demo import build_demo, next_steps
 
@@ -1276,6 +1301,12 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--symbols", nargs="+", help="e.g. BTC/USDT ETH/USDT")
         p.add_argument("--timeframe", help="e.g. 15m, 1h, 4h, 1d")
         p.add_argument("--synthetic", type=int, metavar="SEED", help="offline synthetic data")
+
+    ic = sub.add_parser("init-config", help="write a preset config to start from (trend, conservative, ...)")
+    ic.add_argument("preset", nargs="?", help="preset name (omit to list them)")
+    ic.add_argument("path", nargs="?", help="where to write it (default config/PRESET.toml)")
+    ic.add_argument("--force", action="store_true", help="overwrite an existing file")
+    ic.set_defaults(func=cmd_init_config)
 
     dm = sub.add_parser("demo", help="offline sample: a backtest, a paper run and HTML reports (start here)")
     dm.add_argument("directory", nargs="?", default="demo", help="a new or empty directory (default ./demo)")

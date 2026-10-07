@@ -69,6 +69,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 20C (complete):** opt-in regime-dependent strategy weights (`[voting.regime_weights]`): trend followers can count more in trends, and mean reversion in sideways markets.
 - **Stage 21A (complete):** monthly returns tables (in `report`, the HTML report and the dashboard), the Calmar ratio and the longest drawdown.
 - **Stage 21B (complete):** Telegram alerts (`channels = ["telegram"]`, bot token only from the environment).
+- **Stage 21C (complete):** `trading-lab init-config PRESET`: ready-made configs (trend, trend-shorts, conservative, mean-reversion) to test with `checkup` and `ab`.
 
 ### Stage 9/10 summary
 
@@ -217,6 +218,24 @@ Relative to buy & hold: excess return -5.44%, alpha -44.02%/yr, beta 0.34, corre
 * **information ratio:** excess return per unit of tracking error.
 
 A strategy can beat buy & hold in a falling market simply by holding cash. Alpha and beta separate "less exposed" from "better at picking", and they are computed from per-bar returns, with definitions in `src/trading_lab/metrics/relative.py`.
+
+## Starting points (`init-config`)
+
+```bash
+trading-lab init-config                       # list the presets
+trading-lab init-config trend                 # writes config/trend.toml
+trading-lab --config config/trend.toml checkup --days 180
+trading-lab ab config/default.toml config/trend.toml --days 180
+```
+
+| preset | what it changes |
+|---|---|
+| `trend` | Donchian breakouts and an EMA crossover join the vote, plus a 4% trailing stop and a 72-bar time stop |
+| `trend-shorts` | the same, trading both directions (simulated, fully collateralised shorts) |
+| `conservative` | half the risk per trade, volatility-targeted positions, ATR stops, a 200-bar trend filter, tighter breakers |
+| `mean-reversion` | RSI and Bollinger only (MACD off), a 3% take-profit, a 24-bar time stop, and mean reversion muted in down-trends |
+
+The file lists only what the preset changes. Everything else keeps the defaults documented in `config/default.toml`, so you can see exactly what you are testing. An existing file is never overwritten without `--force`. Presets are starting points to test, not recommendations.
 
 ## Is this strategy any good? (`checkup`)
 
