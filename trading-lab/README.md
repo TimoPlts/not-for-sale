@@ -68,6 +68,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 20B (complete):** an opt-in time stop (`risk.max_holding_bars`): positions exit at the next open after N bars.
 - **Stage 20C (complete):** opt-in regime-dependent strategy weights (`[voting.regime_weights]`): trend followers can count more in trends, and mean reversion in sideways markets.
 - **Stage 21A (complete):** monthly returns tables (in `report`, the HTML report and the dashboard), the Calmar ratio and the longest drawdown.
+- **Stage 21B (complete):** Telegram alerts (`channels = ["telegram"]`, bot token only from the environment).
 
 ### Stage 9/10 summary
 
@@ -471,6 +472,16 @@ Live paper runs then push:
 * **every day:** a summary (`trading-lab summary`).
 
 Recoveries are reported too, and repeats of the same alert are suppressed for an hour. Alert settings come from the current config, even when resuming an older run. A webhook that fails never affects trading, and its URL is never logged.
+
+**Telegram:** set `channels = ["telegram"]` (or add it to the list). Create a bot with @BotFather and send it one message. Then put the bot token and your chat id in the environment:
+
+```bash
+export TRADING_LAB_TELEGRAM_BOT_TOKEN='123456:...'   # secret: environment only
+export TRADING_LAB_TELEGRAM_CHAT_ID=123456789
+trading-lab alert-test --channel telegram
+```
+
+The token is part of Telegram's API address. It is never stored, logged or shown, and errors only say which variable to check.
 
 **E-mail instead of, or as well as, a webhook:** set `channels = ["email"]` (or `["webhook", "email"]`). The SMTP settings come only from the environment:
 

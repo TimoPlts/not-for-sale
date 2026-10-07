@@ -464,7 +464,7 @@ class AgentsConfig:
 
 ALERT_LEVELS = ("info", "warning", "critical")
 ALERT_FORMATS = ("ntfy", "slack", "discord", "json")
-ALERT_CHANNELS = ("webhook", "email")
+ALERT_CHANNELS = ("webhook", "email", "telegram")
 
 
 @dataclass(frozen=True, slots=True)
@@ -476,7 +476,7 @@ class AlertsConfig:
     """
 
     enabled: bool = False
-    channels: tuple[str, ...] = ("webhook",)  # webhook and/or email (SMTP settings from the environment)
+    channels: tuple[str, ...] = ("webhook",)  # webhook, email and/or telegram (settings from the environment)
     format: str = "ntfy"  # ntfy | slack | discord | json (webhook only)
     min_level: str = "warning"  # info also reports every entry and exit
     daily_summary: bool = True  # a run summary after each UTC day

@@ -1028,7 +1028,15 @@ def cmd_summary(args: argparse.Namespace) -> int:
 
 
 def cmd_alert_test(args: argparse.Namespace) -> int:
-    from trading_lab.alerts import URL_ENV, AlertManager, MultiNotifier, WebhookNotifier, build_notifier
+    from trading_lab.alerts import (
+        TELEGRAM_TOKEN_ENV,
+        URL_ENV,
+        AlertManager,
+        MultiNotifier,
+        TelegramNotifier,
+        WebhookNotifier,
+        build_notifier,
+    )
 
     cfg = _load_config(args)
     if args.format:
@@ -1038,6 +1046,8 @@ def cmd_alert_test(args: argparse.Namespace) -> int:
     for n in notifier.notifiers if isinstance(notifier, MultiNotifier) else (notifier,):
         if isinstance(n, WebhookNotifier):
             print(f"Sending a test alert ({n.fmt}) to {n.host} (URL from {URL_ENV}, not shown)")
+        elif isinstance(n, TelegramNotifier):
+            print(f"Sending a test Telegram message (bot token from {TELEGRAM_TOKEN_ENV}, not shown)")
         else:
             print(f"Sending a test e-mail to {len(n.recipients)} recipient(s) via {n.host}:{n.port} "
                   f"({n.security}; login from the environment, not shown)")
@@ -1392,7 +1402,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     al = sub.add_parser("alert-test", help="send one test notification through each configured channel")
     al.add_argument("--format", choices=("ntfy", "slack", "discord", "json"), help="default: [alerts] format")
-    al.add_argument("--channel", choices=("webhook", "email"),
+    al.add_argument("--channel", choices=("webhook", "email", "telegram"),
                     help="test only this channel (default: [alerts] channels)")
     al.set_defaults(func=cmd_alert_test)
 

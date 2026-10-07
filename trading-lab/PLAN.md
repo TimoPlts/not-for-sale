@@ -606,6 +606,13 @@ Trade-offs worth knowing:
 - Measured along the way: a 90-day, four-symbol backtest takes about 0.8 s. Micro-optimising signal creation saved about 1%, so it was not kept.
 - Tests: Calmar and the longest drawdown on hand values; the monthly table across a year boundary, with gaps and compounding; the dashboard data, snapshot, HTML and CLI views, where the months compound to the run's return; the dashboard rendering.
 
+### Stage 21B: Telegram alerts ✅
+- `alerts.TelegramNotifier`: a plain-text bot message to one chat (`sendMessage`, up to 4,000 characters, link previews off). The settings `TRADING_LAB_TELEGRAM_BOT_TOKEN` and `TRADING_LAB_TELEGRAM_CHAT_ID` come only from the environment and are validated.
+  - The token is part of the API URL, so `repr`, errors and logs never contain it.
+  - HTTP errors name the variable to check, and transport errors drop their message.
+- The `telegram` channel works in `[alerts] channels` (alone or with the others), `alert-test --channel telegram` and `doctor`. The environment template, the README and `DEPLOYMENT.md` explain the setup.
+- Tests: the exact request (URL, chat, text, run id, truncation); settings validation; the token never in `repr`, errors or logs, and an unreachable API never raises from the manager; channel combinations; `doctor` and `alert-test`.
+
 ## 5. Stage 11–20 status summary
 
 On top of the Stage 9/10 system:

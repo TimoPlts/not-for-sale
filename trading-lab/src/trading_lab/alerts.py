@@ -6,6 +6,10 @@ Two channels, chosen with ``[alerts] channels``:
   the ``TRADING_LAB_ALERT_URL`` environment variable only. Such URLs usually
   contain a secret token, so the URL is never stored or logged; messages
   only name its host.
+* **telegram**: a bot message to one chat. The bot token
+  (``TRADING_LAB_TELEGRAM_BOT_TOKEN``) is part of Telegram's API URL, so the
+  URL is never stored, logged or shown; the chat id comes from
+  ``TRADING_LAB_TELEGRAM_CHAT_ID``.
 * **email** over SMTP: every setting comes from ``TRADING_LAB_SMTP_*`` and
   ``TRADING_LAB_ALERT_EMAIL_*`` environment variables. The connection is
   encrypted (STARTTLS or SSL); without encryption only a local relay with no
@@ -46,6 +50,10 @@ SMTP_PASS_ENV = "TRADING_LAB_SMTP_PASSWORD"
 EMAIL_FROM_ENV = "TRADING_LAB_ALERT_EMAIL_FROM"
 EMAIL_TO_ENV = "TRADING_LAB_ALERT_EMAIL_TO"  # comma-separated
 SMTP_SECURITY = ("starttls", "ssl", "none")
+TELEGRAM_TOKEN_ENV = "TRADING_LAB_TELEGRAM_BOT_TOKEN"
+TELEGRAM_CHAT_ENV = "TRADING_LAB_TELEGRAM_CHAT_ID"
+TELEGRAM_API = "https://api.telegram.org"
+_TELEGRAM_LIMIT = 4000  # Telegram allows 4096 characters per message
 _DEFAULT_PORT = {"starttls": 587, "ssl": 465, "none": 25}
 _LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 LEVELS = {"info": 0, "warning": 1, "critical": 2}
@@ -246,6 +254,50 @@ class EmailNotifier:
             raise ConnectionError(f"alert e-mail via {self.host}:{self.port} failed ({type(exc).__name__})") from None
 
 
+class TelegramNotifier:
+    """Sends each alert as a plain-text Telegram message from a bot to one chat."""
+
+    def __init__(self, bot_token: str, chat_id: str, *, api_url: str = TELEGRAM_API, timeout: float = 10.0,
+                 transport: HttpTransport | None = None) -> None:
+        bot_token, chat_id = bot_token.strip(), chat_id.strip()
+        if not bot_token or any(c.isspace() or c == "/" for c in bot_token):
+            raise ConfigError(f"{TELEGRAM_TOKEN_ENV} must be a bot token (from @BotFather)")
+        if not chat_id or any(c.isspace() for c in chat_id):
+            raise ConfigError(f"{TELEGRAM_CHAT_ENV} must be a chat id (e.g. 123456789 or -100123456789)")
+        self._url = f"{api_url.rstrip('/')}/bot{bot_token}/sendMessage"
+        self.chat_id = chat_id
+        self.timeout = timeout
+        self._transport = transport or UrllibTransport()
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] | None = None, **kwargs: object) -> TelegramNotifier:
+        env = os.environ if env is None else env
+        token, chat = env.get(TELEGRAM_TOKEN_ENV, "").strip(), env.get(TELEGRAM_CHAT_ENV, "").strip()
+        missing = [name for name, value in ((TELEGRAM_TOKEN_ENV, token), (TELEGRAM_CHAT_ENV, chat)) if not value]
+        if missing:
+            raise ConfigError(f"Telegram alerts are enabled but {', '.join(missing)} is not set "
+                              "(put it in the service environment file)")
+        return cls(token, chat, **kwargs)  # type: ignore[arg-type]
+
+    def __repr__(self) -> str:  # never shows the token
+        return "TelegramNotifier(chat_id=set)"
+
+    def send(self, alert: Alert) -> None:
+        text = f"[{_ICON[alert.level]}] trading-lab: {alert.title}\n{alert.body}".strip()
+        if alert.run_id:
+            text += f"\nRun: {alert.run_id}"
+        body = json.dumps({"chat_id": self.chat_id, "text": text[:_TELEGRAM_LIMIT],
+                           "disable_web_page_preview": True}).encode("utf-8")
+        try:
+            status, raw = self._transport.post(self._url, {"Content-Type": "application/json"}, body, self.timeout)
+        except (TransportTimeout, TransportConnectionError) as exc:
+            raise ConnectionError(f"Telegram unreachable ({type(exc).__name__})") from None
+        if not 200 <= status < 300:
+            hint = f" (check {TELEGRAM_TOKEN_ENV})" if status in (401, 404) else \
+                f" (check {TELEGRAM_CHAT_ENV} and that you started a chat with the bot)" if status in (400, 403) else ""
+            raise ConnectionError(f"Telegram answered HTTP {status}{hint}")
+
+
 class MultiNotifier:
     """Sends to every channel. Fails only when no channel delivered."""
 
@@ -279,6 +331,8 @@ def build_notifier(config: object, env: Mapping[str, str] | None = None,
             notifiers.append(WebhookNotifier.from_env(alerts.format, env))
         elif channel == "email":
             notifiers.append(EmailNotifier.from_env(env))
+        elif channel == "telegram":
+            notifiers.append(TelegramNotifier.from_env(env))
         else:
             raise ConfigError(f"unknown alert channel {channel!r}")
     return notifiers[0] if len(notifiers) == 1 else MultiNotifier(notifiers)
