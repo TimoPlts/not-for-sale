@@ -142,16 +142,47 @@ The paper service restarts itself after a crash. But a hung process, a crash loo
 sudo cp deploy/systemd/trading-lab-watchdog.service deploy/systemd/trading-lab-watchdog.timer /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now trading-lab-watchdog.timer
 systemctl list-timers trading-lab-watchdog.timer      # when it runs next
-sudo -u tradinglab bash -c 'cd /opt/trading-lab/trading-lab && .venv/bin/trading-lab status vm-paper-1'
+sudo -u tradinglab bash -c 'cd /opt/trading-lab/trading-lab && .venv/bin/trading-lab status --all'
 ```
 
-A check fails, and alerts if `[alerts] enabled = true`, when:
+The watchdog runs `status --all --alert`: it checks every paper run that is "running", so it also covers
+several runs (section 5d). A check fails, and alerts if `[alerts] enabled = true`, when, for any of them:
 
 * more than 2 closed candles are waiting (crashed, hung or stuck);
 * 3 cycles in a row failed;
-* the run is not "running" (e.g. after `systemctl stop`; stop the timer too when you stop trading on purpose).
+* no paper run is "running" (e.g. after `systemctl stop`; stop the timer too when you stop trading on purpose).
+  With several runs, a run you stopped on purpose is simply no longer checked.
 
 A failed check also marks the watchdog unit failed, so `systemctl --failed` shows it.
+
+## 5d. Several paper runs side by side (optional)
+
+To compare configs live (say the defaults against the `trend` preset), run each as its own service.
+`trading-lab-paper@NAME` runs `config/runs/NAME.toml` as run id `NAME`, logging to
+`/var/log/trading-lab/paper-NAME.log`:
+
+```bash
+cd /opt/trading-lab/trading-lab
+sudo -u tradinglab mkdir -p config/runs
+sudo -u tradinglab cp config/default.toml config/runs/default.toml
+sudo -u tradinglab .venv/bin/trading-lab init-config trend config/runs/trend.toml
+sudo cp deploy/systemd/trading-lab-paper@.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now trading-lab-paper@default trading-lab-paper@trend
+systemctl status 'trading-lab-paper@*'
+sudo -u tradinglab .venv/bin/trading-lab status --all
+```
+
+* All runs write to the same database (`storage.db_path`, `data/trading_lab.db` by default). Keep that
+  setting the same in every run config, or the watchdog and the dashboard will not see the run.
+* Each run is a separate simulated account with its own cash, positions and circuit breakers. Nothing is
+  shared between runs except the market data they read and the model endpoint.
+* Every run with AI agents calls the model, so two runs with agents mean twice the model calls.
+* Use either the single `trading-lab-paper` service or the template, not both for the same run id.
+* The dashboard (and `trading-lab dashboard-data`) opens with a table of every paper run; pick one in the
+  sidebar for its details.
+* `trading-lab live-compare RUN_A RUN_B` compares two runs over the time they ran together (see the README).
+  `trading-lab compare` and `trading-lab report RUN_ID` work on any of the runs too.
 
 ## 6. Where things are
 

@@ -620,7 +620,32 @@ Trade-offs worth knowing:
 - CLI: `trading-lab init-config [PRESET] [PATH] [--force]` lists the presets, or writes one (default `config/PRESET.toml`). It never overwrites without `--force`, checks that the file loads, and prints the `checkup` and `ab` next steps.
 - Tests: every preset round-trips exactly through its file, differs from the defaults and backtests; files list only the changes (including regime weights and full strategy tables); the CLI (listing, default path, no overwrite, `--force`, a custom path, an unknown preset).
 
-## 5. Stage 11–21 status summary
+### Stage 22A: Several paper runs on one VM ✅
+- `deploy/systemd/trading-lab-paper@.service`: a template service. The instance name is the run id, its config is `config/runs/NAME.toml`, and it logs to `paper-NAME.log`, with the same hardening and SIGTERM handling as the single service.
+- `status.running_paper_runs(store)` lists every running paper run, sorted by id. `trading-lab status --all` checks them all:
+  - each problem is prefixed with its run id, and one alert covers them all;
+  - no running run at all is a problem unless `--allow-stopped` is set;
+  - `--json` gives a list, and a run id together with `--all` is refused.
+- The watchdog service now runs `status --all --alert`, so it covers one run or several. With a single run it behaves as before.
+- `DEPLOYMENT.md` section 5d explains the setup: one config per run, the shared database, separate accounts, and model calls per run.
+- Tests: two runs trading through two connections to one database file, then both OK; `--all` with a stalled run, a stopped one and a healthy one (exit code, alert text, JSON); no running run, with and without `--allow-stopped`; both systemd templates.
+
+### Stage 22B: Comparing two live runs ✅
+- `research/live_compare.py`: `live_compare(store, run_a, run_b, min_days=14)` compares two stored runs over their overlap (the later first bar to the earlier last bar).
+  - Each run starts from its last equity before the overlap (or its initial cash). Its metrics come from `compute_metrics` over the overlap, counting only trades closed and fees paid within it.
+  - Daily returns (last equity per UTC day) are paired. Ties are not compared, and `sign_test_p` gives the one-sided p for each run. The settings that differ come from `config_diff`.
+  - Verdicts: not comparable (no overlap), too early to tell (fewer than `min_days` compared days), better (p < 0.05), a lead that could be chance, or no difference. Different kinds or timeframes are noted.
+- CLI: `trading-lab live-compare RUN_A RUN_B [--min-days 14] [--json]`, read-only.
+- Tests: hand-made curves where the overlap, base equity, fees, trades, exposure and each day's return are checked exactly; the sign test and every verdict; notes; two real paper runs started a day apart (no head start) and the CLI (text, JSON, errors).
+
+### Stage 22C: All paper runs at a glance ✅
+- `DashboardData.paper_runs(now=None, max_behind=2)`: one row per paper run, with running runs first and then by id. Each row has status, timeframe, symbols, last bar, equity, return, max drawdown (the same formulas as `overview`), open positions, candles waiting, and the watchdog check.
+  - The check is "OK" or the `check_status` problems for a running run, and None for a run that is not running.
+  - It is also part of the `dashboard-data` snapshot (`paper_runs`).
+- The dashboard shows a "Paper runs" table above the portfolio when there are at least two paper runs, with a pointer to `live-compare`. `dashboard-data` prints the same list. A single run looks exactly as before.
+- Tests: rows against each run's overview, the order, a stopped run (not checked), a run without bars, a stalled check later, the JSON snapshot, the text view, no table for a single run, and the rendered dashboard table, with the database unchanged.
+
+## 5. Stage 11–22 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -635,6 +660,7 @@ On top of the Stage 9/10 system:
 - **Not fooling yourself (19):** a permutation test against shuffled markets (19A), sweep stability scores (19B), and market regimes in the report and dashboard (19C).
 - **One verdict and smarter exits (20):** a one-command strategy checkup (20A), a time stop (20B), and regime-dependent strategy weights (20C).
 - **Readability and reach (21):** monthly returns, Calmar and the longest drawdown (21A), Telegram alerts (21B), and config presets (21C).
+- **Running several configs live (22):** several paper runs on one VM with one watchdog (22A), a comparison of two live runs over the time they ran together (22B), and an overview of all paper runs in the dashboard (22C).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

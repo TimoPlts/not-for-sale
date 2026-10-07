@@ -70,6 +70,9 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 21A (complete):** monthly returns tables (in `report`, the HTML report and the dashboard), the Calmar ratio and the longest drawdown.
 - **Stage 21B (complete):** Telegram alerts (`channels = ["telegram"]`, bot token only from the environment).
 - **Stage 21C (complete):** `trading-lab init-config PRESET`: ready-made configs (trend, trend-shorts, conservative, mean-reversion) to test with `checkup` and `ab`.
+- **Stage 22A (complete):** several paper runs side by side on one VM: a systemd template (`trading-lab-paper@NAME`, one config per run) and `status --all`, which checks every running paper run.
+- **Stage 22B (complete):** `trading-lab live-compare RUN_A RUN_B`: which of two paper runs is doing better over the time they ran together? Metrics, better days with a sign test, and the settings that differ.
+- **Stage 22C (complete):** with several paper runs, the dashboard and `dashboard-data` open with an overview table: each run's status, equity, return, drawdown, open positions, last bar and watchdog check.
 
 ### Stage 9/10 summary
 
@@ -160,6 +163,7 @@ trading-lab dashboard                  # http://127.0.0.1:8501 ; --host/--port t
 
 One page, refreshed automatically (every 60 s by default):
 
+* **Paper runs** (only when there are several): every paper run's status, equity, return, max drawdown, open positions, last bar and watchdog check, running runs first.
 * **Portfolio:** equity, daily PnL, drawdown, exposure, realized/unrealized PnL, breaker status (with a banner when the kill switch or daily limit is active).
 * **Equity curve** against equal-weight buy & hold, and the **drawdown** chart.
 * **Open positions** (entry, current price, size, unrealized PnL, stop) and working simulated orders.
@@ -324,6 +328,24 @@ Verdict: B leads 4 of 6 windows, but that could easily be chance (p = 0.34); use
 Both configs must trade the same symbols and timeframe with the same starting cash. `--symbols` and `--timeframe` apply to both. `--metric sharpe_ratio` (or any other metric) compares something other than return; for `max_drawdown`, lower is better.
 
 Be honest about the arithmetic: with 6 windows, only 6 wins out of 6 reaches p < 0.05. Changes that win 4 of 6 need more evidence before you trust them. Nothing is stored.
+
+## Which live run is doing better? (`live-compare`)
+
+`ab` compares configs on past data. To check the result on new data, run both configs as paper runs side by side (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), section 5d), then:
+
+```bash
+trading-lab live-compare default trend             # run ids
+trading-lab live-compare default trend --json      # every day, for scripts
+```
+
+It compares the two runs only over the time they both ran. Each run is measured from its equity at the start of that period, so a run that started earlier gets no head start. It prints:
+
+* the settings that differ;
+* return, max drawdown, Sharpe, trades closed, fees and exposure over the shared period;
+* each UTC day's return for both, and which was better (ties, such as both flat, do not count);
+* a verdict with a sign test on the better days.
+
+Until 14 days have been compared (`--min-days`) the verdict is "too early to tell". Positions can last across days, so days are not fully independent: treat the p-value as a rough guide, and give both runs weeks, not days. It is read-only and works on any two stored runs.
 
 ## Where does it make or lose money? (`regimes`)
 
@@ -541,6 +563,7 @@ The pieces that make unattended operation work:
   * more than 2 closed candles have not been processed;
   * 3 or more cycles in a row have failed;
   * the run is not running (`--allow-stopped` allows that).
+* `status --all` checks every running paper run at once (the watchdog uses it), so several runs can trade side by side: `trading-lab-paper@NAME` runs `config/runs/NAME.toml` as run NAME. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), section 5d.
 
 ### When things fail
 
