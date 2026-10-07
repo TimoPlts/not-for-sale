@@ -58,6 +58,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 17A (complete):** two opt-in trend-following strategies, `ma_cross` (moving-average crossover) and `donchian` (channel breakout).
 - **Stage 17B (complete):** `trading-lab costs`: the same backtest at 0x to 3x fees and slippage, with the break-even cost level.
 - **Stage 17C (complete):** `trading-lab regimes`: a run's performance by market regime (trend up, sideways or down, and calm or volatile).
+- **Stage 18A (complete):** `trading-lab ab A.toml B.toml`: is a config change really better? Both configs over independent windows, with a sign test.
 
 ### Stage 9/10 summary
 
@@ -229,6 +230,35 @@ Verdict: break-even at about 1.15x the configured costs (thin: ...)
 * **A loss even at 0x:** the strategy has no edge before costs in that period.
 
 Nothing is stored.
+
+## Is the change really better? (`ab`)
+
+```bash
+cp config/default.toml config/try.toml        # then edit try.toml, e.g. allow_short = true
+trading-lab ab config/default.toml config/try.toml --days 180 --windows 6
+```
+
+This splits the period into equal, separate windows and backtests both configs in each one, starting flat with the initial cash every time. It prints:
+
+* exactly which settings differ;
+* each window's result for A and for B, and which one did better;
+* the compounded return of each;
+* a verdict with a sign test: how likely B's number of wins would be if both configs were equally good.
+
+```
+Settings that differ (A -> B):
+  risk.allow_short: False -> True
+window                          A         B  better   (total_return)
+2025-01-01 -> 2025-01-31     +2.10%    +3.40%    B
+...
+Verdict: B leads 4 of 6 windows, but that could easily be chance (p = 0.34); use more windows or a longer period.
+```
+
+(The numbers above are only an illustration of the layout.)
+
+Both configs must trade the same symbols and timeframe with the same starting cash. `--symbols` and `--timeframe` apply to both. `--metric sharpe_ratio` (or any other metric) compares something other than return; for `max_drawdown`, lower is better.
+
+Be honest about the arithmetic: with 6 windows, only 6 wins out of 6 reaches p < 0.05. Changes that win 4 of 6 need more evidence before you trust them. Nothing is stored.
 
 ## Where does it make or lose money? (`regimes`)
 

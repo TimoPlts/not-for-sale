@@ -527,6 +527,15 @@ Trade-offs worth knowing:
   - short and unknown runs;
   - the CLI (text, JSON, options, exit codes, the database byte-identical).
 
+### Stage 18A: A/B comparison of configs ✅
+- `research/ab.py`:
+  - `ab_test(config_a, config_b, provider, start, end, windows=6, metric="total_return")` runs a fresh backtest of each config in every one of N equal, consecutive, non-overlapping windows. Data and agent answers are shared.
+  - `ABResult` reports wins per side (ties and undefined values left out; lower is better for drawdown, volatility and fees), one-sided sign-test p-values for each side, compounded returns, and a verdict (significant, a lead that could be chance, a tie, or not comparable).
+  - `config_diff` lists every setting that differs.
+  - Different symbols, timeframe or initial cash are refused.
+- CLI: `trading-lab ab A.toml B.toml [--days N | --start/--end] [--windows 6] [--metric M] [--export JSON]`. Command-line market overrides apply to both configs. Nothing is stored.
+- Tests: the config diff (including added strategy tables); window arithmetic and validation; each window equal to a standalone backtest; identical configs tie; sign tests and every verdict, including lower-is-better metrics and undefined values; unfair comparisons refused; the CLI (export, bad windows, missing file, shared overrides).
+
 ## 5. Stage 11–17 status summary
 
 On top of the Stage 9/10 system:
