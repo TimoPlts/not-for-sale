@@ -26,7 +26,7 @@
     trading-lab costs [--days N | --start/--end] [--multipliers 0,0.5,1,2,3]
     trading-lab regimes [RUN_ID] [--trend-bars 50] [--vol-bars 24] [--json]
     trading-lab ab A.toml B.toml [--days 180 | --start/--end] [--windows 6] [--metric total_return]
-    trading-lab status [PAPER_RUN_ID] [--max-behind 2] [--alert] [--json]   (watchdog; exit 1 if not OK)
+    trading-lab status [PAPER_RUN_ID | --all] [--max-behind 2] [--alert] [--json]   (watchdog; exit 1 if not OK)
     trading-lab permutation-test [--days N | --start/--end] [--permutations 100] [--metric total_return]
     trading-lab checkup [--days N | --start/--end] [--html FILE] [--json FILE]   (every check, one verdict)
 
@@ -663,32 +663,47 @@ def cmd_ab(args: argparse.Namespace) -> int:
 def cmd_status(args: argparse.Namespace) -> int:
     import json as _json
 
-    from trading_lab.status import check_status, format_status, latest_paper_run
+    from trading_lab.status import check_status, format_status, latest_paper_run, running_paper_runs
     from trading_lab.storage import SQLiteStore
 
     cfg = _load_config(args)
     if not Path(cfg.storage.db_path).exists():
         raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    if args.all and args.run_id:
+        raise TradingLabError("use either a run id or --all, not both")
+    problems: list[str] = []
     with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
-        run_id = args.run_id or latest_paper_run(store)
-        if run_id is None:
-            raise TradingLabError("no paper run in the database")
+        if args.all:
+            run_ids = running_paper_runs(store)
+            if not run_ids and not args.allow_stopped:
+                problems.append("no paper run is running")
+        else:
+            run_id = args.run_id or latest_paper_run(store)
+            if run_id is None:
+                raise TradingLabError("no paper run in the database")
+            run_ids = [run_id]
         try:
-            status = check_status(store, run_id, max_behind=args.max_behind, max_errors=args.max_errors,
-                                  expect_running=not args.allow_stopped)
+            statuses = [check_status(store, r, max_behind=args.max_behind, max_errors=args.max_errors,
+                                     expect_running=not args.allow_stopped) for r in run_ids]
         except ValueError as exc:
             raise TradingLabError(str(exc)) from None
-    print(_json.dumps(status.to_dict(), indent=2) if args.json else format_status(status))
-    if args.alert and not status.ok:
+    problems += [f"{s.run_id}: {p}" if args.all else p for s in statuses for p in s.problems]
+    if args.json:
+        data: Any = [s.to_dict() for s in statuses] if args.all else statuses[0].to_dict()
+        print(_json.dumps(data, indent=2))
+    else:
+        print("\n\n".join(format_status(s) for s in statuses) if statuses else "No paper run is running.")
+    if args.alert and problems:
         from trading_lab.alerts import build_alerts
 
         alerts = build_alerts(cfg)
+        title = "Paper trading needs attention" if args.all else f"Paper run {run_ids[0]} needs attention"
         if alerts is None:
             print("(--alert: alerts are disabled in the config, nothing sent)", file=sys.stderr)
-        elif not alerts.emit("critical", f"Paper run {run_id} needs attention", "\n".join(status.problems),
-                             run_id=run_id, force=True):
+        elif not alerts.emit("critical", title, "\n".join(problems),
+                             run_id=None if args.all else run_ids[0], force=True):
             print("(--alert: the alert could not be delivered; see the warning above)", file=sys.stderr)
-    return 0 if status.ok else 1
+    return 1 if problems else 0
 
 
 def cmd_permutation_test(args: argparse.Namespace) -> int:
@@ -1519,6 +1534,7 @@ def build_parser() -> argparse.ArgumentParser:
     stp.add_argument("--max-behind", type=int, default=2, help="closed candles allowed to wait (default 2)")
     stp.add_argument("--max-errors", type=int, default=3, help="failed cycles in a row allowed (default 3)")
     stp.add_argument("--allow-stopped", action="store_true", help="a stopped run is not a problem")
+    stp.add_argument("--all", action="store_true", help="check every running paper run (for several services)")
     stp.add_argument("--alert", action="store_true", help="send an alert (configured channels) when not OK")
     stp.add_argument("--json", action="store_true", help="machine-readable output")
     stp.set_defaults(func=cmd_status)

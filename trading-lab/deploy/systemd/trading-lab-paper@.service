@@ -1,0 +1,40 @@
+# Several live PAPER runs side by side (simulated fills only; no orders ever reach an exchange).
+# One instance per run: the instance name is the run id, and its config is config/runs/<name>.toml.
+# Template: review the paths and user, then install it yourself (see docs/DEPLOYMENT.md, section 5d):
+#   sudo cp deploy/systemd/trading-lab-paper@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now trading-lab-paper@default trading-lab-paper@trend
+
+[Unit]
+Description=trading-lab live paper run %i (simulation only)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=tradinglab
+Group=tradinglab
+WorkingDirectory=/opt/trading-lab/trading-lab
+# Qwen/alert settings (mode 640, owned by root:tradinglab). Never committed.
+EnvironmentFile=/etc/trading-lab/trading-lab.env
+# --run-id %i: restarts continue the same run. All runs share data/trading_lab.db (SQLite handles it).
+ExecStart=/opt/trading-lab/trading-lab/.venv/bin/trading-lab \
+    --config /opt/trading-lab/trading-lab/config/runs/%i.toml \
+    --log-file /var/log/trading-lab/paper-%i.log \
+    paper --run-id %i --notes "VM paper run %i"
+KillSignal=SIGTERM
+TimeoutStopSec=300
+Restart=on-failure
+RestartSec=60
+Environment=PYTHONUNBUFFERED=1
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ReadWritePaths=/opt/trading-lab/trading-lab/data /var/log/trading-lab
+
+[Install]
+WantedBy=multi-user.target

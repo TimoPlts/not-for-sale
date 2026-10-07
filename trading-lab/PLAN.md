@@ -620,7 +620,17 @@ Trade-offs worth knowing:
 - CLI: `trading-lab init-config [PRESET] [PATH] [--force]` lists the presets, or writes one (default `config/PRESET.toml`). It never overwrites without `--force`, checks that the file loads, and prints the `checkup` and `ab` next steps.
 - Tests: every preset round-trips exactly through its file, differs from the defaults and backtests; files list only the changes (including regime weights and full strategy tables); the CLI (listing, default path, no overwrite, `--force`, a custom path, an unknown preset).
 
-## 5. Stage 11–21 status summary
+### Stage 22A: Several paper runs on one VM ✅
+- `deploy/systemd/trading-lab-paper@.service`: a template service. The instance name is the run id, its config is `config/runs/NAME.toml`, and it logs to `paper-NAME.log`, with the same hardening and SIGTERM handling as the single service.
+- `status.running_paper_runs(store)` lists every running paper run, sorted by id. `trading-lab status --all` checks them all:
+  - each problem is prefixed with its run id, and one alert covers them all;
+  - no running run at all is a problem unless `--allow-stopped` is set;
+  - `--json` gives a list, and a run id together with `--all` is refused.
+- The watchdog service now runs `status --all --alert`, so it covers one run or several. With a single run it behaves as before.
+- `DEPLOYMENT.md` section 5d explains the setup: one config per run, the shared database, separate accounts, and model calls per run.
+- Tests: two runs trading through two connections to one database file, then both OK; `--all` with a stalled run, a stopped one and a healthy one (exit code, alert text, JSON); no running run, with and without `--allow-stopped`; both systemd templates.
+
+## 5. Stage 11–22 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -635,6 +645,7 @@ On top of the Stage 9/10 system:
 - **Not fooling yourself (19):** a permutation test against shuffled markets (19A), sweep stability scores (19B), and market regimes in the report and dashboard (19C).
 - **One verdict and smarter exits (20):** a one-command strategy checkup (20A), a time stop (20B), and regime-dependent strategy weights (20C).
 - **Readability and reach (21):** monthly returns, Calmar and the longest drawdown (21A), Telegram alerts (21B), and config presets (21C).
+- **Running several configs live (22):** several paper runs on one VM with one watchdog (22A).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

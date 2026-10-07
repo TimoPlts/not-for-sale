@@ -70,6 +70,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 21A (complete):** monthly returns tables (in `report`, the HTML report and the dashboard), the Calmar ratio and the longest drawdown.
 - **Stage 21B (complete):** Telegram alerts (`channels = ["telegram"]`, bot token only from the environment).
 - **Stage 21C (complete):** `trading-lab init-config PRESET`: ready-made configs (trend, trend-shorts, conservative, mean-reversion) to test with `checkup` and `ab`.
+- **Stage 22A (complete):** several paper runs side by side on one VM: a systemd template (`trading-lab-paper@NAME`, one config per run) and `status --all`, which checks every running paper run.
 
 ### Stage 9/10 summary
 
@@ -541,6 +542,7 @@ The pieces that make unattended operation work:
   * more than 2 closed candles have not been processed;
   * 3 or more cycles in a row have failed;
   * the run is not running (`--allow-stopped` allows that).
+* `status --all` checks every running paper run at once (the watchdog uses it), so several runs can trade side by side: `trading-lab-paper@NAME` runs `config/runs/NAME.toml` as run NAME. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), section 5d.
 
 ### When things fail
 

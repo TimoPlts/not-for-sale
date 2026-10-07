@@ -1,4 +1,4 @@
-# Watchdog for the PAPER trader: checks that it is running and keeping up with the candles,
+# Watchdog for the PAPER trader: checks that every running paper run is keeping up with the candles,
 # and sends an alert (configured [alerts] channels) when it is not. Read-only; trades nothing.
 # Template: install together with trading-lab-watchdog.timer (see docs/DEPLOYMENT.md):
 #   sudo cp deploy/systemd/trading-lab-watchdog.* /etc/systemd/system/
@@ -16,7 +16,7 @@ WorkingDirectory=/opt/trading-lab/trading-lab
 EnvironmentFile=/etc/trading-lab/trading-lab.env
 ExecStart=/opt/trading-lab/trading-lab/.venv/bin/trading-lab \
     --config /opt/trading-lab/trading-lab/config/default.toml \
-    status vm-paper-1 --alert
+    status --all --alert
 # Exit code 1 (not OK) marks the unit failed: visible in `systemctl --failed` and the journal.
 
 NoNewPrivileges=true

@@ -67,6 +67,12 @@ def latest_paper_run(store: Any) -> str | None:
     return None if chosen is None else str(chosen["run_id"])
 
 
+def running_paper_runs(store: Any) -> list[str]:
+    """Every paper run whose status is "running" (a crashed process still shows "running"), by run id."""
+    return sorted(str(r["run_id"]) for r in store.list_runs(10_000)
+                  if r["kind"] == "paper" and r["status"] == "running")
+
+
 def check_status(store: Any, run_id: str, *, now: datetime | None = None, max_behind: int = 2,
                  max_errors: int = 3, expect_running: bool = True) -> RunStatus:
     run = store.get_run(run_id)

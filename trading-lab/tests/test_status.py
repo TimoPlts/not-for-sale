@@ -124,7 +124,7 @@ def test_cli_and_alert(tmp_path, monkeypatch, capsys):
 def test_watchdog_templates():
     service = (DEPLOY / "trading-lab-watchdog.service").read_text()
     timer = (DEPLOY / "trading-lab-watchdog.timer").read_text()
-    assert "Type=oneshot" in service and "status vm-paper-1 --alert" in service
+    assert "Type=oneshot" in service and "status --all --alert" in service  # every running paper run
     assert "ReadOnlyPaths=/opt/trading-lab/trading-lab" in service and "ReadWritePaths" not in service
     assert "NoNewPrivileges=true" in service and "QWEN_API_KEY" not in service
     assert "OnUnitActiveSec=15min" in timer and "WantedBy=timers.target" in timer
