@@ -29,7 +29,7 @@ from trading_lab.storage import SQLiteStore
 
 HIGHER_IS_BETTER = {
     "total_return", "annualized_return", "sharpe_ratio", "sortino_ratio", "win_rate",
-    "profit_factor", "avg_trade_return", "final_equity",
+    "profit_factor", "avg_trade_return", "final_equity", "probabilistic_sharpe",
 }
 LOWER_IS_BETTER = {"max_drawdown", "volatility_annualized", "total_fees"}
 
@@ -117,6 +117,13 @@ class SweepResult:
     benchmark: PerformanceMetrics | None
     config_fingerprint: str
     run_id: str | None = None
+    returns: tuple[float, ...] = ()  # per-bar returns, for the deflated Sharpe ratio
+
+    @property
+    def per_bar_sharpe(self) -> float | None:
+        from trading_lab.metrics.sharpe import per_bar_sharpe
+
+        return per_bar_sharpe(self.returns)
 
 
 def run_sweep(
@@ -149,9 +156,21 @@ def run_sweep(
         result = BacktestEngine(cfg, memo, store=store, llm_provider=llm_provider).run(
             start, end, notes=f"{label} {params}" if store is not None else ""
         )
-        results.append(SweepResult(params, result.metrics, result.benchmark, cfg.fingerprint(), result.run_id))
+        equity = [cfg.portfolio.initial_cash, *result.equity_curve["equity"].tolist()]
+        returns = tuple(float(b / a - 1.0) for a, b in zip(equity, equity[1:]))
+        results.append(SweepResult(params, result.metrics, result.benchmark, cfg.fingerprint(), result.run_id,
+                                   returns))
     key = rank_key(metric)
     return sorted(results, key=lambda r: key(r.metrics))
+
+
+def deflated_sharpe_of_best(results: Sequence[SweepResult]) -> float | None:
+    """The deflated Sharpe ratio of ``results[0]`` (the chosen row) against all the trials."""
+    from trading_lab.metrics.sharpe import deflated_sharpe
+
+    if not results or not results[0].returns:
+        return None
+    return deflated_sharpe(results[0].returns, [r.per_bar_sharpe for r in results])
 
 
 def params_key(params: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
