@@ -569,6 +569,11 @@ Trade-offs worth knowing:
   - validation (agents, counts, metrics);
   - the CLI.
 
+### Stage 19B: Sweep stability ✅
+- `research/sweep.py`: `stability_scores(results, grid, metric)` gives each grid point the mean metric of itself and its neighbours: points one step away in one parameter, in the order the values were given. Undefined values are skipped and their count is reported. `rank_by_stability` orders by that score (lower is better for drawdown and the like). `params_key` identifies a grid point.
+- `sweep` prints a `stable` column (and writes it to the CSV export). `--rank stability` orders the table by it.
+- Tests: a lone peak scores below a plateau, and the plateau ranks first; two-dimensional neighbours and undefined values; lower-is-better metrics; the CLI (column, ranking, export).
+
 ## 5. Stage 11–18 status summary
 
 On top of the Stage 9/10 system:

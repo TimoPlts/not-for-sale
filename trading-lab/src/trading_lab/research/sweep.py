@@ -152,3 +152,49 @@ def run_sweep(
         results.append(SweepResult(params, result.metrics, result.benchmark, cfg.fingerprint(), result.run_id))
     key = rank_key(metric)
     return sorted(results, key=lambda r: key(r.metrics))
+
+
+def params_key(params: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
+    return tuple(sorted((k, repr(v)) for k, v in params.items()))
+
+
+def stability_scores(
+    results: Sequence[SweepResult], grid: Mapping[str, Sequence[Any]], metric: str
+) -> dict[tuple[tuple[str, str], ...], tuple[float | None, int]]:
+    """Per grid point: the mean ``metric`` of the point and its grid neighbours, and how many were averaged.
+
+    Neighbours differ in exactly one parameter, by one position in that parameter's list of values
+    (in the order given). A lone peak among poor neighbours scores low; a broad plateau scores high.
+    """
+    by_key = {params_key(r.params): r for r in results}
+    out: dict[tuple[tuple[str, str], ...], tuple[float | None, int]] = {}
+    for r in results:
+        values = []
+        points = [r.params]
+        for name, options in grid.items():
+            position = next((i for i, v in enumerate(options) if repr(v) == repr(r.params.get(name))), None)
+            if position is None:
+                continue
+            for j in (position - 1, position + 1):
+                if 0 <= j < len(options):
+                    points.append({**r.params, name: options[j]})
+        for point in points:
+            other = by_key.get(params_key(point))
+            if other is not None and (v := metric_value(other.metrics, metric)) is not None:
+                values.append(v)
+        out[params_key(r.params)] = (sum(values) / len(values) if values else None, len(values))
+    return out
+
+
+def rank_by_stability(
+    results: Sequence[SweepResult], grid: Mapping[str, Sequence[Any]], metric: str
+) -> list[SweepResult]:
+    """``results`` ordered by their stability score (best first, undefined last)."""
+    scores = stability_scores(results, grid, metric)
+    sign = 1.0 if metric in LOWER_IS_BETTER else -1.0
+
+    def key(r: SweepResult) -> tuple[int, float]:
+        score = scores[params_key(r.params)][0]
+        return (1, 0.0) if score is None else (0, sign * score)
+
+    return sorted(results, key=key)

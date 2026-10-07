@@ -536,20 +536,31 @@ def cmd_sweep(args: argparse.Namespace) -> int:
         if store is not None:
             store.close()
 
+    from trading_lab.research import rank_by_stability, stability_scores
+    from trading_lab.research.sweep import params_key
+
     bench = results[0].benchmark
-    print(f"\n{'#':>3}  {'return':>8} {'max dd':>7} {'sharpe':>7} {'trades':>6} {'win':>6}  params")
+    scores = stability_scores(results, grid, args.metric)
+    if args.rank == "stability":
+        results = rank_by_stability(results, grid, args.metric)
+    print(f"\n{'#':>3}  {'return':>8} {'max dd':>7} {'sharpe':>7} {'trades':>6} {'win':>6} {'stable':>8}  params")
     for rank, r in enumerate(results, 1):
         m = r.metrics
         win = "n/a" if m.win_rate is None else f"{m.win_rate:.0%}"
+        stable = scores[params_key(r.params)][0]
         print(f"{rank:>3}  {m.total_return:>+8.2%} {-m.max_drawdown:>7.1%} {_fmt_num(m.sharpe_ratio):>7} "
-              f"{m.num_trades:>6} {win:>6}  {_short(r.params)}")
+              f"{m.num_trades:>6} {win:>6} {_fmt_num(stable):>8}  {_short(r.params)}")
+    print(f"\nstable = mean {args.metric} of a setting and its grid neighbours (one step in one parameter); "
+          "prefer a broad plateau to a lone peak" + (" (ranked by it)" if args.rank == "stability" else
+                                                      "; --rank stability ranks by it"))
     if bench is not None:
         print(f"\nBuy & hold over the same period: {bench.total_return:+.2%} "
               f"(max drawdown {-bench.max_drawdown:.1%})")
     print("\nNote: the best in-sample row is optimistic by construction; use walkforward to check it.")
     _print_provider_usage(llm)
     if args.export:
-        rows = [{**r.params, **r.metrics.to_dict(), "run_id": r.run_id} for r in results]
+        rows = [{**r.params, **r.metrics.to_dict(), "stable": scores[params_key(r.params)][0], "run_id": r.run_id}
+                for r in results]
         Path(args.export).parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(rows).to_csv(args.export, index=False)
         print(f"Results written to {Path(args.export).resolve()}")
@@ -1274,6 +1285,8 @@ def build_parser() -> argparse.ArgumentParser:
     research_options(sw, 180)
     sw.add_argument("--save", action="store_true", help="store every run in the database")
     sw.add_argument("--export", metavar="CSV", help="write the results table to a CSV file")
+    sw.add_argument("--rank", choices=("metric", "stability"), default="metric",
+                    help="order by the metric itself or by its neighbourhood average (default metric)")
     sw.set_defaults(func=cmd_sweep)
 
     def weighting_options(p: argparse.ArgumentParser) -> None:

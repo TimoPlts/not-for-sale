@@ -30,8 +30,10 @@ from trading_lab.research.sweep import (
     SweepResult,
     apply_params,
     expand_grid,
+    rank_by_stability,
     rank_key,
     run_sweep,
+    stability_scores,
 )
 from trading_lab.research.weighting import WeightingRule, adaptive_weights
 from trading_lab.research.walkforward import (
@@ -92,6 +94,8 @@ __all__ = [
     "expand_grid",
     "make_folds",
     "rank_key",
+    "rank_by_stability",
+    "stability_scores",
     "run_sweep",
     "walk_forward",
 ]

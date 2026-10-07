@@ -62,6 +62,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 18B (complete):** `trading-lab status`: a watchdog that checks the paper trader is alive and keeping up, with a systemd timer that alerts you when it is not.
 - **Stage 18C (complete):** opt-in volatility-targeted sizing (`risk.position_volatility_pct`): calm coins get bigger positions, wild ones smaller.
 - **Stage 19A (complete):** `trading-lab permutation-test`: could a market with no pattern have produced the result? The same backtest on shuffled-candle markets.
+- **Stage 19B (complete):** `sweep` scores every setting by its neighbours (`stable` column, `--rank stability`), so you pick a plateau rather than a lucky peak.
 
 ### Stage 9/10 summary
 
@@ -744,6 +745,9 @@ Every backtest now reports an equal-weight **buy & hold benchmark** over the sam
 ```powershell
 # Backtest every combination of values (data is downloaded once):
 .venv/Scripts/trading-lab sweep --param voting.min_agreeing=1,2 --param strategies.rsi.period=7,14,21 --start 2025-01-01 --end 2025-07-01
+# The "stable" column averages each setting with its grid neighbours; --rank stability orders by it.
+# A setting is only trustworthy if the settings around it are good too (a plateau, not a lone peak):
+trading-lab sweep --param strategies.rsi.period=7,10,14,21,28 --rank stability
 # Honest check for overfitting: choose parameters on 90 days, test them on the next 30 unseen days, repeat:
 .venv/Scripts/trading-lab walkforward --param voting.min_agreeing=1,2 --train-days 90 --test-days 30 --start 2025-01-01
 # Side-by-side metrics of stored runs:
