@@ -1,6 +1,7 @@
 """Research tools: parameter sweeps, walk-forward evaluation and agent attribution."""
 
 from trading_lab.research.agent_eval import AgentEval, evaluate_agents, evaluate_run, format_agent_eval
+from trading_lab.research.costs import CostSensitivity, cost_sensitivity, format_costs
 from trading_lab.research.attribution import (
     Attribution,
     CalibrationBucket,
@@ -19,6 +20,7 @@ from trading_lab.research.experiments import (
     variant_overrides,
 )
 from trading_lab.research.protocol import VariantSummary, sign_test_p, summarize
+from trading_lab.research.regimes import RegimeReport, format_regimes, regimes_for_run
 from trading_lab.research.reconcile import Reconciliation, format_reconciliation, reconcile
 from trading_lab.research.robustness import Robustness, bootstrap, format_robustness, robustness_for_run
 from trading_lab.research.sweep import (
@@ -38,6 +40,12 @@ from trading_lab.research.walkforward import (
 )
 
 __all__ = [
+    "RegimeReport",
+    "format_regimes",
+    "regimes_for_run",
+    "CostSensitivity",
+    "cost_sensitivity",
+    "format_costs",
     "AgentEval",
     "evaluate_agents",
     "evaluate_run",

@@ -12,7 +12,9 @@ from trading_lab.data import SyntheticProvider, candles_from_closes
 from trading_lab.indicators import macd
 from trading_lab.strategies import (
     BollingerMeanReversionStrategy,
+    DonchianBreakoutStrategy,
     MacdStrategy,
+    MovingAverageCrossStrategy,
     RsiStrategy,
     Strategy,
     available_strategies,
@@ -22,7 +24,8 @@ from trading_lab.strategies import (
 )
 from trading_lab.strategies import registry as registry_module
 
-ALL_STRATEGIES = [RsiStrategy(), MacdStrategy(), BollingerMeanReversionStrategy()]
+ALL_STRATEGIES = [RsiStrategy(), MacdStrategy(), BollingerMeanReversionStrategy(), MovingAverageCrossStrategy(),
+                  DonchianBreakoutStrategy()]
 IDS = [s.name for s in ALL_STRATEGIES]
 
 

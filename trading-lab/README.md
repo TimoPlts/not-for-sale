@@ -55,6 +55,9 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
   - trade side in `report`, `export`, the HTML report, the dashboard and summaries;
   - short exposure on the dashboard;
   - agent attribution that credits SELL votes for short trades.
+- **Stage 17A (complete):** two opt-in trend-following strategies, `ma_cross` (moving-average crossover) and `donchian` (channel breakout).
+- **Stage 17B (complete):** `trading-lab costs`: the same backtest at 0x to 3x fees and slippage, with the break-even cost level.
+- **Stage 17C (complete):** `trading-lab regimes`: a run's performance by market regime (trend up, sideways or down, and calm or volatile).
 
 ### Stage 9/10 summary
 
@@ -201,6 +204,62 @@ Relative to buy & hold: excess return -5.44%, alpha -44.02%/yr, beta 0.34, corre
 * **information ratio:** excess return per unit of tracking error.
 
 A strategy can beat buy & hold in a falling market simply by holding cash. Alpha and beta separate "less exposed" from "better at picking", and they are computed from per-bar returns, with definitions in `src/trading_lab/metrics/relative.py`.
+
+## How much do costs decide? (`costs`)
+
+```bash
+trading-lab costs --start 2025-01-01 --end 2025-07-01
+trading-lab costs --days 60 --multipliers 0,1,1.5,2 --export costs.json
+```
+
+This runs the same backtest several times, with every trading cost scaled by a multiplier (`0` is free trading, `1` is as configured, `2` is twice as expensive). The scaled costs are the taker and maker fees, the slippage and volume impact, and the short borrow fee. Data, signals and cached agent answers are identical across the runs, so the differences come from costs alone.
+
+```
+ costs     fee slip bps    return  sharpe trades  fees paid
+    0x  0.000%      0.0    +3.10%    1.42     52       0.00
+    1x  0.100%      5.0    +0.40%    0.21     52     198.65
+    2x  0.200%     10.0    -2.20%   -1.03     52     374.63
+Costs as configured take 2.70 percentage points of return off the cost-free result (198.65 in fees; ...)
+Verdict: break-even at about 1.15x the configured costs (thin: ...)
+```
+
+(The numbers above are only an illustration of the layout.)
+
+* **Break-even below about 1.5x:** the edge is thin. Cheaper execution (limit orders, a lower fee tier), fewer trades or a longer timeframe matter more than strategy tuning.
+* **A loss even at 0x:** the strategy has no edge before costs in that period.
+
+Nothing is stored.
+
+## Where does it make or lose money? (`regimes`)
+
+```bash
+trading-lab regimes                    # the latest run
+trading-lab regimes <run id> --trend-bars 100 --json
+```
+
+Each bar of a run is labelled by the market regime of an equal-weight index of its symbols:
+
+* **Trend:**
+  * **up:** above its 50-bar average, with the average rising;
+  * **down:** below a falling average;
+  * **sideways:** anything else.
+
+  Only bars up to each point are used. The first 50 bars of a run are warm-up.
+* **Volatility:** *volatile* when the 24-bar volatility is above the run's median, *calm* otherwise.
+
+Per regime, and per trend × volatility combination, the table shows:
+
+* how much time the run spent there;
+* the strategy's return compounded over those bars, next to the market's;
+* the time in the market;
+* the trades opened there (count, wins, PnL).
+
+Some typical readings:
+
+* A strategy that only makes money in *up / calm* markets is a long-trend follower in disguise.
+* Losing mostly in *sideways / volatile* markets is the classic whipsaw.
+
+Combine it with `allow_short` or the trend filter, then backtest again. The database is only read.
 
 ## Could it be luck? (`robustness`)
 
@@ -661,6 +720,33 @@ trading-lab walkforward --param strategies.qwen_trend.weight=0,1 --param strateg
 ```
 
 All runs in a sweep, walk-forward or experiment share one model provider and the answer cache. In `record` mode a market-only agent is asked about each bar **once**, and every variant, combination and overlapping training window reuses that answer. The comparison therefore measures the ensemble, not the model's randomness, and later replays are free. `qwen_risk` sees the portfolio, so it is asked again wherever the trades differ. Missing Qwen environment variables stop the command before the first backtest. The global `--agent-mode record|replay|live` option overrides `[agents] mode` for any command.
+
+## Trend-following strategies (opt-in)
+
+The default strategies are mostly contrarian: RSI and Bollinger buy weakness, while MACD follows momentum shifts. Two trend followers can join the vote. Each one is enabled by adding its table to the config:
+
+```toml
+[strategies.ma_cross]          # moving-average crossover
+weight = 1.0
+fast = 20
+slow = 50
+average = "sma"                # or "ema"
+signal_on = "cross"            # BUY/SELL on the bar of the cross; "state" = on every bar above/below
+
+[strategies.donchian]          # channel breakout ("turtle" style)
+weight = 1.0
+entry_period = 20              # BUY above the previous 20-bar high, SELL below the 20-bar low
+exit_period = 10               # a weaker opposite signal on a 10-bar break (0 = off)
+atr_period = 14
+```
+
+* **Confidence:**
+  * `ma_cross`: grows with how sharply the averages cross, relative to the usual size of the gap between them.
+  * `donchian`: grows with the breakout distance measured in ATRs.
+* **No look-ahead:** channels use only the bars *before* the current one.
+* **Shorts:** both strategies signal in both directions, so they work naturally with `allow_short = true`.
+
+To see whether they help on your symbols and timeframe, compare them on the same period. For example, `trading-lab sweep --param strategies.donchian.weight=0,1` runs the strategy on and off, and `walkforward` tests it out of sample.
 
 ## Short selling (simulated, off by default)
 

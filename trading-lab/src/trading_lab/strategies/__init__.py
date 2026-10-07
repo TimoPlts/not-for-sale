@@ -12,11 +12,14 @@ from trading_lab.strategies.registry import (
 from trading_lab.strategies.bollinger import BollingerMeanReversionStrategy  # noqa: E402
 from trading_lab.strategies.macd import MacdStrategy  # noqa: E402
 from trading_lab.strategies.rsi import RsiStrategy  # noqa: E402
+from trading_lab.strategies.trend import DonchianBreakoutStrategy, MovingAverageCrossStrategy  # noqa: E402
 
 __all__ = [
     "BollingerMeanReversionStrategy",
+    "DonchianBreakoutStrategy",
     "IndicatorStrategy",
     "MacdStrategy",
+    "MovingAverageCrossStrategy",
     "RsiStrategy",
     "Strategy",
     "available_strategies",

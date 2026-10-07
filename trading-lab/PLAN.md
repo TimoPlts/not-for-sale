@@ -490,7 +490,44 @@ Trade-offs worth knowing:
 - Dashboard exposure counts quantity x price while shorts are open, since a short's book value is its collateral plus gain.
 - Tests: SELL votes agreeing and pivotal for a short trade (and BUY disagreeing); the CLI report and unchanged long-only backtest output; export, HTML and dashboard trades; open shorts on the dashboard (side, stop above, value, exposure) and in the summary.
 
-## 5. Stage 11–16 status summary
+### Stage 17A: Trend-following strategies ✅
+- `strategies/trend.py`, both opt-in (only enabled by a config table):
+  - **`ma_cross`:** SMA or EMA fast/slow crossover. `signal_on = "cross"` signals on the cross bar, `"state"` on every bar above or below. Confidence is the gap change, or the gap, over its rolling standard deviation.
+  - **`donchian`:** a close beyond the previous `entry_period` high or low is a breakout. An optional `exit_period` break gives a weaker (0.5) opposite signal. Confidence is the breakout distance in ATRs. The channels exclude the current bar.
+- `signals` shows their key values. `config/default.toml` documents them as commented tables.
+- Tests:
+  - the shared strategy contract (warm-up, standardised signals, both directions, determinism);
+  - vectorised signals equal bar-by-bar signals for four parameter sets;
+  - crosses exactly where the gap changes sign;
+  - state mode following a trend;
+  - breakouts, inside-channel holds and weak exits;
+  - the channel excluding the current bar;
+  - validation;
+  - opt-in from the config, with a backtest trading both sides.
+
+### Stage 17B: Cost sensitivity ✅
+- `research/costs.py`: `cost_sensitivity(config, provider, start, end, multipliers)` backtests the same period with the fee rates, slippage, impact coefficient and borrow fee scaled together. The data is fetched once and shared, and the agent answers come from the shared cache. The 1x row is exactly the normal backtest.
+- `CostSensitivity` gives the break-even multiplier (linear interpolation where the return crosses zero), a verdict (no edge before costs, still profitable at the highest multiplier, or a thin or roomy break-even) and `to_dict`.
+- CLI: `trading-lab costs [--days N | --start/--end] [--multipliers 0,0.5,1,2,3] [--export JSON]` (nothing stored).
+- Tests: every cost scaled (and only costs); invalid multipliers; rows sorted and deduplicated; one data fetch per symbol; fees increasing; the 1x row equal to a plain backtest; break-even interpolation and every verdict; the CLI (export, bad input, no database).
+
+### Stage 17C: Performance by market regime ✅
+- `research/regimes.py`:
+  - `market_index` compounds the equal-weight mean of the symbols' per-bar returns.
+  - `classify` labels the trend (up, down, sideways) from a `trend_bars` SMA and its slope over `slope_bars`. It is causal, and the first bars are warm-up. It also labels volatility (volatile or calm) against the run's median rolling volatility, as an after-the-fact description.
+  - `regimes_for_run` reports, per trend, per volatility and per combination: bars, time share, compounded strategy and market return over those bars, time in the market, and trades by entry bar (count, wins, PnL). Trades opened during the warm-up are counted separately.
+- CLI: `trading-lab regimes [RUN_ID] [--trend-bars 50] [--slope-bars 10] [--vol-bars 24] [--json]` (read-only).
+- Tests:
+  - trend labels on rising and falling series;
+  - warm-up;
+  - causality;
+  - the index on hand values;
+  - validation;
+  - regimes adding up to the run: bars, time, trades and PnL, and compounded returns equal to the post-warm-up return;
+  - short and unknown runs;
+  - the CLI (text, JSON, options, exit codes, the database byte-identical).
+
+## 5. Stage 11–17 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -500,6 +537,7 @@ On top of the Stage 9/10 system:
 - **Verification (14):** live runs reconciled with their backtest (14A, which found and fixed a window-dependent agent feature), market-data quality checks (14B), agent answer-quality diagnostics (14C), and run exports (14D).
 - **Usability and reach (15):** an offline demo (15A), e-mail alerts (15B) and Claude as a second model provider (15C).
 - **Shorts (16):** opt-in simulated short selling: fully collateralised accounting with borrow fees (16A), mirrored entries, exits, sizing and filters (16B), and the trade side in every report (16C).
+- **Strategy research (17):** opt-in trend-following strategies (17A), cost sensitivity with a break-even level (17B), and performance by market regime (17C).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

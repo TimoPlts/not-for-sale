@@ -22,6 +22,8 @@
     trading-lab data-check [--symbols ...] [--days N | --start/--end] [--run RUN_ID] [--strict]
     trading-lab agent-eval [RUN_ID] [--min-answers 20] [--json]
     trading-lab export RUN_ID DIR [--holds] [--force]
+    trading-lab costs [--days N | --start/--end] [--multipliers 0,0.5,1,2,3]
+    trading-lab regimes [RUN_ID] [--trend-bars 50] [--vol-bars 24] [--json]
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -419,7 +421,8 @@ def cmd_signals(args: argparse.Namespace) -> int:
     strategies = strategies_for(cfg)
     voting = VotingEngine.from_specs(cfg.strategies, cfg.voting)
     since = datetime.now(timezone.utc) - timedelta(days=args.days)
-    keys = {"rsi": ["rsi"], "macd": ["hist", "crossover"], "bollinger": ["percent_b"]}
+    keys = {"rsi": ["rsi"], "macd": ["hist", "crossover"], "bollinger": ["percent_b"],
+            "ma_cross": ["gap", "crossover"], "donchian": ["upper", "lower", "breakout"]}
     default_keys = ["rationale"]  # agent strategies explain themselves
 
     print(f"data={provider.name}  timeframe={cfg.market.timeframe}  history={args.days}d\n")
@@ -547,6 +550,57 @@ def cmd_sweep(args: argparse.Namespace) -> int:
         Path(args.export).parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(rows).to_csv(args.export, index=False)
         print(f"Results written to {Path(args.export).resolve()}")
+    return 0
+
+
+def cmd_costs(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.research import cost_sensitivity, format_costs
+    from trading_lab.strategy_factory import shared_llm_provider
+
+    cfg = _load_config(args)
+    try:
+        multipliers = [float(x) for x in args.multipliers.split(",") if x.strip()]
+    except ValueError:
+        raise TradingLabError("--multipliers must be comma-separated numbers, e.g. 0,0.5,1,2,3") from None
+    start, end = _period(args, args.days)
+    provider = _provider(cfg, args.synthetic)
+    print(f"Cost sensitivity: {len(set(multipliers))} backtests | {start:%Y-%m-%d} -> {end:%Y-%m-%d} | "
+          f"{cfg.market.timeframe} | data: {provider.name}")
+    llm = shared_llm_provider([cfg])
+    try:
+        result = cost_sensitivity(cfg, provider, start, end, multipliers, llm_provider=llm,
+                                  progress=lambda m: print(f"  costs x{m:g}"))
+    except ValueError as exc:
+        raise TradingLabError(str(exc)) from None
+    print()
+    print(format_costs(result))
+    _print_provider_usage(llm)
+    if args.export:
+        Path(args.export).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.export).write_text(_json.dumps(result.to_dict(), indent=2, default=str) + "\n")
+        print(f"Results written to {Path(args.export).resolve()}")
+    return 0
+
+
+def cmd_regimes(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.research import format_regimes, regimes_for_run
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        run_id = args.run_id or _latest_run_id(store)
+        try:
+            report = regimes_for_run(store, run_id, trend_bars=args.trend_bars, slope_bars=args.slope_bars,
+                                     vol_bars=args.vol_bars)
+        except ValueError as exc:
+            raise TradingLabError(str(exc)) from None
+    print(_json.dumps(report.to_dict(), indent=2) if args.json else format_regimes(report))
     return 0
 
 
@@ -1242,6 +1296,23 @@ def build_parser() -> argparse.ArgumentParser:
     dc.add_argument("--strict", action="store_true", help="exit 1 on warnings too")
     dc.add_argument("--limit", type=int, default=5, help="details listed per symbol (default 5)")
     dc.set_defaults(func=cmd_data_check)
+
+    co = sub.add_parser("costs", help="the same backtest at scaled fees and slippage: how much do costs decide?")
+    market_options(co)
+    co.add_argument("--start", type=_date, help="YYYY-MM-DD (UTC)")
+    co.add_argument("--end", type=_date, help="YYYY-MM-DD (UTC, exclusive); default now")
+    co.add_argument("--days", type=int, default=90, help="length when --start is omitted (default 90)")
+    co.add_argument("--multipliers", default="0,0.5,1,2,3", help="cost multipliers (default 0,0.5,1,2,3)")
+    co.add_argument("--export", metavar="JSON", help="write the results to a JSON file")
+    co.set_defaults(func=cmd_costs)
+
+    rg = sub.add_parser("regimes", help="a run's performance by market regime (trend x volatility)")
+    rg.add_argument("run_id", nargs="?", help="default: the latest run")
+    rg.add_argument("--trend-bars", type=int, default=50, help="moving average that defines the trend (default 50)")
+    rg.add_argument("--slope-bars", type=int, default=10, help="bars over which the average must rise/fall (10)")
+    rg.add_argument("--vol-bars", type=int, default=24, help="bars of returns for volatility (default 24)")
+    rg.add_argument("--json", action="store_true", help="machine-readable output")
+    rg.set_defaults(func=cmd_regimes)
 
     ex = sub.add_parser("export", help="write a stored run to CSV files and a JSON summary")
     ex.add_argument("run_id")
