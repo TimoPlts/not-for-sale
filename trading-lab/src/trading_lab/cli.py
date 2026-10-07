@@ -27,6 +27,7 @@
     trading-lab ab A.toml B.toml [--days 180 | --start/--end] [--windows 6] [--metric total_return]
     trading-lab status [PAPER_RUN_ID] [--max-behind 2] [--alert] [--json]   (watchdog; exit 1 if not OK)
     trading-lab permutation-test [--days N | --start/--end] [--permutations 100] [--metric total_return]
+    trading-lab checkup [--days N | --start/--end] [--html FILE] [--json FILE]   (every check, one verdict)
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -703,6 +704,32 @@ def cmd_permutation_test(args: argparse.Namespace) -> int:
         Path(args.export).parent.mkdir(parents=True, exist_ok=True)
         Path(args.export).write_text(_json.dumps(result.to_dict(), indent=2) + "\n")
         print(f"Results written to {Path(args.export).resolve()}")
+    return 0
+
+
+def cmd_checkup(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.research import checkup, checkup_html, format_checkup
+    from trading_lab.strategy_factory import shared_llm_provider
+
+    cfg = _load_config(args)
+    start, end = _period(args, args.days)
+    provider = _provider(cfg, args.synthetic)
+    print(f"Checkup: {start:%Y-%m-%d} -> {end:%Y-%m-%d} | {cfg.market.timeframe} | "
+          f"{', '.join(cfg.market.symbols)} | data: {provider.name}")
+    llm = shared_llm_provider([cfg])
+    report = checkup(cfg, provider, start, end, permutations=args.permutations, llm_provider=llm,
+                     allow_agents=args.allow_agents, progress=lambda step: print(f"  {step}..."))
+    print()
+    print(format_checkup(report))
+    _print_provider_usage(llm)
+    for path, text in ((args.html, lambda: checkup_html(report)),
+                       (args.json, lambda: _json.dumps(report.to_dict(), indent=2, default=str) + "\n")):
+        if path:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_text(text(), encoding="utf-8")
+            print(f"Written to {Path(path).resolve()}")
     return 0
 
 
@@ -1409,6 +1436,18 @@ def build_parser() -> argparse.ArgumentParser:
     co.add_argument("--multipliers", default="0,0.5,1,2,3", help="cost multipliers (default 0,0.5,1,2,3)")
     co.add_argument("--export", metavar="JSON", help="write the results to a JSON file")
     co.set_defaults(func=cmd_costs)
+
+    ck = sub.add_parser("checkup", help="is this strategy any good? every check, one verdict")
+    market_options(ck)
+    ck.add_argument("--start", type=_date, help="YYYY-MM-DD (UTC)")
+    ck.add_argument("--end", type=_date, help="YYYY-MM-DD (UTC, exclusive); default now")
+    ck.add_argument("--days", type=int, default=180, help="length when --start is omitted (default 180)")
+    ck.add_argument("--permutations", type=int, default=50, help="shuffled markets in the luck test (default 50)")
+    ck.add_argument("--allow-agents", action="store_true",
+                    help="run the luck test with AI agents too (asks the model about every shuffled market)")
+    ck.add_argument("--html", metavar="FILE", help="also write a one-page HTML report")
+    ck.add_argument("--json", metavar="FILE", help="also write the full results as JSON")
+    ck.set_defaults(func=cmd_checkup)
 
     pt = sub.add_parser("permutation-test", help="could a market with no pattern produce this? shuffled-candle test")
     market_options(pt)

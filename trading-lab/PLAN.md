@@ -579,7 +579,27 @@ Trade-offs worth knowing:
 - The HTML report has a "Market regimes" section (per trend and per trend x volatility: bars, time, strategy and market returns, time in the market, trades, PnL). The dashboard's Research section shows the same table.
 - Tests: long runs show regimes identical to `regimes_for_run`, in the snapshot and the HTML report; short runs leave the section out; the dashboard renders the table (Streamlit AppTest).
 
-## 5. Stage 11–19 status summary
+### Stage 20A: Strategy checkup ✅
+- `research/checkup.py`: `checkup(config, provider, start, end, permutations=50)` runs:
+  - the backtest, in an in-memory store, which feeds `robustness_for_run` and `regimes_for_run`;
+  - `cost_sensitivity` at 0x, 1x and 2x;
+  - `permutation_test`, skipped (n/a) when AI agents vote, unless allowed.
+
+  `evaluate` grades eight checks as pass, warn, fail or n/a, each with a detail and a next step. The advice depends on whether the run lost money. `Checkup.overall` is the worst check, and `verdict` names the failed or warned checks. `format_checkup` gives the text, `checkup_html` a self-contained page (escaped, wrapping table) and `to_dict` the JSON.
+- CLI: `trading-lab checkup [--days N | --start/--end] [--permutations 50] [--allow-agents] [--html FILE] [--json FILE]` (nothing stored).
+- Tests: a real edge (a trend follower on autocorrelated returns) passes edge, costs, luck, trades and resampling; no edge (a random walk) fails, with the right advice and JSON; agents skip the luck test; short periods; the verdict logic; the HTML page (escaping, self-contained); the CLI (HTML and JSON files, no database).
+
+### Stage 20B: Time stop ✅
+- `risk.max_holding_bars` (default 0, off). At the close of the bar in which a position reaches that many bars held (the entry bar counts), the session schedules its exit for the next open. The exit is a protected `risk_manager` intent, like the kill switch's, so strategies cannot cancel it. It is skipped when an exit is already scheduled or the position was stopped out. The exit decision reads `time stop: held N bars`, and shorts are covered alike.
+- Tests: the exit timing and reasons; strategies cannot cancel it, and shorts; off by default; a stop-loss first; validation; backtest and live equal across a resume one bar before a time stop.
+
+### Stage 20C: Regime-dependent strategy weights ✅
+- `VotingConfig.regime_weights` (`[voting.regime_weights.<up|down|sideways>]` tables of strategy multipliers in [0, 100]), plus `regime_bars` and `regime_slope_bars`. It is normalised to sorted tuples, round-trips through TOML, `to_dict` and `from_dict`, and must only name configured strategies. It is off when empty.
+- `engine/filters.trend_labels` is the causal SMA-and-slope trend label, shared with `research.regimes.classify`. `filter_columns(candles, risk, voting)` adds a per-bar `regime`, None during warm-up. The engines load enough history for it.
+- `VotingEngine.combine(signals, multipliers)` applies the multipliers. The votes record the effective weights. A bar where every weight is 0 is a HOLD with a reason. The session passes the bar's regime multipliers and records `regime` on the ensemble signal.
+- Tests: config parsing, validation and round trips, with older configs still loading; labels identical to the regime report and causal; filter columns; voting with multipliers (and unchanged without); the session using each bar's regime (none during warm-up); backtests changing with the table, with live matching the backtest.
+
+## 5. Stage 11–20 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -592,6 +612,7 @@ On top of the Stage 9/10 system:
 - **Strategy research (17):** opt-in trend-following strategies (17A), cost sensitivity with a break-even level (17B), and performance by market regime (17C).
 - **Decisions and operations (18):** A/B tests of whole configs over independent windows (18A), a watchdog with a systemd timer (18B), and volatility-targeted sizing (18C).
 - **Not fooling yourself (19):** a permutation test against shuffled markets (19A), sweep stability scores (19B), and market regimes in the report and dashboard (19C).
+- **One verdict and smarter exits (20):** a one-command strategy checkup (20A), a time stop (20B), and regime-dependent strategy weights (20C).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

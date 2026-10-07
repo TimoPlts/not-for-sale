@@ -151,6 +151,7 @@ class RiskConfig:
     trailing_stop_pct: float = 0.0  # stop follows the highest high at this distance (raised at bar closes)
     trailing_activation_pct: float = 0.0  # start trailing once the high is this far above the average cost
     take_profit_pct: float = 0.0  # exit when the high reaches average cost x (1 + this)
+    max_holding_bars: int = 0  # time stop: exit at the next open once a position has been held this many bars
     # Initial stop: "percent" = stop_loss_pct below the entry fill; "atr" = atr_stop_multiple x ATR
     # below it (ATR of the bars before the fill), clamped to [atr_stop_min_pct, atr_stop_max_pct].
     # Risk-per-trade sizing uses that distance, so volatile coins get smaller positions.
@@ -216,6 +217,11 @@ class RiskConfig:
         _number(self, "trailing_stop_pct", low=0.0, high=0.99)
         _number(self, "trailing_activation_pct", low=0.0, high=10.0)
         _number(self, "take_profit_pct", low=0.0, high=100.0)
+        _require(
+            isinstance(self.max_holding_bars, int) and not isinstance(self.max_holding_bars, bool)
+            and 0 <= self.max_holding_bars <= 100_000,
+            f"risk.max_holding_bars must be an integer >= 0 (0 = off), got {self.max_holding_bars!r}",
+        )
         _number(self, "max_drawdown_pct", low=0.0, high=0.99)
         _number(self, "daily_loss_limit_pct", low=0.0, high=0.99)
         _require(
@@ -309,11 +315,21 @@ DEFAULT_STRATEGIES: tuple[StrategySpec, ...] = (
 
 @dataclass(frozen=True, slots=True)
 class VotingConfig:
-    """How strategy signals are combined (see ``ensemble.voting``)."""
+    """How strategy signals are combined (see ``ensemble.voting``).
+
+    ``regime_weights`` (empty = off) multiplies strategy weights by the symbol's
+    current trend regime, e.g. ``{"up": {"ma_cross": 2.0}, "sideways": {"ma_cross": 0.5}}``.
+    The regime is "up" (close above a rising ``regime_bars`` average), "down"
+    (below a falling one) or "sideways", from candles up to the bar only.
+    Strategies not listed keep their weight.
+    """
 
     buy_threshold: float = 0.15
     sell_threshold: float = 0.15
     min_agreeing: int = 1
+    regime_weights: Any = ()  # normalised to ((regime, ((strategy, multiplier), ...)), ...)
+    regime_bars: int = 50
+    regime_slope_bars: int = 10
 
     def __post_init__(self) -> None:
         _number(self, "buy_threshold", low=0.0, high=1.0, low_inclusive=False)
@@ -324,6 +340,41 @@ class VotingConfig:
             and self.min_agreeing >= 1,
             f"voting.min_agreeing must be an integer >= 1, got {self.min_agreeing!r}",
         )
+        for name, low in (("regime_bars", 2), ("regime_slope_bars", 1)):
+            value = getattr(self, name)
+            _require(isinstance(value, int) and not isinstance(value, bool) and low <= value <= 5000,
+                     f"voting.{name} must be an integer in [{low}, 5000], got {value!r}")
+        object.__setattr__(self, "regime_weights", _normalise_regime_weights(self.regime_weights))
+
+    def regime_multipliers(self, regime: str | None) -> dict[str, float]:
+        """Weight multipliers for a regime ({} when off, unknown or not configured)."""
+        return dict(dict(self.regime_weights).get(regime, ())) if regime else {}
+
+
+REGIMES = ("up", "sideways", "down")
+
+
+def _pairs(value: Any, what: str) -> list[tuple[Any, Any]]:
+    if isinstance(value, Mapping):
+        return list(value.items())
+    if isinstance(value, (list, tuple)) and all(isinstance(p, (list, tuple)) and len(p) == 2 for p in value):
+        return [tuple(p) for p in value]
+    raise ConfigError(f"{what} must be a table")
+
+
+def _normalise_regime_weights(raw: Any) -> tuple[tuple[str, tuple[tuple[str, float], ...]], ...]:
+    out = []
+    for regime, table in _pairs(raw, "voting.regime_weights"):
+        _require(regime in REGIMES, f"voting.regime_weights: unknown regime {regime!r}; use {list(REGIMES)}")
+        weights = []
+        for strategy, multiplier in _pairs(table, f"voting.regime_weights.{regime}"):
+            _require(isinstance(strategy, str) and strategy, f"voting.regime_weights.{regime}: bad strategy name")
+            _require(isinstance(multiplier, (int, float)) and not isinstance(multiplier, bool)
+                     and math.isfinite(multiplier) and 0 <= multiplier <= 100,
+                     f"voting.regime_weights.{regime}.{strategy} must be a number in [0, 100], got {multiplier!r}")
+            weights.append((strategy, float(multiplier)))
+        out.append((regime, tuple(sorted(weights))))
+    return tuple(sorted(out))
 
 
 @dataclass(frozen=True, slots=True)
@@ -478,6 +529,8 @@ class AppConfig:
         object.__setattr__(self, "strategies", tuple(self.strategies))
         names = [s.name for s in self.strategies]
         _require(len(set(names)) == len(names), "duplicate strategy names")
+        unknown = sorted({s for _, ws in self.voting.regime_weights for s, _ in ws} - set(names))
+        _require(not unknown, f"voting.regime_weights names strategies that are not configured: {unknown}")
         enabled = [s for s in self.strategies if s.enabled]
         _require(bool(enabled), "at least one strategy must be enabled")
         _require(
@@ -518,6 +571,7 @@ class AppConfig:
         data = asdict(self)
         data["market"]["symbols"] = list(self.market.symbols)
         data["risk"]["block_entries_on_risk_states"] = list(self.risk.block_entries_on_risk_states)
+        data["voting"]["regime_weights"] = {r: dict(w) for r, w in self.voting.regime_weights}
         data["strategies"] = [asdict(s) for s in self.strategies]
         return data
 

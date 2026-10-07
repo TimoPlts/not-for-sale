@@ -35,6 +35,10 @@ period:
     closes, the stop is raised to ``highest high since entry x (1 - pct)``
     (once the high is ``trailing_activation_pct`` above the average cost).
     Stops only move up, and a raised stop applies from the next bar on.
+  * Optional time stop (``risk.max_holding_bars``): at the close of the bar in
+    which a position has been held that many bars (the entry bar counts as
+    one), its exit is scheduled for the next open. Like the kill switch's,
+    strategies cannot cancel it.
   * The stop-loss cooldown only follows stop exits that lost money.
   * Optional entry filters only block NEW entries (recorded as IGNORED):
       - ``risk.trend_filter_period``: no entry while the close is below its
@@ -276,7 +280,8 @@ class TradingSession:
             if intent.action is DecisionAction.EXIT_SIGNAL and sym in opens:
                 del self.pending[sym]
                 position = self.portfolio.position(sym)
-                what = "signal cover" if position is not None and position.is_short else "signal exit"
+                what = intent.signal.metadata.get("exit_reason") or (
+                    "signal cover" if position is not None and position.is_short else "signal exit")
                 self._exit(sym, opens[sym], ts, DecisionAction.EXIT, what, intent.signal, stats.get(sym))
 
         entry_syms = sorted(
@@ -351,6 +356,7 @@ class TradingSession:
                         f"take-profit {target:.8g} reached (bar high {bar.high:.8g})", None, stats.get(sym),
                     )
         self._update_trailing(bars)
+        self._time_stops(ts, bars)
         horizon = ts - RECENT_STOP_BARS * self._bar
         self.stop_events = [(t, s) for t, s in self.stop_events if t > horizon]
 
@@ -380,7 +386,12 @@ class TradingSession:
                 state = sig.metadata.get("risk_state")
                 if isinstance(state, str) and "error" not in sig.metadata:
                     self.risk_states[sym] = (ts, state)
-            ensemble = self.voting.combine(strat_sigs)
+            regime = market.get(sym, {}).get("regime")
+            multipliers = self.config.voting.regime_multipliers(regime) if isinstance(regime, str) else {}
+            ensemble = self.voting.combine(strat_sigs, multipliers or None)
+            if multipliers:
+                ensemble = Signal(ensemble.strategy, ensemble.symbol, ensemble.direction, ensemble.confidence,
+                                  ensemble.timestamp, {**ensemble.metadata, "regime": regime})
             self.records.signals.extend(strat_sigs)
             self.records.signals.append(ensemble)
             self._schedule(sym, ts, ensemble, bars[sym], market.get(sym, {}))
@@ -408,6 +419,26 @@ class TradingSession:
             if position.stop_price is None or candidate > position.stop_price:
                 self.portfolio.set_stop(sym, candidate)
                 info["stop"] = candidate
+
+    def _time_stops(self, ts: datetime, bars: Mapping[str, Bar]) -> None:
+        """Schedule the exit of positions held ``max_holding_bars`` bars (protected like the kill switch's)."""
+        limit = self.config.risk.max_holding_bars
+        if limit <= 0:
+            return
+        for sym in self._sorted(bars):
+            position = self.portfolio.position(sym)
+            existing = self.pending.get(sym)
+            if position is None or (existing is not None and existing.action is DecisionAction.EXIT_SIGNAL):
+                continue
+            held = int((ts - position.opened_at) / self._bar) + 1
+            if held < limit:
+                continue
+            direction = Direction.BUY if position.is_short else Direction.SELL
+            signal = Signal("risk_manager", sym, direction, 1.0, ts,
+                            {"reason": "time stop", "exit_reason": f"time stop: held {held} bars"})
+            self.pending[sym] = Intent(DecisionAction.EXIT_SIGNAL, signal)
+            self._decide(ts, sym, DecisionAction.EXIT_SIGNAL,
+                         f"time stop: held {held} bars (limit {limit}); exit at the next open", signal)
 
     def _update_short_trailing(self, sym: str, position: Any, bar: Bar) -> None:
         """Mirror of the long trailing stop: follow the lowest low, only ever move the stop down."""

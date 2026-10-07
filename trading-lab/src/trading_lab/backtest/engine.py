@@ -166,7 +166,8 @@ class BacktestEngine:
         cfg = self._config
         step = timeframe_delta(cfg.market.timeframe)
         history = max(max(s.history_bars for s in self._strategies), cfg.risk.trend_filter_period + 1,
-                      cfg.risk.correlation_lookback + 2 if cfg.risk.max_correlated_positions else 0)
+                      cfg.risk.correlation_lookback + 2 if cfg.risk.max_correlated_positions else 0,
+                      cfg.voting.regime_bars + cfg.voting.regime_slope_bars + 1 if cfg.voting.regime_weights else 0)
         data_start = start - history * step
         candles = {}
         for symbol in cfg.market.symbols:
@@ -268,7 +269,7 @@ class BacktestEngine:
             sym: stats_series(market_stats_frame(frame, lookback, cfg.risk.atr_period))
             for sym, frame in candles.items()
         }
-        filters = {sym: filter_columns(frame, cfg.risk) for sym, frame in candles.items()}
+        filters = {sym: filter_columns(frame, cfg.risk, cfg.voting) for sym, frame in candles.items()}
         correlations = correlation_lookup(candles, cfg.risk)
 
         timeline = sorted(
