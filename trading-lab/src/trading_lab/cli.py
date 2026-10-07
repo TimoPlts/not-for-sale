@@ -24,6 +24,8 @@
     trading-lab export RUN_ID DIR [--holds] [--force]
     trading-lab costs [--days N | --start/--end] [--multipliers 0,0.5,1,2,3]
     trading-lab regimes [RUN_ID] [--trend-bars 50] [--vol-bars 24] [--json]
+    trading-lab ab A.toml B.toml [--days 180 | --start/--end] [--windows 6] [--metric total_return]
+    trading-lab status [PAPER_RUN_ID] [--max-behind 2] [--alert] [--json]   (watchdog; exit 1 if not OK)
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -602,6 +604,66 @@ def cmd_regimes(args: argparse.Namespace) -> int:
             raise TradingLabError(str(exc)) from None
     print(_json.dumps(report.to_dict(), indent=2) if args.json else format_regimes(report))
     return 0
+
+
+def cmd_ab(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.research import ab_test, format_ab
+    from trading_lab.strategy_factory import shared_llm_provider
+
+    configs = []
+    for path in (args.config_a, args.config_b):
+        if not Path(path).exists():
+            raise TradingLabError(f"no config file at {path}")
+        configs.append(_load_config(argparse.Namespace(**{**vars(args), "config": path})))
+    cfg_a, cfg_b = configs
+    start, end = _period(args, args.days)
+    provider = _provider(cfg_a, args.synthetic)
+    print(f"A/B test: {args.windows} windows x 2 configs | {start:%Y-%m-%d} -> {end:%Y-%m-%d} | "
+          f"{cfg_a.market.timeframe} | data: {provider.name}")
+    llm = shared_llm_provider([cfg_a, cfg_b])
+    result = ab_test(cfg_a, cfg_b, provider, start, end, windows=args.windows, metric=args.metric,
+                     llm_provider=llm, progress=lambda i, n: print(f"  window {i}/{n}"))
+    print()
+    print(format_ab(result, (args.config_a, args.config_b)))
+    _print_provider_usage(llm)
+    if args.export:
+        Path(args.export).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.export).write_text(_json.dumps(result.to_dict(), indent=2, default=str) + "\n")
+        print(f"Results written to {Path(args.export).resolve()}")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.status import check_status, format_status, latest_paper_run
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        run_id = args.run_id or latest_paper_run(store)
+        if run_id is None:
+            raise TradingLabError("no paper run in the database")
+        try:
+            status = check_status(store, run_id, max_behind=args.max_behind, max_errors=args.max_errors,
+                                  expect_running=not args.allow_stopped)
+        except ValueError as exc:
+            raise TradingLabError(str(exc)) from None
+    print(_json.dumps(status.to_dict(), indent=2) if args.json else format_status(status))
+    if args.alert and not status.ok:
+        from trading_lab.alerts import build_alerts
+
+        alerts = build_alerts(cfg)
+        if alerts is None:
+            print("(--alert: alerts are disabled in the config, nothing sent)", file=sys.stderr)
+        elif not alerts.emit("critical", f"Paper run {run_id} needs attention", "\n".join(status.problems),
+                             run_id=run_id, force=True):
+            print("(--alert: the alert could not be delivered; see the warning above)", file=sys.stderr)
+    return 0 if status.ok else 1
 
 
 def cmd_walkforward(args: argparse.Namespace) -> int:
@@ -1305,6 +1367,27 @@ def build_parser() -> argparse.ArgumentParser:
     co.add_argument("--multipliers", default="0,0.5,1,2,3", help="cost multipliers (default 0,0.5,1,2,3)")
     co.add_argument("--export", metavar="JSON", help="write the results to a JSON file")
     co.set_defaults(func=cmd_costs)
+
+    stp = sub.add_parser("status", help="watchdog: is the paper run alive and keeping up? (exit 1 if not)")
+    stp.add_argument("run_id", nargs="?", help="default: the running paper run, else the latest one")
+    stp.add_argument("--max-behind", type=int, default=2, help="closed candles allowed to wait (default 2)")
+    stp.add_argument("--max-errors", type=int, default=3, help="failed cycles in a row allowed (default 3)")
+    stp.add_argument("--allow-stopped", action="store_true", help="a stopped run is not a problem")
+    stp.add_argument("--alert", action="store_true", help="send an alert (configured channels) when not OK")
+    stp.add_argument("--json", action="store_true", help="machine-readable output")
+    stp.set_defaults(func=cmd_status)
+
+    abp = sub.add_parser("ab", help="is config B better than config A? backtests over independent windows")
+    abp.add_argument("config_a", help="TOML config A (e.g. your current config)")
+    abp.add_argument("config_b", help="TOML config B (the change to test)")
+    market_options(abp)
+    abp.add_argument("--start", type=_date, help="YYYY-MM-DD (UTC)")
+    abp.add_argument("--end", type=_date, help="YYYY-MM-DD (UTC, exclusive); default now")
+    abp.add_argument("--days", type=int, default=180, help="length when --start is omitted (default 180)")
+    abp.add_argument("--windows", type=int, default=6, help="independent windows (default 6)")
+    abp.add_argument("--metric", default="total_return", help="compared per window (default total_return)")
+    abp.add_argument("--export", metavar="JSON", help="write the results to a JSON file")
+    abp.set_defaults(func=cmd_ab)
 
     rg = sub.add_parser("regimes", help="a run's performance by market regime (trend x volatility)")
     rg.add_argument("run_id", nargs="?", help="default: the latest run")

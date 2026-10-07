@@ -132,6 +132,25 @@ You get: kill switch and daily loss limit trips, model calls paused/resumed, rep
 (data or database outages) and their recovery, crashes, and a daily summary. Set `min_level = "info"`
 to also hear about every entry, exit and run start/stop. A webhook that is down never affects trading.
 
+## 5c. Watchdog (recommended)
+
+The paper service restarts itself after a crash. But a hung process, a crash loop or an exchange that stays unreachable can still go unnoticed. The watchdog checks the run every 15 minutes, read-only, and alerts you through the channels in `[alerts]`:
+
+```bash
+sudo cp deploy/systemd/trading-lab-watchdog.service deploy/systemd/trading-lab-watchdog.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now trading-lab-watchdog.timer
+systemctl list-timers trading-lab-watchdog.timer      # when it runs next
+sudo -u tradinglab bash -c 'cd /opt/trading-lab/trading-lab && .venv/bin/trading-lab status vm-paper-1'
+```
+
+A check fails, and alerts if `[alerts] enabled = true`, when:
+
+* more than 2 closed candles are waiting (crashed, hung or stuck);
+* 3 cycles in a row failed;
+* the run is not "running" (e.g. after `systemctl stop`; stop the timer too when you stop trading on purpose).
+
+A failed check also marks the watchdog unit failed, so `systemctl --failed` shows it.
+
 ## 6. Where things are
 
 | what | where |
@@ -155,6 +174,7 @@ Useful commands (as `tradinglab`, from the checkout):
 .venv/bin/trading-lab data-check                 # gaps, stale data, extreme moves in the market data
 .venv/bin/trading-lab agent-eval vm-paper-1      # are the agents' answers consistent?
 .venv/bin/trading-lab export vm-paper-1 ~/exports/vm-paper-1   # CSV files + summary.json
+.venv/bin/trading-lab status vm-paper-1          # alive and keeping up? (what the watchdog checks)
 ```
 
 ## 7. Stopping, restarting, resuming

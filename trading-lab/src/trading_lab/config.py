@@ -159,6 +159,10 @@ class RiskConfig:
     atr_stop_multiple: float = 2.0
     atr_stop_min_pct: float = 0.005
     atr_stop_max_pct: float = 0.25
+    # Volatility targeting (0 = off): a position may add at most this much annualised volatility,
+    # as a fraction of equity (quantity <= equity x pct / (annual volatility x price)). Calm coins get
+    # bigger positions, wild ones smaller. Volatility is that of the bars before the entry.
+    position_volatility_pct: float = 0.0
     # Entry filters: they only block NEW entries (never force an exit, never override breakers).
     trend_filter_period: int = 0  # no new entry while the close is below its N-bar simple average (0 = off)
     block_entries_on_risk_states: tuple[str, ...] = ()  # e.g. ("extreme",) or ("high", "extreme")
@@ -206,6 +210,7 @@ class RiskConfig:
         _number(self, "atr_stop_multiple", low=0.0, high=50.0, low_inclusive=False)
         _number(self, "atr_stop_min_pct", low=0.0, high=0.99, low_inclusive=False)
         _number(self, "atr_stop_max_pct", low=0.0, high=0.99, low_inclusive=False)
+        _number(self, "position_volatility_pct", low=0.0, high=10.0)
         _require(self.atr_stop_min_pct <= self.atr_stop_max_pct,
                  "risk.atr_stop_min_pct must not exceed risk.atr_stop_max_pct")
         _number(self, "trailing_stop_pct", low=0.0, high=0.99)

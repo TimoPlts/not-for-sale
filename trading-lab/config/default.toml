@@ -49,6 +49,9 @@ atr_period = 14               # true ranges averaged (bars before the fill only)
 atr_stop_multiple = 2.0
 atr_stop_min_pct = 0.005
 atr_stop_max_pct = 0.25
+# Volatility targeting (0 = off): each position may add at most this much annualised volatility
+# as a share of equity, e.g. 0.10 -> a coin with 80% yearly volatility gets at most 12.5% of equity.
+position_volatility_pct = 0.0
 # Entry filters (off by default). They only block NEW entries; exits and breakers are unaffected.
 trend_filter_period = 0       # e.g. 200 = no new entry while the close is below its 200-bar average
 block_entries_on_risk_states = []  # e.g. ["extreme"] or ["high", "extreme"] (labels from qwen_risk)

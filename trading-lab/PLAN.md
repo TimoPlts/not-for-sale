@@ -527,7 +527,32 @@ Trade-offs worth knowing:
   - short and unknown runs;
   - the CLI (text, JSON, options, exit codes, the database byte-identical).
 
-## 5. Stage 11–17 status summary
+### Stage 18A: A/B comparison of configs ✅
+- `research/ab.py`:
+  - `ab_test(config_a, config_b, provider, start, end, windows=6, metric="total_return")` runs a fresh backtest of each config in every one of N equal, consecutive, non-overlapping windows. Data and agent answers are shared.
+  - `ABResult` reports wins per side (ties and undefined values left out; lower is better for drawdown, volatility and fees), one-sided sign-test p-values for each side, compounded returns, and a verdict (significant, a lead that could be chance, a tie, or not comparable).
+  - `config_diff` lists every setting that differs.
+  - Different symbols, timeframe or initial cash are refused.
+- CLI: `trading-lab ab A.toml B.toml [--days N | --start/--end] [--windows 6] [--metric M] [--export JSON]`. Command-line market overrides apply to both configs. Nothing is stored.
+- Tests: the config diff (including added strategy tables); window arithmetic and validation; each window equal to a standalone backtest; identical configs tie; sign tests and every verdict, including lower-is-better metrics and undefined values; unfair comparisons refused; the CLI (export, bad windows, missing file, shared overrides).
+
+### Stage 18B: Paper-run watchdog ✅
+- `status.py`: `check_status(store, run_id, now, max_behind=2, max_errors=3, expect_running=True)` reads a paper run (read-only) and reports:
+  - closed candles not yet processed (`behind`, from the saved last processed candle and the timeframe);
+  - consecutive failed cycles and the last error (from the trader's saved health);
+  - the run status and the latest equity.
+
+  Problems are being stalled beyond `max_behind`, `max_errors` failed cycles, a run that is not running (a note only with `expect_running=False`), and no cycle at all long after creation. `latest_paper_run` prefers the running paper run.
+- CLI: `trading-lab status [RUN_ID] [--max-behind N] [--max-errors N] [--allow-stopped] [--alert] [--json]`. It exits 1 when not OK. `--alert` sends one critical alert through the configured channels.
+- `deploy/systemd/trading-lab-watchdog.service` (oneshot, read-only paths, the environment file only for alert settings) and `.timer` (every 15 minutes) are documented in `DEPLOYMENT.md` (section 5c).
+- Tests: a run keeping up (one waiting candle is normal); a stalled run; stopped runs (strict and relaxed); failing cycles up to the threshold; choosing the run and rejecting backtests and unknown ids; the CLI (exit codes, JSON, an alert sent without leaking the URL, alerts disabled, read-only); the templates.
+
+### Stage 18C: Volatility-targeted sizing ✅
+- `risk.position_volatility_pct` (default 0, off) adds a `volatility_target` candidate to entry sizing: `equity x pct / (per-bar volatility x sqrt(bars per year) x fill price)`. It uses `MarketStats.volatility` from the bars before the entry, so backtest and live are identical. It works for shorts too.
+- `RiskManager(bars_per_year=...)` is set from the timeframe by the session, and is required when targeting is on.
+- Tests: the exact limit (one position adds the target share of equity in volatility; half the volatility gives twice the size; shorts the same); off by default and skipped without volatility; validation; backtest entries bound by the target, with the calmer coin getting the bigger share; live equal to the backtest.
+
+## 5. Stage 11–18 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -538,6 +563,7 @@ On top of the Stage 9/10 system:
 - **Usability and reach (15):** an offline demo (15A), e-mail alerts (15B) and Claude as a second model provider (15C).
 - **Shorts (16):** opt-in simulated short selling: fully collateralised accounting with borrow fees (16A), mirrored entries, exits, sizing and filters (16B), and the trade side in every report (16C).
 - **Strategy research (17):** opt-in trend-following strategies (17A), cost sensitivity with a break-even level (17B), and performance by market regime (17C).
+- **Decisions and operations (18):** A/B tests of whole configs over independent windows (18A), a watchdog with a systemd timer (18B), and volatility-targeted sizing (18C).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

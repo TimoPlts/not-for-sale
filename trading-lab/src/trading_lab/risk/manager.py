@@ -65,6 +65,9 @@ class RiskManager:
       * **available cash**: notional plus fee must be affordable
       * **liquidity** (optional): notional <= ``max_participation_pct`` of the
         average traded value per bar, when ``MarketStats`` are supplied
+      * **volatility target** (optional, ``position_volatility_pct``): notional
+        x annualised volatility <= ``equity * position_volatility_pct``, using the
+        volatility of the bars before the entry (``MarketStats``)
 
     Entries are also rejected when the open-position limit is reached, when
     pyramiding is disabled and a position already exists, or when the result
@@ -83,11 +86,15 @@ class RiskManager:
         *,
         min_notional: float = 0.0,
         max_participation_pct: float = 0.0,
+        bars_per_year: float | None = None,
     ) -> None:
+        if config.position_volatility_pct > 0 and not (bars_per_year and bars_per_year > 0):
+            raise ValueError("volatility targeting needs bars_per_year (the timeframe)")
         self._config = config
         self._costs = cost_model
         self._min_notional = float(min_notional)
         self._max_participation = float(max_participation_pct)
+        self._bars_per_year = bars_per_year
 
     @property
     def config(self) -> RiskConfig:
@@ -170,6 +177,9 @@ class RiskManager:
         }
         if self._max_participation > 0 and stats is not None:
             candidates["liquidity"] = self._max_participation * stats.avg_quote_volume / fill_price
+        if cfg.position_volatility_pct > 0 and stats is not None and stats.volatility > 0:
+            annual_vol = stats.volatility * math.sqrt(self._bars_per_year or 0.0)
+            candidates["volatility_target"] = equity * cfg.position_volatility_pct / (annual_vol * fill_price)
         binding = min(candidates, key=candidates.__getitem__)
         quantity = max(candidates[binding], 0.0)
         sizing: dict[str, float | str] = {
