@@ -599,6 +599,13 @@ Trade-offs worth knowing:
 - `VotingEngine.combine(signals, multipliers)` applies the multipliers. The votes record the effective weights. A bar where every weight is 0 is a HOLD with a reason. The session passes the bar's regime multipliers and records `regime` on the ensemble signal.
 - Tests: config parsing, validation and round trips, with older configs still loading; labels identical to the regime report and causal; filter columns; voting with multipliers (and unchanged without); the session using each bar's regime (none during warm-up); backtests changing with the table, with live matching the backtest.
 
+### Stage 21A: Monthly returns and more metrics ✅
+- `PerformanceMetrics` gains `calmar_ratio` (annualised return over max drawdown, None when undefined) and `max_drawdown_bars` (the longest stretch below an earlier peak). Both have defaults, so nothing that builds metrics breaks.
+- `metrics.monthly_returns(equity, initial)` builds a year x month table: each month's last equity against the previous month's (the initial cash for the first month), NaN for months without bars, and a compounded year column.
+- It is shown in `report RUN_ID` (text table), the HTML report ("Monthly returns", colour-coded), the dashboard's Research section, and the `dashboard-data` snapshot (`DashboardData.monthly_returns`).
+- Measured along the way: a 90-day, four-symbol backtest takes about 0.8 s. Micro-optimising signal creation saved about 1%, so it was not kept.
+- Tests: Calmar and the longest drawdown on hand values; the monthly table across a year boundary, with gaps and compounding; the dashboard data, snapshot, HTML and CLI views, where the months compound to the run's return; the dashboard rendering.
+
 ## 5. Stage 11–20 status summary
 
 On top of the Stage 9/10 system:

@@ -12,6 +12,11 @@ Definitions (all fractions, not percentages):
   * profit_factor: gross profit / gross loss (inf if there are no losing
     trades, None if there are no trades or only break-even ones)
   * exposure: share of bars that ended with at least one open position
+  * calmar_ratio: annualized return / max drawdown (None when undefined)
+  * max_drawdown_bars: the longest stretch of bars spent below an earlier
+    equity peak ("time under water")
+
+``monthly_returns`` turns an equity curve into a calendar table of returns.
 
 The equity curve is expected to start with the initial equity, i.e. the
 value before the first bar.
@@ -57,6 +62,8 @@ class PerformanceMetrics:
     worst_trade: float | None
     total_fees: float
     exposure: float | None
+    calmar_ratio: float | None = None
+    max_drawdown_bars: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-safe dict: NaN → None, inf → "inf"."""
@@ -84,6 +91,8 @@ class PerformanceMetrics:
             ("Total return", pct(self.total_return)),
             ("Annualized return", pct(self.annualized_return)),
             ("Max drawdown", "n/a" if self.max_drawdown is None else f"{-self.max_drawdown:.2%}"),
+            ("Longest drawdown", f"{self.max_drawdown_bars} bars"),
+            ("Calmar ratio", num(self.calmar_ratio)),
             ("Sharpe ratio", num(self.sharpe_ratio)),
             ("Sortino ratio", num(self.sortino_ratio)),
             ("Volatility (ann.)", "n/a" if self.volatility_annualized is None
@@ -106,6 +115,36 @@ def _max_drawdown(equity: np.ndarray) -> float:
     peaks = np.maximum.accumulate(equity)
     drawdowns = equity / peaks - 1.0
     return float(-drawdowns.min()) if drawdowns.size else 0.0
+
+
+def _longest_drawdown(equity: np.ndarray) -> int:
+    """Longest run of consecutive points strictly below the running peak."""
+    below = equity < np.maximum.accumulate(equity)
+    longest = current = 0
+    for flag in below:
+        current = current + 1 if flag else 0
+        longest = max(longest, current)
+    return longest
+
+
+def monthly_returns(equity: pd.Series, initial: float) -> pd.DataFrame:
+    """Calendar table of returns: one row per year, columns 1-12 and "year".
+
+    ``equity`` is indexed by bar time (UTC). A month's return compares its last
+    equity with the previous month's last equity (or ``initial`` for the
+    first month); months without bars are NaN. "year" compounds the months.
+    """
+    if equity.empty:
+        return pd.DataFrame(columns=[*range(1, 13), "year"], dtype="float64")
+    index = pd.DatetimeIndex(equity.index)
+    month_end = equity.groupby([index.year, index.month]).last()
+    previous = month_end.shift(1)
+    previous.iloc[0] = initial
+    table = (month_end / previous - 1.0).unstack()
+    table = table.reindex(columns=range(1, 13))
+    table["year"] = (1.0 + table[list(range(1, 13))].fillna(0.0)).prod(axis=1) - 1.0
+    table.index.name = "year"
+    return table
 
 
 def compute_metrics(
@@ -160,13 +199,15 @@ def compute_metrics(
     exposure = None
     if in_market is not None and len(in_market) > 0:
         exposure = float(np.mean(np.asarray(in_market, dtype=bool)))
+    max_dd = _max_drawdown(values)
+    calmar = annualized / max_dd if annualized is not None and math.isfinite(annualized) and max_dd > 0 else None
 
     return PerformanceMetrics(
         initial_equity=initial,
         final_equity=final,
         total_return=final / initial - 1.0,
         annualized_return=annualized,
-        max_drawdown=_max_drawdown(values),
+        max_drawdown=max_dd,
         volatility_annualized=volatility,
         sharpe_ratio=sharpe,
         sortino_ratio=sortino,
@@ -181,4 +222,6 @@ def compute_metrics(
         worst_trade=min(pnls) if pnls else None,
         total_fees=float(total_fees),
         exposure=exposure,
+        calmar_ratio=calmar,
+        max_drawdown_bars=_longest_drawdown(values),
     )

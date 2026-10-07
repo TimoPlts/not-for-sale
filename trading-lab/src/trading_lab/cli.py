@@ -402,6 +402,17 @@ def cmd_report(args: argparse.Namespace) -> int:
 
             print(RelativeMetrics(**stored["relative"]).format_line())
 
+        from trading_lab.metrics import monthly_returns
+
+        curve = store.load_equity_curve(args.run_id)
+        if not curve.empty:
+            table = monthly_returns(curve["equity"], AppConfig.from_dict(run["config"]).portfolio.initial_cash)
+            print("\n=== Monthly returns ===")
+            print("year " + "".join(f"{m:>8}" for m in ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug",
+                                                         "Sep", "Oct", "Nov", "Dec")) + f"{'Year':>9}")
+            for year, row in table.iterrows():
+                cells = "".join(f"{'':>8}" if pd.isna(row[m]) else f"{row[m]:>+8.1%}" for m in range(1, 13))
+                print(f"{year} {cells}{row['year']:>+9.1%}")
         trades = store.load_closed_trades(args.run_id)
         print(f"\n=== Closed trades ({len(trades)}) - last {args.limit} ===")
         for t in trades[-args.limit:]:

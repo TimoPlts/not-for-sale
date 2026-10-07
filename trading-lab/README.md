@@ -67,6 +67,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 20A (complete):** `trading-lab checkup`: is this strategy any good? Every research check at once, with a pass/warn/fail verdict and next steps.
 - **Stage 20B (complete):** an opt-in time stop (`risk.max_holding_bars`): positions exit at the next open after N bars.
 - **Stage 20C (complete):** opt-in regime-dependent strategy weights (`[voting.regime_weights]`): trend followers can count more in trends, and mean reversion in sideways markets.
+- **Stage 21A (complete):** monthly returns tables (in `report`, the HTML report and the dashboard), the Calmar ratio and the longest drawdown.
 
 ### Stage 9/10 summary
 
@@ -163,7 +164,7 @@ One page, refreshed automatically (every 60 s by default):
 * **Latest decision:** every vote (RSI, MACD, Bollinger, Qwen Trend, Momentum, Risk) with confidence, weight and label, the ensemble result and the actions taken.
 * **AI rationales:** one card per agent and symbol.
 * **Agent performance** leaderboard: votes, confidence, correctness, trades influenced, pivotal trades, PnL when agreed or disagreed.
-* **Research:** strategy versus buy & hold return, max drawdown, Sharpe and profit factor, the market-regime table (see `trading-lab regimes`), plus saved experiments and walk-forward results.
+* **Research:** strategy versus buy & hold return, max drawdown, Sharpe and profit factor, monthly returns, the market-regime table (see `trading-lab regimes`), plus saved experiments and walk-forward results.
 * **Qwen usage:** calls, cache hits, failures, retries, latency and tokens.
 * **Recent trades and signals.**
 
@@ -196,6 +197,7 @@ One self-contained file, with no external scripts, styles or fonts, so it opens 
 * key numbers: return against buy & hold, max drawdown, Sharpe, profit factor, trades, win rate and exposure;
 * the equity curve against buy & hold, with hover values, and the drawdown;
 * a daily table view of the same numbers;
+* a monthly returns table (year by month, plus the year's total);
 * bootstrap robustness ranges and the market-regime table: the strategy against the market in rising, sideways and falling, calm and volatile markets (see `trading-lab regimes`);
 * every voter's performance (AI agents marked), the latest AI rationales, model usage, breaker trips, closed trades and decision counts.
 

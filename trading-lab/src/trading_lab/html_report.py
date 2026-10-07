@@ -225,6 +225,7 @@ def build_html_report(db_path: str, run_id: str | None = None, *, horizon: int =
         except Exception:  # a report must render even without enough data
             robust = None
         regimes = data.regimes(run_id)
+        monthly = data.monthly_returns(run_id)
         fingerprint = data.store.get_run(run_id)["config_fingerprint"]
         decisions = data.store.load_decisions(run_id, include_holds=False)
     m, b = research["metrics"] or {}, research["benchmark"] or {}
@@ -295,6 +296,15 @@ def build_html_report(db_path: str, run_id: str | None = None, *, horizon: int =
         out.append("<h2>Robustness</h2><div class=\"card\">" + _table(
             ["Resampling", "Total return (5% … median … 95%)", "P(loss)", "Sharpe (5% … 95%)"], rows)
             + "".join(f'<p class="muted">⚠ {_e(w)}</p>' for w in robust.warnings) + "</div>")
+
+    if monthly:
+        months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        rows = [[_td(row["year"])] + [_td("" if row[str(m)] is None else _pct(row[str(m)]), _cls(row[str(m)]))
+                                      for m in range(1, 13)] + [_td(_pct(row["total"]), _cls(row["total"]))]
+                for row in monthly]
+        out.append("<h2>Monthly returns</h2><div class=\"card\">" + _table(["Year", *months, "Year total"], rows)
+                   + '<p class="muted">Each month compares its last equity with the previous month\'s; '
+                   'empty = no bars in that month.</p></div>')
 
     if regimes:
         rows = [[_td(r["name"]), _td(r["bars"]), _td(f'{r["time_share"]:.0%}'),
