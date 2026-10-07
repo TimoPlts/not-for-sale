@@ -61,6 +61,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 18A (complete):** `trading-lab ab A.toml B.toml`: is a config change really better? Both configs over independent windows, with a sign test.
 - **Stage 18B (complete):** `trading-lab status`: a watchdog that checks the paper trader is alive and keeping up, with a systemd timer that alerts you when it is not.
 - **Stage 18C (complete):** opt-in volatility-targeted sizing (`risk.position_volatility_pct`): calm coins get bigger positions, wild ones smaller.
+- **Stage 19A (complete):** `trading-lab permutation-test`: could a market with no pattern have produced the result? The same backtest on shuffled-candle markets.
 
 ### Stage 9/10 summary
 
@@ -292,6 +293,32 @@ Some typical readings:
 * Losing mostly in *sideways / volatile* markets is the classic whipsaw.
 
 Combine it with `allow_short` or the trend filter, then backtest again. The database is only read.
+
+## Could a market without patterns do as well? (`permutation-test`)
+
+```bash
+trading-lab permutation-test --start 2025-01-01 --end 2025-04-01 --permutations 100
+```
+
+This backtests the config on the real candles, then 100 times on *shuffled* versions of the same period:
+
+* **What is kept:** each candle's shape (its open, high, low and close relative to the previous close, and its volume), the volatility, the overall price move over the period, and the links between coins. The candles are reordered the same way for every symbol.
+* **What is destroyed:** the order of the candles, and with it every trend, momentum or mean-reversion pattern.
+
+The result is the share of shuffled markets that did at least as well:
+
+```
+Real market: total_return +8.40%
+Shuffled markets (100): 5% -6.10% | median -1.20% | 95% +5.30%
+At least as good as the real result: 2 of 100 (p = 0.030)
+Verdict: unlikely to be luck: only 3.0% of shuffled markets did as well (...)
+```
+
+(The numbers above are only an illustration of the layout.)
+
+A strategy with real timing skill beats almost all shuffled markets. One that only rides the market's drift, or gets lucky, does not. It is still a single period, so a small p-value is necessary but not sufficient: confirm with `walkforward` or `ab`.
+
+AI agents are refused by default, because they would be asked about every shuffled market. `--allow-agents` overrides that, at the cost of many model calls. Nothing is stored.
 
 ## Could it be luck? (`robustness`)
 

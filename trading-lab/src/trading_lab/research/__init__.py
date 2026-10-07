@@ -20,6 +20,7 @@ from trading_lab.research.experiments import (
     variant_config,
     variant_overrides,
 )
+from trading_lab.research.permutation import PermutationResult, format_permutation, permutation_test
 from trading_lab.research.protocol import VariantSummary, sign_test_p, summarize
 from trading_lab.research.regimes import RegimeReport, format_regimes, regimes_for_run
 from trading_lab.research.reconcile import Reconciliation, format_reconciliation, reconcile
@@ -41,6 +42,9 @@ from trading_lab.research.walkforward import (
 )
 
 __all__ = [
+    "PermutationResult",
+    "format_permutation",
+    "permutation_test",
     "ABResult",
     "ab_test",
     "config_diff",

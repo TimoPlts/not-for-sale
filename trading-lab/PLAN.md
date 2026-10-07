@@ -552,6 +552,23 @@ Trade-offs worth knowing:
 - `RiskManager(bars_per_year=...)` is set from the timeframe by the session, and is required when targeting is on.
 - Tests: the exact limit (one position adds the target share of equity in volatility; half the volatility gives twice the size; shorts the same); off by default and skipped without volatility; validation; backtest entries bound by the target, with the calmer coin getting the bigger share; live equal to the backtest.
 
+### Stage 19A: Permutation test ✅
+- `research/permutation.py`:
+  - `permute_candles` reorders the candles from the period start. Each candle is kept as log open, high, low and close relative to the previous close, plus volume. The order is the same for all symbols with the same number of candles, and prices are rebuilt from the last real close. The warm-up history and the final price stay exactly the same.
+  - `PermutedProvider` serves shuffled data through the shared memoized provider.
+  - `permutation_test` runs the real backtest plus N shuffled ones. `PermutationResult` gives the metric of each run, the 5/50/95 percentiles, how many were at least as good (lower is better for drawdown and the like), p = (1 + count) / (1 + N), and a verdict.
+  - Agents are refused unless `allow_agents` is set.
+- CLI: `trading-lab permutation-test [--days N | --start/--end] [--permutations 100] [--metric M] [--seed S] [--allow-agents] [--export JSON]` (nothing stored).
+- Tests:
+  - shuffling keeps the history, the final price, the candle shapes and volumes, and stays valid OHLC;
+  - it is deterministic per seed;
+  - the shared order across symbols;
+  - edge cases;
+  - structure is detected (a trend follower on autocorrelated returns beats all shuffles), while noise is not (a random walk);
+  - p-values and verdicts, including lower-is-better metrics and undefined runs;
+  - validation (agents, counts, metrics);
+  - the CLI.
+
 ## 5. Stage 11–18 status summary
 
 On top of the Stage 9/10 system:
