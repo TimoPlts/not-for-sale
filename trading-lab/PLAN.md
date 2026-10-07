@@ -552,7 +552,34 @@ Trade-offs worth knowing:
 - `RiskManager(bars_per_year=...)` is set from the timeframe by the session, and is required when targeting is on.
 - Tests: the exact limit (one position adds the target share of equity in volatility; half the volatility gives twice the size; shorts the same); off by default and skipped without volatility; validation; backtest entries bound by the target, with the calmer coin getting the bigger share; live equal to the backtest.
 
-## 5. Stage 11–18 status summary
+### Stage 19A: Permutation test ✅
+- `research/permutation.py`:
+  - `permute_candles` reorders the candles from the period start. Each candle is kept as log open, high, low and close relative to the previous close, plus volume. The order is the same for all symbols with the same number of candles, and prices are rebuilt from the last real close. The warm-up history and the final price stay exactly the same.
+  - `PermutedProvider` serves shuffled data through the shared memoized provider.
+  - `permutation_test` runs the real backtest plus N shuffled ones. `PermutationResult` gives the metric of each run, the 5/50/95 percentiles, how many were at least as good (lower is better for drawdown and the like), p = (1 + count) / (1 + N), and a verdict.
+  - Agents are refused unless `allow_agents` is set.
+- CLI: `trading-lab permutation-test [--days N | --start/--end] [--permutations 100] [--metric M] [--seed S] [--allow-agents] [--export JSON]` (nothing stored).
+- Tests:
+  - shuffling keeps the history, the final price, the candle shapes and volumes, and stays valid OHLC;
+  - it is deterministic per seed;
+  - the shared order across symbols;
+  - edge cases;
+  - structure is detected (a trend follower on autocorrelated returns beats all shuffles), while noise is not (a random walk);
+  - p-values and verdicts, including lower-is-better metrics and undefined runs;
+  - validation (agents, counts, metrics);
+  - the CLI.
+
+### Stage 19B: Sweep stability ✅
+- `research/sweep.py`: `stability_scores(results, grid, metric)` gives each grid point the mean metric of itself and its neighbours: points one step away in one parameter, in the order the values were given. Undefined values are skipped and their count is reported. `rank_by_stability` orders by that score (lower is better for drawdown and the like). `params_key` identifies a grid point.
+- `sweep` prints a `stable` column (and writes it to the CSV export). `--rank stability` orders the table by it.
+- Tests: a lone peak scores below a plateau, and the plateau ranks first; two-dimensional neighbours and undefined values; lower-is-better metrics; the CLI (column, ranking, export).
+
+### Stage 19C: Market regimes in the report and dashboard ✅
+- `DashboardData.regimes(run_id)` returns the read-only regime report as a dict, or None while the run is shorter than the warm-up. It is part of `snapshot()` and therefore of `dashboard-data --json`.
+- The HTML report has a "Market regimes" section (per trend and per trend x volatility: bars, time, strategy and market returns, time in the market, trades, PnL). The dashboard's Research section shows the same table.
+- Tests: long runs show regimes identical to `regimes_for_run`, in the snapshot and the HTML report; short runs leave the section out; the dashboard renders the table (Streamlit AppTest).
+
+## 5. Stage 11–19 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -564,6 +591,7 @@ On top of the Stage 9/10 system:
 - **Shorts (16):** opt-in simulated short selling: fully collateralised accounting with borrow fees (16A), mirrored entries, exits, sizing and filters (16B), and the trade side in every report (16C).
 - **Strategy research (17):** opt-in trend-following strategies (17A), cost sensitivity with a break-even level (17B), and performance by market regime (17C).
 - **Decisions and operations (18):** A/B tests of whole configs over independent windows (18A), a watchdog with a systemd timer (18B), and volatility-targeted sizing (18C).
+- **Not fooling yourself (19):** a permutation test against shuffled markets (19A), sweep stability scores (19B), and market regimes in the report and dashboard (19C).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

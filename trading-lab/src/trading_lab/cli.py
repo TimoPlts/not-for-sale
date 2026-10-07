@@ -26,6 +26,7 @@
     trading-lab regimes [RUN_ID] [--trend-bars 50] [--vol-bars 24] [--json]
     trading-lab ab A.toml B.toml [--days 180 | --start/--end] [--windows 6] [--metric total_return]
     trading-lab status [PAPER_RUN_ID] [--max-behind 2] [--alert] [--json]   (watchdog; exit 1 if not OK)
+    trading-lab permutation-test [--days N | --start/--end] [--permutations 100] [--metric total_return]
 
 Global options (before the command): ``--config PATH``, ``--db PATH`` and
 ``--agent-mode record|replay|live``.
@@ -535,20 +536,31 @@ def cmd_sweep(args: argparse.Namespace) -> int:
         if store is not None:
             store.close()
 
+    from trading_lab.research import rank_by_stability, stability_scores
+    from trading_lab.research.sweep import params_key
+
     bench = results[0].benchmark
-    print(f"\n{'#':>3}  {'return':>8} {'max dd':>7} {'sharpe':>7} {'trades':>6} {'win':>6}  params")
+    scores = stability_scores(results, grid, args.metric)
+    if args.rank == "stability":
+        results = rank_by_stability(results, grid, args.metric)
+    print(f"\n{'#':>3}  {'return':>8} {'max dd':>7} {'sharpe':>7} {'trades':>6} {'win':>6} {'stable':>8}  params")
     for rank, r in enumerate(results, 1):
         m = r.metrics
         win = "n/a" if m.win_rate is None else f"{m.win_rate:.0%}"
+        stable = scores[params_key(r.params)][0]
         print(f"{rank:>3}  {m.total_return:>+8.2%} {-m.max_drawdown:>7.1%} {_fmt_num(m.sharpe_ratio):>7} "
-              f"{m.num_trades:>6} {win:>6}  {_short(r.params)}")
+              f"{m.num_trades:>6} {win:>6} {_fmt_num(stable):>8}  {_short(r.params)}")
+    print(f"\nstable = mean {args.metric} of a setting and its grid neighbours (one step in one parameter); "
+          "prefer a broad plateau to a lone peak" + (" (ranked by it)" if args.rank == "stability" else
+                                                      "; --rank stability ranks by it"))
     if bench is not None:
         print(f"\nBuy & hold over the same period: {bench.total_return:+.2%} "
               f"(max drawdown {-bench.max_drawdown:.1%})")
     print("\nNote: the best in-sample row is optimistic by construction; use walkforward to check it.")
     _print_provider_usage(llm)
     if args.export:
-        rows = [{**r.params, **r.metrics.to_dict(), "run_id": r.run_id} for r in results]
+        rows = [{**r.params, **r.metrics.to_dict(), "stable": scores[params_key(r.params)][0], "run_id": r.run_id}
+                for r in results]
         Path(args.export).parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(rows).to_csv(args.export, index=False)
         print(f"Results written to {Path(args.export).resolve()}")
@@ -664,6 +676,34 @@ def cmd_status(args: argparse.Namespace) -> int:
                              run_id=run_id, force=True):
             print("(--alert: the alert could not be delivered; see the warning above)", file=sys.stderr)
     return 0 if status.ok else 1
+
+
+def cmd_permutation_test(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.research import format_permutation, permutation_test
+    from trading_lab.strategy_factory import shared_llm_provider
+
+    cfg = _load_config(args)
+    start, end = _period(args, args.days)
+    provider = _provider(cfg, args.synthetic)
+    print(f"Permutation test: 1 real + {args.permutations} shuffled backtests | {start:%Y-%m-%d} -> "
+          f"{end:%Y-%m-%d} | {cfg.market.timeframe} | data: {provider.name}")
+    llm = shared_llm_provider([cfg]) if args.allow_agents else None
+    step = max(1, args.permutations // 10)
+    result = permutation_test(
+        cfg, provider, start, end, permutations=args.permutations, metric=args.metric, seed=args.seed,
+        llm_provider=llm, allow_agents=args.allow_agents,
+        progress=lambda i, n: print(f"  shuffled {i}/{n}") if i % step == 0 or i == n else None,
+    )
+    print()
+    print(format_permutation(result))
+    _print_provider_usage(llm)
+    if args.export:
+        Path(args.export).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.export).write_text(_json.dumps(result.to_dict(), indent=2) + "\n")
+        print(f"Results written to {Path(args.export).resolve()}")
+    return 0
 
 
 def cmd_walkforward(args: argparse.Namespace) -> int:
@@ -1245,6 +1285,8 @@ def build_parser() -> argparse.ArgumentParser:
     research_options(sw, 180)
     sw.add_argument("--save", action="store_true", help="store every run in the database")
     sw.add_argument("--export", metavar="CSV", help="write the results table to a CSV file")
+    sw.add_argument("--rank", choices=("metric", "stability"), default="metric",
+                    help="order by the metric itself or by its neighbourhood average (default metric)")
     sw.set_defaults(func=cmd_sweep)
 
     def weighting_options(p: argparse.ArgumentParser) -> None:
@@ -1367,6 +1409,19 @@ def build_parser() -> argparse.ArgumentParser:
     co.add_argument("--multipliers", default="0,0.5,1,2,3", help="cost multipliers (default 0,0.5,1,2,3)")
     co.add_argument("--export", metavar="JSON", help="write the results to a JSON file")
     co.set_defaults(func=cmd_costs)
+
+    pt = sub.add_parser("permutation-test", help="could a market with no pattern produce this? shuffled-candle test")
+    market_options(pt)
+    pt.add_argument("--start", type=_date, help="YYYY-MM-DD (UTC)")
+    pt.add_argument("--end", type=_date, help="YYYY-MM-DD (UTC, exclusive); default now")
+    pt.add_argument("--days", type=int, default=90, help="length when --start is omitted (default 90)")
+    pt.add_argument("--permutations", type=int, default=100, help="shuffled markets (default 100)")
+    pt.add_argument("--metric", default="total_return", help="compared metric (default total_return)")
+    pt.add_argument("--seed", type=int, default=0, help="first shuffle seed (default 0)")
+    pt.add_argument("--allow-agents", action="store_true",
+                    help="let AI agents vote (asks the model about every shuffled market)")
+    pt.add_argument("--export", metavar="JSON", help="write the results to a JSON file")
+    pt.set_defaults(func=cmd_permutation_test)
 
     stp = sub.add_parser("status", help="watchdog: is the paper run alive and keeping up? (exit 1 if not)")
     stp.add_argument("run_id", nargs="?", help="default: the running paper run, else the latest one")
