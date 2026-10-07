@@ -1,0 +1,10 @@
+# Runs trading-lab-digest.service every Monday at 07:52 UTC (a run missed while the VM was off runs at boot).
+[Unit]
+Description=Send the trading-lab weekly digest
+
+[Timer]
+OnCalendar=Mon *-*-* 07:52:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

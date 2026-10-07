@@ -74,6 +74,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 22B (complete):** `trading-lab live-compare RUN_A RUN_B`: which of two paper runs is doing better over the time they ran together? Metrics, better days with a sign test, and the settings that differ.
 - **Stage 22C (complete):** with several paper runs, the dashboard and `dashboard-data` open with an overview table: each run's status, equity, return, drawdown, open positions, last bar and watchdog check.
 - **Stage 23A (complete):** the probabilistic Sharpe ratio (how likely the true Sharpe is above 0) in every report, and the deflated Sharpe ratio of a sweep's winner (does it beat the luckiest of all the settings tried?).
+- **Stage 23B (complete):** `trading-lab digest`: one weekly message about every paper run (its week against the market, trades, watchdog) and the live comparisons, with a systemd timer that sends it.
 
 ### Stage 9/10 summary
 
@@ -565,6 +566,7 @@ The pieces that make unattended operation work:
   * 3 or more cycles in a row have failed;
   * the run is not running (`--allow-stopped` allows that).
 * `status --all` checks every running paper run at once (the watchdog uses it), so several runs can trade side by side: `trading-lab-paper@NAME` runs `config/runs/NAME.toml` as run NAME. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), section 5d.
+* `trading-lab digest` sums up the last 7 days (`--days`) of every paper run: its return against the market, worst drawdown, trades, equity and watchdog check, plus the `live-compare` verdict for each pair of running runs. `--alert` sends it through the alert channels, and a weekly systemd timer does that every Monday (section 5e).
 
 ### When things fail
 

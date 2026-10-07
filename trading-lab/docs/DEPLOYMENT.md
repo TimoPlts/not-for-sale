@@ -184,6 +184,18 @@ sudo -u tradinglab .venv/bin/trading-lab status --all
 * `trading-lab live-compare RUN_A RUN_B` compares two runs over the time they ran together (see the README).
   `trading-lab compare` and `trading-lab report RUN_ID` work on any of the runs too.
 
+## 5e. Weekly digest (optional)
+
+Every Monday morning (07:52 UTC), one message through the channels in `[alerts]`. It covers each paper run's week: return against the market, worst drawdown, trades, equity and the watchdog check. With several runs, it also gives the `live-compare` verdict for each pair:
+
+```bash
+sudo cp deploy/systemd/trading-lab-digest.service deploy/systemd/trading-lab-digest.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now trading-lab-digest.timer
+sudo -u tradinglab bash -c 'cd /opt/trading-lab/trading-lab && .venv/bin/trading-lab digest'   # preview
+```
+
+It is read-only, like the watchdog, and is sent whatever `min_level` is set to.
+
 ## 6. Where things are
 
 | what | where |

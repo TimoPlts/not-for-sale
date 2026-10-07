@@ -659,6 +659,15 @@ Trade-offs worth knowing:
   - deflation rising with the number of trials, and the best of 50 noise strategies: PSR above 0.9 but DSR below 0.5;
   - the metrics, sweep returns that compound to each row's return, and the CLI, `compare` and HTML views.
 
+### Stage 23B: Weekly digest ✅
+- `digest.py`: `build_digest(store, days=7, now=None)` covers every paper run that is running or had bars in the period, sorted by id.
+  - For each run, it reuses `summary.build_summary` (period return, market move, worst drawdown, trades, equity, open positions, model calls) and adds the watchdog check (`check_status`) for running runs.
+  - It adds the `live_compare` verdict for each pair of running runs (at most 10 pairs, the rest counted).
+  - `format_digest` and `to_dict` render it.
+- CLI: `trading-lab digest [--days 7] [--max-behind 2] [--alert] [--json]`, read-only. `--alert` sends the text once, at info level but forced, so `min_level` does not hide it.
+- `deploy/systemd/trading-lab-digest.service` and `.timer`: Mondays at 07:52 UTC, `Persistent=true`, read-only paths. Setup is in `DEPLOYMENT.md` section 5e.
+- Tests: three paper runs (one stopped before the period, one started and stopped inside it), checked against `build_summary` and `live_compare`; a stalled check; the pair cap; an empty database; the CLI (text, JSON, alert despite `min_level`, no secret in the output, errors); the systemd units.
+
 ## 5. Stage 11–23 status summary
 
 On top of the Stage 9/10 system:
@@ -675,7 +684,7 @@ On top of the Stage 9/10 system:
 - **One verdict and smarter exits (20):** a one-command strategy checkup (20A), a time stop (20B), and regime-dependent strategy weights (20C).
 - **Readability and reach (21):** monthly returns, Calmar and the longest drawdown (21A), Telegram alerts (21B), and config presets (21C).
 - **Running several configs live (22):** several paper runs on one VM with one watchdog (22A), a comparison of two live runs over the time they ran together (22B), and an overview of all paper runs in the dashboard (22C).
-- **Is it luck? (23):** probabilistic and deflated Sharpe ratios (23A).
+- **Is it luck, and how is it going? (23):** probabilistic and deflated Sharpe ratios (23A), and a weekly digest of every paper run (23B).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.
