@@ -1,0 +1,27 @@
+# Weekly digest of the PAPER trader: every paper run's week (return, drawdown, trades, watchdog) and the
+# live comparisons, sent once through the configured [alerts] channels. Read-only; trades nothing.
+# Template: install together with trading-lab-digest.timer (see docs/DEPLOYMENT.md, section 5e):
+#   sudo cp deploy/systemd/trading-lab-digest.* /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now trading-lab-digest.timer
+
+[Unit]
+Description=trading-lab weekly paper trading digest (read-only)
+
+[Service]
+Type=oneshot
+User=tradinglab
+Group=tradinglab
+WorkingDirectory=/opt/trading-lab/trading-lab
+# Only for the alert channel settings (webhook URL / SMTP / Telegram); the digest itself needs no secrets.
+EnvironmentFile=/etc/trading-lab/trading-lab.env
+ExecStart=/opt/trading-lab/trading-lab/.venv/bin/trading-lab \
+    --config /opt/trading-lab/trading-lab/config/default.toml \
+    digest --days 7 --alert
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ReadOnlyPaths=/opt/trading-lab/trading-lab

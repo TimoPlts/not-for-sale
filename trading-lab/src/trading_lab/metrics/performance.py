@@ -15,6 +15,9 @@ Definitions (all fractions, not percentages):
   * calmar_ratio: annualized return / max drawdown (None when undefined)
   * max_drawdown_bars: the longest stretch of bars spent below an earlier
     equity peak ("time under water")
+  * probabilistic_sharpe: the probability that the true Sharpe ratio is
+    above 0, allowing for the sample length, skewness and fat tails (see
+    ``metrics.sharpe``; None when undefined)
 
 ``monthly_returns`` turns an equity curve into a calendar table of returns.
 
@@ -33,6 +36,7 @@ import pandas as pd
 
 from trading_lab.core.models import ClosedTrade
 from trading_lab.core.symbols import timeframe_to_seconds
+from trading_lab.metrics.sharpe import probabilistic_sharpe
 
 _SECONDS_PER_YEAR = 365 * 24 * 60 * 60
 
@@ -64,6 +68,7 @@ class PerformanceMetrics:
     exposure: float | None
     calmar_ratio: float | None = None
     max_drawdown_bars: int = 0
+    probabilistic_sharpe: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-safe dict: NaN → None, inf → "inf"."""
@@ -94,6 +99,8 @@ class PerformanceMetrics:
             ("Longest drawdown", f"{self.max_drawdown_bars} bars"),
             ("Calmar ratio", num(self.calmar_ratio)),
             ("Sharpe ratio", num(self.sharpe_ratio)),
+            ("Prob. Sharpe > 0", "n/a" if self.probabilistic_sharpe is None
+             else f"{self.probabilistic_sharpe:.0%}"),
             ("Sortino ratio", num(self.sortino_ratio)),
             ("Volatility (ann.)", "n/a" if self.volatility_annualized is None
              else f"{self.volatility_annualized:.2%}"),
@@ -224,4 +231,5 @@ def compute_metrics(
         exposure=exposure,
         calmar_ratio=calmar,
         max_drawdown_bars=_longest_drawdown(values),
+        probabilistic_sharpe=probabilistic_sharpe(returns),
     )

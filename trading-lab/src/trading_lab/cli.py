@@ -28,6 +28,7 @@
     trading-lab ab A.toml B.toml [--days 180 | --start/--end] [--windows 6] [--metric total_return]
     trading-lab status [PAPER_RUN_ID | --all] [--max-behind 2] [--alert] [--json]   (watchdog; exit 1 if not OK)
     trading-lab live-compare RUN_A RUN_B [--min-days 14] [--json]   (two paper runs over the time they ran together)
+    trading-lab digest [--days 7] [--alert] [--json]   (every paper run this week, in one message)
     trading-lab permutation-test [--days N | --start/--end] [--permutations 100] [--metric total_return]
     trading-lab checkup [--days N | --start/--end] [--html FILE] [--json FILE]   (every check, one verdict)
 
@@ -570,6 +571,12 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     if bench is not None:
         print(f"\nBuy & hold over the same period: {bench.total_return:+.2%} "
               f"(max drawdown {-bench.max_drawdown:.1%})")
+    from trading_lab.research.sweep import deflated_sharpe_of_best
+
+    dsr = deflated_sharpe_of_best(results)
+    if dsr is not None and len(results) > 1:
+        print(f"\nDeflated Sharpe of row 1: {dsr:.0%}, the chance its true Sharpe beats what the luckiest of "
+              f"{len(results)} settings would show by chance ({_dsr_verdict(dsr)})")
     print("\nNote: the best in-sample row is optimistic by construction; use walkforward to check it.")
     _print_provider_usage(llm)
     if args.export:
@@ -579,6 +586,14 @@ def cmd_sweep(args: argparse.Namespace) -> int:
         pd.DataFrame(rows).to_csv(args.export, index=False)
         print(f"Results written to {Path(args.export).resolve()}")
     return 0
+
+
+def _dsr_verdict(dsr: float) -> str:
+    if dsr >= 0.95:
+        return "convincing, even after trying them all"
+    if dsr >= 0.5:
+        return "better than the luckiest trial would be, but not convincing"
+    return "no better than the luckiest of the trials: likely chosen by luck"
 
 
 def cmd_costs(args: argparse.Namespace) -> int:
@@ -705,6 +720,34 @@ def cmd_status(args: argparse.Namespace) -> int:
                              run_id=None if args.all else run_ids[0], force=True):
             print("(--alert: the alert could not be delivered; see the warning above)", file=sys.stderr)
     return 1 if problems else 0
+
+
+def cmd_digest(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.digest import build_digest, format_digest
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        try:
+            digest = build_digest(store, days=args.days, max_behind=args.max_behind)
+        except ValueError as exc:
+            raise TradingLabError(str(exc)) from None
+    text = format_digest(digest)
+    print(_json.dumps(digest.to_dict(), indent=2, default=str) if args.json else text)
+    if args.alert:
+        from trading_lab.alerts import build_alerts
+
+        alerts = build_alerts(cfg)
+        if alerts is None:
+            print("(--alert: alerts are disabled in the config, nothing sent)", file=sys.stderr)
+        elif not alerts.emit("info", f"Paper trading digest ({args.days:g} days)", text,
+                             force=True):
+            print("(--alert: the digest could not be delivered; see the warning above)", file=sys.stderr)
+    return 0
 
 
 def cmd_permutation_test(args: argparse.Namespace) -> int:
@@ -1276,6 +1319,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
     rows = [
         ("total_return", "Total return", _fmt_pct), ("annualized_return", "Annualized", _fmt_pct),
         ("max_drawdown", "Max drawdown", _fmt_dd), ("sharpe_ratio", "Sharpe", _fmt_num),
+        ("probabilistic_sharpe", "Prob. Sharpe>0", lambda v: "n/a" if v is None else f"{v:.0%}"),
         ("sortino_ratio", "Sortino", _fmt_num), ("num_trades", "Trades", str),
         ("win_rate", "Win rate", lambda v: "n/a" if v is None else f"{v:.1%}"),
         ("profit_factor", "Profit factor", _fmt_num), ("total_fees", "Fees", _fmt_num),
@@ -1564,6 +1608,13 @@ def build_parser() -> argparse.ArgumentParser:
     stp.add_argument("--alert", action="store_true", help="send an alert (configured channels) when not OK")
     stp.add_argument("--json", action="store_true", help="machine-readable output")
     stp.set_defaults(func=cmd_status)
+
+    dg = sub.add_parser("digest", help="every paper run over the last days, in one message (read-only)")
+    dg.add_argument("--days", type=float, default=7.0, help="period in days (default 7)")
+    dg.add_argument("--max-behind", type=int, default=2, help="watchdog: closed candles allowed to wait")
+    dg.add_argument("--alert", action="store_true", help="send it through the configured alert channels")
+    dg.add_argument("--json", action="store_true", help="machine-readable output")
+    dg.set_defaults(func=cmd_digest)
 
     abp = sub.add_parser("ab", help="is config B better than config A? backtests over independent windows")
     abp.add_argument("config_a", help="TOML config A (e.g. your current config)")

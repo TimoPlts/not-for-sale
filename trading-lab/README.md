@@ -73,6 +73,8 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 22A (complete):** several paper runs side by side on one VM: a systemd template (`trading-lab-paper@NAME`, one config per run) and `status --all`, which checks every running paper run.
 - **Stage 22B (complete):** `trading-lab live-compare RUN_A RUN_B`: which of two paper runs is doing better over the time they ran together? Metrics, better days with a sign test, and the settings that differ.
 - **Stage 22C (complete):** with several paper runs, the dashboard and `dashboard-data` open with an overview table: each run's status, equity, return, drawdown, open positions, last bar and watchdog check.
+- **Stage 23A (complete):** the probabilistic Sharpe ratio (how likely the true Sharpe is above 0) in every report, and the deflated Sharpe ratio of a sweep's winner (does it beat the luckiest of all the settings tried?).
+- **Stage 23B (complete):** `trading-lab digest`: one weekly message about every paper run (its week against the market, trades, watchdog) and the live comparisons, with a systemd timer that sends it.
 
 ### Stage 9/10 summary
 
@@ -564,6 +566,7 @@ The pieces that make unattended operation work:
   * 3 or more cycles in a row have failed;
   * the run is not running (`--allow-stopped` allows that).
 * `status --all` checks every running paper run at once (the watchdog uses it), so several runs can trade side by side: `trading-lab-paper@NAME` runs `config/runs/NAME.toml` as run NAME. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), section 5d.
+* `trading-lab digest` sums up the last 7 days (`--days`) of every paper run: its return against the market, worst drawdown, trades, equity and watchdog check, plus the `live-compare` verdict for each pair of running runs. `--alert` sends it through the alert channels, and a weekly systemd timer does that every Monday (section 5e).
 
 ### When things fail
 
@@ -849,6 +852,14 @@ trading-lab sweep --param strategies.rsi.period=7,10,14,21,28 --rank stability
 ```
 
 `--param` takes any dotted config key, such as `risk.stop_loss_pct=0.03,0.05` or `strategies.trend_analyst.weight=0,1`. A sweep's best row is optimistic by construction, so judge it by the walk-forward **out-of-sample** results.
+
+**How much does a Sharpe ratio prove?** Every report (`report`, `compare`, the HTML report, sweep exports) includes the **probabilistic Sharpe ratio** ("Prob. Sharpe > 0"): the probability that the true Sharpe ratio is above 0, allowing for how many bars there were and for skewed, fat-tailed returns. A sweep also prints the **deflated Sharpe ratio** of row 1. Trying many settings makes the best one look good by luck alone, so the deflated Sharpe measures row 1 against what the luckiest of all the settings tried would show by chance:
+
+```
+Deflated Sharpe of row 1: 22%, the chance its true Sharpe beats what the luckiest of 8 settings would show by chance (no better than the luckiest of the trials: likely chosen by luck)
+```
+
+Aim for 95% or more. Below 50%, the winner is no better than chance would pick. Both follow Bailey and López de Prado; the formulas are in `src/trading_lab/metrics/sharpe.py`.
 
 ### Baseline versus AI experiments
 

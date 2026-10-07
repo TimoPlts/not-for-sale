@@ -645,7 +645,30 @@ Trade-offs worth knowing:
 - The dashboard shows a "Paper runs" table above the portfolio when there are at least two paper runs, with a pointer to `live-compare`. `dashboard-data` prints the same list. A single run looks exactly as before.
 - Tests: rows against each run's overview, the order, a stopped run (not checked), a run without bars, a stalled check later, the JSON snapshot, the text view, no table for a single run, and the rendered dashboard table, with the database unchanged.
 
-## 5. Stage 11–22 status summary
+### Stage 23A: Probabilistic and deflated Sharpe ratios ✅
+- `metrics/sharpe.py` (Bailey and López de Prado):
+  - `probabilistic_sharpe(returns, threshold=0)`: the probability that the true per-bar Sharpe is above the threshold, given the sample length, skewness and (non-excess) kurtosis;
+  - `expected_max_sharpe(n, variance)`: the Sharpe ratio the best of n luck-only trials reaches;
+  - `deflated_sharpe(returns, trial_sharpes)`: the PSR against that bar.
+  - Undefined cases (fewer than 3 returns, no variance) give None.
+- `PerformanceMetrics.probabilistic_sharpe` (with a default, so stored metrics still load) is computed by `compute_metrics`. It appears in the metrics table, `compare`, the HTML report and every export.
+- `SweepResult.returns` keeps each trial's per-bar returns. `deflated_sharpe_of_best` scores row 1 against all the trials, and `sweep` prints it with a plain-language reading (95%+ convincing, under 50% likely luck). `probabilistic_sharpe` can also be a ranking metric.
+- Tests:
+  - the PSR against the formula by hand, and its properties: more data, skew direction, the threshold at the measured Sharpe gives 0.5, undefined cases;
+  - the expected maximum against its formula and a simulation of 100 normals;
+  - deflation rising with the number of trials, and the best of 50 noise strategies: PSR above 0.9 but DSR below 0.5;
+  - the metrics, sweep returns that compound to each row's return, and the CLI, `compare` and HTML views.
+
+### Stage 23B: Weekly digest ✅
+- `digest.py`: `build_digest(store, days=7, now=None)` covers every paper run that is running or had bars in the period, sorted by id.
+  - For each run, it reuses `summary.build_summary` (period return, market move, worst drawdown, trades, equity, open positions, model calls) and adds the watchdog check (`check_status`) for running runs.
+  - It adds the `live_compare` verdict for each pair of running runs (at most 10 pairs, the rest counted).
+  - `format_digest` and `to_dict` render it.
+- CLI: `trading-lab digest [--days 7] [--max-behind 2] [--alert] [--json]`, read-only. `--alert` sends the text once, at info level but forced, so `min_level` does not hide it.
+- `deploy/systemd/trading-lab-digest.service` and `.timer`: Mondays at 07:52 UTC, `Persistent=true`, read-only paths. Setup is in `DEPLOYMENT.md` section 5e.
+- Tests: three paper runs (one stopped before the period, one started and stopped inside it), checked against `build_summary` and `live_compare`; a stalled check; the pair cap; an empty database; the CLI (text, JSON, alert despite `min_level`, no secret in the output, errors); the systemd units.
+
+## 5. Stage 11–23 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -661,6 +684,7 @@ On top of the Stage 9/10 system:
 - **One verdict and smarter exits (20):** a one-command strategy checkup (20A), a time stop (20B), and regime-dependent strategy weights (20C).
 - **Readability and reach (21):** monthly returns, Calmar and the longest drawdown (21A), Telegram alerts (21B), and config presets (21C).
 - **Running several configs live (22):** several paper runs on one VM with one watchdog (22A), a comparison of two live runs over the time they ran together (22B), and an overview of all paper runs in the dashboard (22C).
+- **Is it luck, and how is it going? (23):** probabilistic and deflated Sharpe ratios (23A), and a weekly digest of every paper run (23B).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

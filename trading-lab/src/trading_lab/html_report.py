@@ -247,6 +247,7 @@ def build_html_report(db_path: str, run_id: str | None = None, *, horizon: int =
         ("Buy & hold", _pct(b.get("total_return")), _cls(b.get("total_return"))),
         ("Max drawdown", _pct(-m["max_drawdown"]) if m.get("max_drawdown") is not None else "n/a", ""),
         ("Sharpe", _num(m.get("sharpe_ratio")), ""),
+        ("Prob. Sharpe > 0", _pct(m.get("probabilistic_sharpe"), signed=False), ""),
         ("Profit factor", _num(m.get("profit_factor")), ""),
         ("Trades", str(m.get("num_trades", 0)), ""),
         ("Win rate", _pct(m.get("win_rate"), signed=False), ""),
