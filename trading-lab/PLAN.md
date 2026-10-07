@@ -630,6 +630,14 @@ Trade-offs worth knowing:
 - `DEPLOYMENT.md` section 5d explains the setup: one config per run, the shared database, separate accounts, and model calls per run.
 - Tests: two runs trading through two connections to one database file, then both OK; `--all` with a stalled run, a stopped one and a healthy one (exit code, alert text, JSON); no running run, with and without `--allow-stopped`; both systemd templates.
 
+### Stage 22B: Comparing two live runs ✅
+- `research/live_compare.py`: `live_compare(store, run_a, run_b, min_days=14)` compares two stored runs over their overlap (the later first bar to the earlier last bar).
+  - Each run starts from its last equity before the overlap (or its initial cash). Its metrics come from `compute_metrics` over the overlap, counting only trades closed and fees paid within it.
+  - Daily returns (last equity per UTC day) are paired. Ties are not compared, and `sign_test_p` gives the one-sided p for each run. The settings that differ come from `config_diff`.
+  - Verdicts: not comparable (no overlap), too early to tell (fewer than `min_days` compared days), better (p < 0.05), a lead that could be chance, or no difference. Different kinds or timeframes are noted.
+- CLI: `trading-lab live-compare RUN_A RUN_B [--min-days 14] [--json]`, read-only.
+- Tests: hand-made curves where the overlap, base equity, fees, trades, exposure and each day's return are checked exactly; the sign test and every verdict; notes; two real paper runs started a day apart (no head start) and the CLI (text, JSON, errors).
+
 ## 5. Stage 11–22 status summary
 
 On top of the Stage 9/10 system:
@@ -645,7 +653,7 @@ On top of the Stage 9/10 system:
 - **Not fooling yourself (19):** a permutation test against shuffled markets (19A), sweep stability scores (19B), and market regimes in the report and dashboard (19C).
 - **One verdict and smarter exits (20):** a one-command strategy checkup (20A), a time stop (20B), and regime-dependent strategy weights (20C).
 - **Readability and reach (21):** monthly returns, Calmar and the longest drawdown (21A), Telegram alerts (21B), and config presets (21C).
-- **Running several configs live (22):** several paper runs on one VM with one watchdog (22A).
+- **Running several configs live (22):** several paper runs on one VM with one watchdog (22A), and a comparison of two live runs over the time they ran together (22B).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

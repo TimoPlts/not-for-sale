@@ -27,6 +27,7 @@
     trading-lab regimes [RUN_ID] [--trend-bars 50] [--vol-bars 24] [--json]
     trading-lab ab A.toml B.toml [--days 180 | --start/--end] [--windows 6] [--metric total_return]
     trading-lab status [PAPER_RUN_ID | --all] [--max-behind 2] [--alert] [--json]   (watchdog; exit 1 if not OK)
+    trading-lab live-compare RUN_A RUN_B [--min-days 14] [--json]   (two paper runs over the time they ran together)
     trading-lab permutation-test [--days N | --start/--end] [--permutations 100] [--metric total_return]
     trading-lab checkup [--days N | --start/--end] [--html FILE] [--json FILE]   (every check, one verdict)
 
@@ -1297,6 +1298,24 @@ def cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_live_compare(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.research.live_compare import format_live_compare, live_compare
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        try:
+            result = live_compare(store, args.run_a, args.run_b, min_days=args.min_days)
+        except ValueError as exc:
+            raise TradingLabError(str(exc)) from None
+    print(_json.dumps(result.to_dict(), indent=2, default=str) if args.json else format_live_compare(result))
+    return 0
+
+
 # ------------------------------------------------------------------ parser
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -1569,6 +1588,13 @@ def build_parser() -> argparse.ArgumentParser:
     cp = sub.add_parser("compare", help="compare stored runs side by side")
     cp.add_argument("run_ids", nargs="+")
     cp.set_defaults(func=cmd_compare)
+
+    lc = sub.add_parser("live-compare", help="compare two paper runs over the time they ran together (read-only)")
+    lc.add_argument("run_a")
+    lc.add_argument("run_b")
+    lc.add_argument("--min-days", type=int, default=14, help="days compared before a verdict (default 14)")
+    lc.add_argument("--json", action="store_true", help="machine-readable output")
+    lc.set_defaults(func=cmd_live_compare)
     return parser
 
 

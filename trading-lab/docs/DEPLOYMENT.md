@@ -179,7 +179,8 @@ sudo -u tradinglab .venv/bin/trading-lab status --all
   shared between runs except the market data they read and the model endpoint.
 * Every run with AI agents calls the model, so two runs with agents mean twice the model calls.
 * Use either the single `trading-lab-paper` service or the template, not both for the same run id.
-* `trading-lab compare RUN_A RUN_B` and `trading-lab report RUN_ID` work on any of the runs.
+* `trading-lab live-compare RUN_A RUN_B` compares two runs over the time they ran together (see the README).
+  `trading-lab compare` and `trading-lab report RUN_ID` work on any of the runs too.
 
 ## 6. Where things are
 

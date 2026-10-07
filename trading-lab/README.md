@@ -71,6 +71,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 21B (complete):** Telegram alerts (`channels = ["telegram"]`, bot token only from the environment).
 - **Stage 21C (complete):** `trading-lab init-config PRESET`: ready-made configs (trend, trend-shorts, conservative, mean-reversion) to test with `checkup` and `ab`.
 - **Stage 22A (complete):** several paper runs side by side on one VM: a systemd template (`trading-lab-paper@NAME`, one config per run) and `status --all`, which checks every running paper run.
+- **Stage 22B (complete):** `trading-lab live-compare RUN_A RUN_B`: which of two paper runs is doing better over the time they ran together? Metrics, better days with a sign test, and the settings that differ.
 
 ### Stage 9/10 summary
 
@@ -325,6 +326,24 @@ Verdict: B leads 4 of 6 windows, but that could easily be chance (p = 0.34); use
 Both configs must trade the same symbols and timeframe with the same starting cash. `--symbols` and `--timeframe` apply to both. `--metric sharpe_ratio` (or any other metric) compares something other than return; for `max_drawdown`, lower is better.
 
 Be honest about the arithmetic: with 6 windows, only 6 wins out of 6 reaches p < 0.05. Changes that win 4 of 6 need more evidence before you trust them. Nothing is stored.
+
+## Which live run is doing better? (`live-compare`)
+
+`ab` compares configs on past data. To check the result on new data, run both configs as paper runs side by side (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), section 5d), then:
+
+```bash
+trading-lab live-compare default trend             # run ids
+trading-lab live-compare default trend --json      # every day, for scripts
+```
+
+It compares the two runs only over the time they both ran. Each run is measured from its equity at the start of that period, so a run that started earlier gets no head start. It prints:
+
+* the settings that differ;
+* return, max drawdown, Sharpe, trades closed, fees and exposure over the shared period;
+* each UTC day's return for both, and which was better (ties, such as both flat, do not count);
+* a verdict with a sign test on the better days.
+
+Until 14 days have been compared (`--min-days`) the verdict is "too early to tell". Positions can last across days, so days are not fully independent: treat the p-value as a rough guide, and give both runs weeks, not days. It is read-only and works on any two stored runs.
 
 ## Where does it make or lose money? (`regimes`)
 
