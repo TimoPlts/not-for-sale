@@ -122,6 +122,8 @@ ssh -L 8501:127.0.0.1:8501 you@your-vm
 2. Add `TRADING_LAB_ALERT_URL=...` to `/etc/trading-lab/trading-lab.env` (the URL is a secret: never put it
    in the config or in git).
 3. In the config: `[alerts] enabled = true`, plus `format = "ntfy" | "slack" | "discord" | "json"`.
+   For Telegram, set `channels = ["telegram"]` and put `TRADING_LAB_TELEGRAM_BOT_TOKEN` and
+   `TRADING_LAB_TELEGRAM_CHAT_ID` in the environment file.
    For e-mail, set `channels = ["email"]` (or `["webhook", "email"]`). Put the `TRADING_LAB_SMTP_*` and
    `TRADING_LAB_ALERT_EMAIL_TO` variables (see `deploy/trading-lab.env.example`) in the same environment file.
 4. Test: `set -a; . /etc/trading-lab/trading-lab.env; set +a; .venv/bin/trading-lab alert-test` (it tests every

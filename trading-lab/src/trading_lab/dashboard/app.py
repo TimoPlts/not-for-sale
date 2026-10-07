@@ -191,6 +191,12 @@ def research_section(data: DashboardData, run_id: str) -> None:
         cols[1].metric("Alpha (per year)", _pct(rel.get("alpha_annualized")))
         cols[2].metric("Beta", _num(rel.get("beta")))
         cols[3].metric("Information ratio", _num(rel.get("information_ratio")))
+    monthly = data.monthly_returns(run_id)
+    if monthly:
+        frame = pd.DataFrame(monthly).set_index("year")
+        frame.columns = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Year"]
+        st.markdown("Monthly returns")
+        st.dataframe(frame.style.format("{:+.2%}", na_rep=""), width="stretch")
     regimes = data.regimes(run_id)
     if regimes:
         frame = pd.DataFrame(regimes["by_trend"] + regimes["combined"])

@@ -369,6 +369,18 @@ class DashboardData:
                        "relative": relative, "research_results": results})
 
     # -------------------------------------------------------------- snapshot
+    def monthly_returns(self, run_id: str) -> list[dict[str, Any]]:
+        """One row per year: ``{"year": 2025, "1": ..., ..., "12": ..., "total": ...}`` (None = no bars)."""
+        from trading_lab.metrics import monthly_returns
+
+        _, config = self._run(run_id)
+        curve = self.store.load_equity_curve(run_id)
+        table = monthly_returns(curve["equity"], config.portfolio.initial_cash) if not curve.empty else None
+        if table is None or table.empty:
+            return []
+        return [_clean({"year": int(year), **{str(m): row[m] for m in range(1, 13)}, "total": row["year"]})
+                for year, row in table.iterrows()]
+
     def regimes(self, run_id: str) -> dict[str, Any] | None:
         """Performance by market regime (see ``research.regimes``), or None when the run is too short."""
         from trading_lab.research.regimes import regimes_for_run
@@ -396,6 +408,7 @@ class DashboardData:
             "usage": self.usage(run_id),
             "research": self.research(run_id),
             "regimes": self.regimes(run_id),
+            "monthly_returns": self.monthly_returns(run_id),
             "equity_points": len(curve),
         })
 

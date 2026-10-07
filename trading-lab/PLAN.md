@@ -599,7 +599,28 @@ Trade-offs worth knowing:
 - `VotingEngine.combine(signals, multipliers)` applies the multipliers. The votes record the effective weights. A bar where every weight is 0 is a HOLD with a reason. The session passes the bar's regime multipliers and records `regime` on the ensemble signal.
 - Tests: config parsing, validation and round trips, with older configs still loading; labels identical to the regime report and causal; filter columns; voting with multipliers (and unchanged without); the session using each bar's regime (none during warm-up); backtests changing with the table, with live matching the backtest.
 
-## 5. Stage 11–20 status summary
+### Stage 21A: Monthly returns and more metrics ✅
+- `PerformanceMetrics` gains `calmar_ratio` (annualised return over max drawdown, None when undefined) and `max_drawdown_bars` (the longest stretch below an earlier peak). Both have defaults, so nothing that builds metrics breaks.
+- `metrics.monthly_returns(equity, initial)` builds a year x month table: each month's last equity against the previous month's (the initial cash for the first month), NaN for months without bars, and a compounded year column.
+- It is shown in `report RUN_ID` (text table), the HTML report ("Monthly returns", colour-coded), the dashboard's Research section, and the `dashboard-data` snapshot (`DashboardData.monthly_returns`).
+- Measured along the way: a 90-day, four-symbol backtest takes about 0.8 s. Micro-optimising signal creation saved about 1%, so it was not kept.
+- Tests: Calmar and the longest drawdown on hand values; the monthly table across a year boundary, with gaps and compounding; the dashboard data, snapshot, HTML and CLI views, where the months compound to the run's return; the dashboard rendering.
+
+### Stage 21B: Telegram alerts ✅
+- `alerts.TelegramNotifier`: a plain-text bot message to one chat (`sendMessage`, up to 4,000 characters, link previews off). The settings `TRADING_LAB_TELEGRAM_BOT_TOKEN` and `TRADING_LAB_TELEGRAM_CHAT_ID` come only from the environment and are validated.
+  - The token is part of the API URL, so `repr`, errors and logs never contain it.
+  - HTTP errors name the variable to check, and transport errors drop their message.
+- The `telegram` channel works in `[alerts] channels` (alone or with the others), `alert-test --channel telegram` and `doctor`. The environment template, the README and `DEPLOYMENT.md` explain the setup.
+- Tests: the exact request (URL, chat, text, run id, truncation); settings validation; the token never in `repr`, errors or logs, and an unreachable API never raises from the manager; channel combinations; `doctor` and `alert-test`.
+
+### Stage 21C: Config presets ✅
+- `presets.py`: four presets (`trend`, `trend-shorts`, `conservative`, `mean-reversion`) as overrides on the defaults.
+  - `render` writes TOML with only the differing settings, nested tables as sub-tables (no empty parent headers), and the strategies table in full when it changed, because a `[strategies]` table replaces the defaults.
+  - `preset_toml` adds an explanatory header.
+- CLI: `trading-lab init-config [PRESET] [PATH] [--force]` lists the presets, or writes one (default `config/PRESET.toml`). It never overwrites without `--force`, checks that the file loads, and prints the `checkup` and `ab` next steps.
+- Tests: every preset round-trips exactly through its file, differs from the defaults and backtests; files list only the changes (including regime weights and full strategy tables); the CLI (listing, default path, no overwrite, `--force`, a custom path, an unknown preset).
+
+## 5. Stage 11–21 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -613,6 +634,7 @@ On top of the Stage 9/10 system:
 - **Decisions and operations (18):** A/B tests of whole configs over independent windows (18A), a watchdog with a systemd timer (18B), and volatility-targeted sizing (18C).
 - **Not fooling yourself (19):** a permutation test against shuffled markets (19A), sweep stability scores (19B), and market regimes in the report and dashboard (19C).
 - **One verdict and smarter exits (20):** a one-command strategy checkup (20A), a time stop (20B), and regime-dependent strategy weights (20C).
+- **Readability and reach (21):** monthly returns, Calmar and the longest drawdown (21A), Telegram alerts (21B), and config presets (21C).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

@@ -67,6 +67,9 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 20A (complete):** `trading-lab checkup`: is this strategy any good? Every research check at once, with a pass/warn/fail verdict and next steps.
 - **Stage 20B (complete):** an opt-in time stop (`risk.max_holding_bars`): positions exit at the next open after N bars.
 - **Stage 20C (complete):** opt-in regime-dependent strategy weights (`[voting.regime_weights]`): trend followers can count more in trends, and mean reversion in sideways markets.
+- **Stage 21A (complete):** monthly returns tables (in `report`, the HTML report and the dashboard), the Calmar ratio and the longest drawdown.
+- **Stage 21B (complete):** Telegram alerts (`channels = ["telegram"]`, bot token only from the environment).
+- **Stage 21C (complete):** `trading-lab init-config PRESET`: ready-made configs (trend, trend-shorts, conservative, mean-reversion) to test with `checkup` and `ab`.
 
 ### Stage 9/10 summary
 
@@ -163,7 +166,7 @@ One page, refreshed automatically (every 60 s by default):
 * **Latest decision:** every vote (RSI, MACD, Bollinger, Qwen Trend, Momentum, Risk) with confidence, weight and label, the ensemble result and the actions taken.
 * **AI rationales:** one card per agent and symbol.
 * **Agent performance** leaderboard: votes, confidence, correctness, trades influenced, pivotal trades, PnL when agreed or disagreed.
-* **Research:** strategy versus buy & hold return, max drawdown, Sharpe and profit factor, the market-regime table (see `trading-lab regimes`), plus saved experiments and walk-forward results.
+* **Research:** strategy versus buy & hold return, max drawdown, Sharpe and profit factor, monthly returns, the market-regime table (see `trading-lab regimes`), plus saved experiments and walk-forward results.
 * **Qwen usage:** calls, cache hits, failures, retries, latency and tokens.
 * **Recent trades and signals.**
 
@@ -196,6 +199,7 @@ One self-contained file, with no external scripts, styles or fonts, so it opens 
 * key numbers: return against buy & hold, max drawdown, Sharpe, profit factor, trades, win rate and exposure;
 * the equity curve against buy & hold, with hover values, and the drawdown;
 * a daily table view of the same numbers;
+* a monthly returns table (year by month, plus the year's total);
 * bootstrap robustness ranges and the market-regime table: the strategy against the market in rising, sideways and falling, calm and volatile markets (see `trading-lab regimes`);
 * every voter's performance (AI agents marked), the latest AI rationales, model usage, breaker trips, closed trades and decision counts.
 
@@ -214,6 +218,24 @@ Relative to buy & hold: excess return -5.44%, alpha -44.02%/yr, beta 0.34, corre
 * **information ratio:** excess return per unit of tracking error.
 
 A strategy can beat buy & hold in a falling market simply by holding cash. Alpha and beta separate "less exposed" from "better at picking", and they are computed from per-bar returns, with definitions in `src/trading_lab/metrics/relative.py`.
+
+## Starting points (`init-config`)
+
+```bash
+trading-lab init-config                       # list the presets
+trading-lab init-config trend                 # writes config/trend.toml
+trading-lab --config config/trend.toml checkup --days 180
+trading-lab ab config/default.toml config/trend.toml --days 180
+```
+
+| preset | what it changes |
+|---|---|
+| `trend` | Donchian breakouts and an EMA crossover join the vote, plus a 4% trailing stop and a 72-bar time stop |
+| `trend-shorts` | the same, trading both directions (simulated, fully collateralised shorts) |
+| `conservative` | half the risk per trade, volatility-targeted positions, ATR stops, a 200-bar trend filter, tighter breakers |
+| `mean-reversion` | RSI and Bollinger only (MACD off), a 3% take-profit, a 24-bar time stop, and mean reversion muted in down-trends |
+
+The file lists only what the preset changes. Everything else keeps the defaults documented in `config/default.toml`, so you can see exactly what you are testing. An existing file is never overwritten without `--force`. Presets are starting points to test, not recommendations.
 
 ## Is this strategy any good? (`checkup`)
 
@@ -469,6 +491,16 @@ Live paper runs then push:
 * **every day:** a summary (`trading-lab summary`).
 
 Recoveries are reported too, and repeats of the same alert are suppressed for an hour. Alert settings come from the current config, even when resuming an older run. A webhook that fails never affects trading, and its URL is never logged.
+
+**Telegram:** set `channels = ["telegram"]` (or add it to the list). Create a bot with @BotFather and send it one message. Then put the bot token and your chat id in the environment:
+
+```bash
+export TRADING_LAB_TELEGRAM_BOT_TOKEN='123456:...'   # secret: environment only
+export TRADING_LAB_TELEGRAM_CHAT_ID=123456789
+trading-lab alert-test --channel telegram
+```
+
+The token is part of Telegram's API address. It is never stored, logged or shown, and errors only say which variable to check.
 
 **E-mail instead of, or as well as, a webhook:** set `channels = ["email"]` (or `["webhook", "email"]`). The SMTP settings come only from the environment:
 

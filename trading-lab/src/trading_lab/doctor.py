@@ -111,7 +111,7 @@ def run_checks(
         state = ", ".join(f"{prefix}_{s} {'missing' if f'{prefix}_{s}' in missing else 'set'}" for s in required)
         add("model", FAIL if missing else OK, f"{cfg.agents.provider}, mode {cfg.agents.mode}: {state}")
 
-    from trading_lab.alerts import URL_ENV, EmailNotifier, build_notifier
+    from trading_lab.alerts import URL_ENV, EmailNotifier, TelegramNotifier, build_notifier
 
     if cfg.alerts.enabled:
         details = []
@@ -121,7 +121,9 @@ def run_checks(
             except ConfigError as exc:
                 add("alerts", FAIL, f"{channel}: {exc}")
                 break
-            if isinstance(notifier, EmailNotifier):
+            if isinstance(notifier, TelegramNotifier):
+                details.append("telegram, bot token and chat id set")
+            elif isinstance(notifier, EmailNotifier):
                 details.append(f"email to {len(notifier.recipients)} recipient(s) via {notifier.host}:"
                                f"{notifier.port} ({notifier.security})")
             else:
