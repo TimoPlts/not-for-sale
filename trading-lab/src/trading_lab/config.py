@@ -151,6 +151,7 @@ class RiskConfig:
     trailing_stop_pct: float = 0.0  # stop follows the highest high at this distance (raised at bar closes)
     trailing_activation_pct: float = 0.0  # start trailing once the high is this far above the average cost
     take_profit_pct: float = 0.0  # exit when the high reaches average cost x (1 + this)
+    max_holding_bars: int = 0  # time stop: exit at the next open once a position has been held this many bars
     # Initial stop: "percent" = stop_loss_pct below the entry fill; "atr" = atr_stop_multiple x ATR
     # below it (ATR of the bars before the fill), clamped to [atr_stop_min_pct, atr_stop_max_pct].
     # Risk-per-trade sizing uses that distance, so volatile coins get smaller positions.
@@ -216,6 +217,11 @@ class RiskConfig:
         _number(self, "trailing_stop_pct", low=0.0, high=0.99)
         _number(self, "trailing_activation_pct", low=0.0, high=10.0)
         _number(self, "take_profit_pct", low=0.0, high=100.0)
+        _require(
+            isinstance(self.max_holding_bars, int) and not isinstance(self.max_holding_bars, bool)
+            and 0 <= self.max_holding_bars <= 100_000,
+            f"risk.max_holding_bars must be an integer >= 0 (0 = off), got {self.max_holding_bars!r}",
+        )
         _number(self, "max_drawdown_pct", low=0.0, high=0.99)
         _number(self, "daily_loss_limit_pct", low=0.0, high=0.99)
         _require(

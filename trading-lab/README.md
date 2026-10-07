@@ -65,6 +65,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 19B (complete):** `sweep` scores every setting by its neighbours (`stable` column, `--rank stability`), so you pick a plateau rather than a lucky peak.
 - **Stage 19C (complete):** the market-regime table in the HTML report, the dashboard and `dashboard-data`.
 - **Stage 20A (complete):** `trading-lab checkup`: is this strategy any good? Every research check at once, with a pass/warn/fail verdict and next steps.
+- **Stage 20B (complete):** an opt-in time stop (`risk.max_holding_bars`): positions exit at the next open after N bars.
 
 ### Stage 9/10 summary
 
@@ -890,6 +891,7 @@ Optional exits in `[risk]` (0 = off, the default):
 | `trailing_stop_pct = 0.04` | after each bar closes, the stop is raised to `highest high since entry × (1 − 4%)`. Stops only move up. A raised stop applies from the **next** bar, so the unknown order of the high and the low inside a bar can never help. |
 | `trailing_activation_pct = 0.02` | only start trailing once the high is 2% above the average cost (fees included) |
 | `take_profit_pct = 0.10` | exit when a bar's high reaches average cost × 1.10, at that price, or at the open if the bar gapped above it |
+| `max_holding_bars = 48` | time stop: once a position has been held 48 bars (the entry bar counts as one), exit at the next open whatever the signals say (`time stop: held 48 bars` in the decision log). Frees capital from trades that go nowhere; shorts are covered the same way |
 
 If the stop and the target are both reached in the same bar, the stop is assumed to come first, which is the conservative choice. Take-profit exits are recorded as `take_profit` decisions, and trailing-stop exits as `stop_loss` with "trailing stop" in the reason. The stop-loss cooldown now follows only stop exits that **lost** money: a trailing stop that locks in a gain does not block re-entry. Raised stops are saved with a live run, so they survive `--resume`, and the dashboard shows the current stop.
 

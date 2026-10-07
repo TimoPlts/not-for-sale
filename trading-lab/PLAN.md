@@ -589,6 +589,10 @@ Trade-offs worth knowing:
 - CLI: `trading-lab checkup [--days N | --start/--end] [--permutations 50] [--allow-agents] [--html FILE] [--json FILE]` (nothing stored).
 - Tests: a real edge (a trend follower on autocorrelated returns) passes edge, costs, luck, trades and resampling; no edge (a random walk) fails, with the right advice and JSON; agents skip the luck test; short periods; the verdict logic; the HTML page (escaping, self-contained); the CLI (HTML and JSON files, no database).
 
+### Stage 20B: Time stop ✅
+- `risk.max_holding_bars` (default 0, off). At the close of the bar in which a position reaches that many bars held (the entry bar counts), the session schedules its exit for the next open. The exit is a protected `risk_manager` intent, like the kill switch's, so strategies cannot cancel it. It is skipped when an exit is already scheduled or the position was stopped out. The exit decision reads `time stop: held N bars`, and shorts are covered alike.
+- Tests: the exit timing and reasons; strategies cannot cancel it, and shorts; off by default; a stop-loss first; validation; backtest and live equal across a resume one bar before a time stop.
+
 ## 5. Stage 11–19 status summary
 
 On top of the Stage 9/10 system:
