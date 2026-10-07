@@ -60,6 +60,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 17C (complete):** `trading-lab regimes`: a run's performance by market regime (trend up, sideways or down, and calm or volatile).
 - **Stage 18A (complete):** `trading-lab ab A.toml B.toml`: is a config change really better? Both configs over independent windows, with a sign test.
 - **Stage 18B (complete):** `trading-lab status`: a watchdog that checks the paper trader is alive and keeping up, with a systemd timer that alerts you when it is not.
+- **Stage 18C (complete):** opt-in volatility-targeted sizing (`risk.position_volatility_pct`): calm coins get bigger positions, wild ones smaller.
 
 ### Stage 9/10 summary
 
@@ -836,6 +837,21 @@ stop distance = atr_stop_multiple × ATR(atr_period) / entry price,
 The risk-per-trade sizing already sizes each entry so that hitting the stop loses `risk_per_trade_pct` of equity. A volatile coin therefore gets a wider stop and a proportionally **smaller** position, and a calm one a tighter stop and a larger position. The risk per trade is the same either way, and the other limits (max position, exposure, cash, liquidity) still apply.
 
 ATR is the **simple** average true range of the bars *before* the fill, so it never sees the bar it trades on, and live paper trading computes exactly the same value as a backtest. Until there is enough history, the fixed `stop_loss_pct` is used. Each entry decision records `stop_basis` (`atr` or `percent`) and `stop_distance_pct`. Trailing stops and take-profit work on top of either mode.
+
+## Volatility-targeted sizing
+
+```toml
+[risk]
+position_volatility_pct = 0.10   # each position may add at most 10% of equity in yearly volatility (0 = off)
+```
+
+This adds one more size limit, next to risk per trade, maximum position size and exposure:
+
+* **The limit:** `position value x annualised volatility <= equity x position_volatility_pct`. With 0.10, a coin that swings 80% a year gets at most 12.5% of equity, and one that swings 40% gets 25%.
+* **Where the volatility comes from:** the bars *before* the entry (the `volume_lookback` window of per-bar returns), exactly the same in backtests and live.
+* **What it does:** each position contributes a similar amount of risk, instead of the most volatile coin dominating the portfolio.
+
+Like every limit, it only ever makes positions smaller. The decision details show when it was the binding one (`binding_limit = volatility_target`). Check that it helps on your data with `trading-lab ab`.
 
 ## Entry filters (trend and risk regime)
 

@@ -233,6 +233,7 @@ class TradingSession:
         self.risk = RiskManager(
             config.risk, self.costs, min_notional=ex.min_notional,
             max_participation_pct=ex.max_participation_pct,
+            bars_per_year=365 * 86_400 / timeframe_delta(config.market.timeframe).total_seconds(),
         )
         self.breakers = CircuitBreakers(
             config.risk, timeframe_delta(config.market.timeframe),
