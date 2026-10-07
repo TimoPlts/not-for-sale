@@ -191,6 +191,14 @@ def research_section(data: DashboardData, run_id: str) -> None:
         cols[1].metric("Alpha (per year)", _pct(rel.get("alpha_annualized")))
         cols[2].metric("Beta", _num(rel.get("beta")))
         cols[3].metric("Information ratio", _num(rel.get("information_ratio")))
+    regimes = data.regimes(run_id)
+    if regimes:
+        frame = pd.DataFrame(regimes["by_trend"] + regimes["combined"])
+        frame = frame[frame["bars"] > 0][["name", "bars", "time_share", "strategy_return", "market_return",
+                                          "in_market", "trades", "pnl"]]
+        st.markdown(f"Market regimes (trend: {regimes['trend_bars']}-bar average; returns compound each "
+                    "regime's bars)")
+        st.dataframe(frame, hide_index=True, width="stretch")
     results = research["research_results"]
     if results:
         rows = []

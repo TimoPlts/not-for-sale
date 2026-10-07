@@ -63,6 +63,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 18C (complete):** opt-in volatility-targeted sizing (`risk.position_volatility_pct`): calm coins get bigger positions, wild ones smaller.
 - **Stage 19A (complete):** `trading-lab permutation-test`: could a market with no pattern have produced the result? The same backtest on shuffled-candle markets.
 - **Stage 19B (complete):** `sweep` scores every setting by its neighbours (`stable` column, `--rank stability`), so you pick a plateau rather than a lucky peak.
+- **Stage 19C (complete):** the market-regime table in the HTML report, the dashboard and `dashboard-data`.
 
 ### Stage 9/10 summary
 
@@ -159,7 +160,7 @@ One page, refreshed automatically (every 60 s by default):
 * **Latest decision:** every vote (RSI, MACD, Bollinger, Qwen Trend, Momentum, Risk) with confidence, weight and label, the ensemble result and the actions taken.
 * **AI rationales:** one card per agent and symbol.
 * **Agent performance** leaderboard: votes, confidence, correctness, trades influenced, pivotal trades, PnL when agreed or disagreed.
-* **Research:** strategy versus buy & hold return, max drawdown, Sharpe and profit factor, plus saved experiments and walk-forward results.
+* **Research:** strategy versus buy & hold return, max drawdown, Sharpe and profit factor, the market-regime table (see `trading-lab regimes`), plus saved experiments and walk-forward results.
 * **Qwen usage:** calls, cache hits, failures, retries, latency and tokens.
 * **Recent trades and signals.**
 
@@ -192,6 +193,7 @@ One self-contained file, with no external scripts, styles or fonts, so it opens 
 * key numbers: return against buy & hold, max drawdown, Sharpe, profit factor, trades, win rate and exposure;
 * the equity curve against buy & hold, with hover values, and the drawdown;
 * a daily table view of the same numbers;
+* bootstrap robustness ranges and the market-regime table: the strategy against the market in rising, sideways and falling, calm and volatile markets (see `trading-lab regimes`);
 * every voter's performance (AI agents marked), the latest AI rationales, model usage, breaker trips, closed trades and decision counts.
 
 It follows your system's light/dark setting. The report is built from the read-only data layer, so it never changes the database. All text from the database, including model rationales, is HTML-escaped.

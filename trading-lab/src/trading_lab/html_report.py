@@ -224,6 +224,7 @@ def build_html_report(db_path: str, run_id: str | None = None, *, horizon: int =
             robust = robustness_for_run(data.store, run_id, samples=2000)
         except Exception:  # a report must render even without enough data
             robust = None
+        regimes = data.regimes(run_id)
         fingerprint = data.store.get_run(run_id)["config_fingerprint"]
         decisions = data.store.load_decisions(run_id, include_holds=False)
     m, b = research["metrics"] or {}, research["benchmark"] or {}
@@ -294,6 +295,18 @@ def build_html_report(db_path: str, run_id: str | None = None, *, horizon: int =
         out.append("<h2>Robustness</h2><div class=\"card\">" + _table(
             ["Resampling", "Total return (5% … median … 95%)", "P(loss)", "Sharpe (5% … 95%)"], rows)
             + "".join(f'<p class="muted">⚠ {_e(w)}</p>' for w in robust.warnings) + "</div>")
+
+    if regimes:
+        rows = [[_td(r["name"]), _td(r["bars"]), _td(f'{r["time_share"]:.0%}'),
+                 _td(_pct(r["strategy_return"]), _cls(r["strategy_return"])),
+                 _td(_pct(r["market_return"]), _cls(r["market_return"])), _td(f'{r["in_market"]:.0%}'),
+                 _td(r["trades"]), _td(_num(r["pnl"]), _cls(r["pnl"]))]
+                for r in regimes["by_trend"] + regimes["combined"] if r["bars"]]
+        out.append("<h2>Market regimes</h2><div class=\"card\">" + _table(
+            ["Regime", "Bars", "Time", "Strategy", "Market", "In market", "Trades", "PnL"], rows)
+            + f'<p class="muted">Trend from the {regimes["trend_bars"]}-bar average of an equal-weight index of the '
+            f'symbols; volatility against its median. Returns compound only that regime\'s bars; '
+            f'{regimes["warmup_bars"]} warm-up bars are in no regime.</p></div>')
 
     if breakers.get("trips"):
         out.append("<h2>Circuit breaker trips</h2><div class=\"card\"><ul>" + "".join(

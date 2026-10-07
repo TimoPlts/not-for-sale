@@ -574,7 +574,12 @@ Trade-offs worth knowing:
 - `sweep` prints a `stable` column (and writes it to the CSV export). `--rank stability` orders the table by it.
 - Tests: a lone peak scores below a plateau, and the plateau ranks first; two-dimensional neighbours and undefined values; lower-is-better metrics; the CLI (column, ranking, export).
 
-## 5. Stage 11–18 status summary
+### Stage 19C: Market regimes in the report and dashboard ✅
+- `DashboardData.regimes(run_id)` returns the read-only regime report as a dict, or None while the run is shorter than the warm-up. It is part of `snapshot()` and therefore of `dashboard-data --json`.
+- The HTML report has a "Market regimes" section (per trend and per trend x volatility: bars, time, strategy and market returns, time in the market, trades, PnL). The dashboard's Research section shows the same table.
+- Tests: long runs show regimes identical to `regimes_for_run`, in the snapshot and the HTML report; short runs leave the section out; the dashboard renders the table (Streamlit AppTest).
+
+## 5. Stage 11–19 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -586,6 +591,7 @@ On top of the Stage 9/10 system:
 - **Shorts (16):** opt-in simulated short selling: fully collateralised accounting with borrow fees (16A), mirrored entries, exits, sizing and filters (16B), and the trade side in every report (16C).
 - **Strategy research (17):** opt-in trend-following strategies (17A), cost sensitivity with a break-even level (17B), and performance by market regime (17C).
 - **Decisions and operations (18):** A/B tests of whole configs over independent windows (18A), a watchdog with a systemd timer (18B), and volatility-targeted sizing (18C).
+- **Not fooling yourself (19):** a permutation test against shuffled markets (19A), sweep stability scores (19B), and market regimes in the report and dashboard (19C).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

@@ -369,6 +369,13 @@ class DashboardData:
                        "relative": relative, "research_results": results})
 
     # -------------------------------------------------------------- snapshot
+    def regimes(self, run_id: str) -> dict[str, Any] | None:
+        """Performance by market regime (see ``research.regimes``), or None when the run is too short."""
+        from trading_lab.research.regimes import regimes_for_run
+
+        report = regimes_for_run(self.store, run_id)
+        return None if not report.by_trend else _clean(report.to_dict())
+
     def snapshot(self, run_id: str | None = None, *, horizon: int = 4) -> dict[str, Any]:
         """Everything the dashboard shows, as one JSON-serialisable dict."""
         run_id = run_id or self.default_run_id()
@@ -388,6 +395,7 @@ class DashboardData:
             "agent_performance": self.agent_performance(run_id, horizon),
             "usage": self.usage(run_id),
             "research": self.research(run_id),
+            "regimes": self.regimes(run_id),
             "equity_points": len(curve),
         })
 
