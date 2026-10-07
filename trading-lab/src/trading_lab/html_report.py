@@ -226,6 +226,7 @@ def build_html_report(db_path: str, run_id: str | None = None, *, horizon: int =
             robust = None
         regimes = data.regimes(run_id)
         monthly = data.monthly_returns(run_id)
+        breakdown = data.trade_breakdown(run_id)
         fingerprint = data.store.get_run(run_id)["config_fingerprint"]
         decisions = data.store.load_decisions(run_id, include_holds=False)
     m, b = research["metrics"] or {}, research["benchmark"] or {}
@@ -318,6 +319,18 @@ def build_html_report(db_path: str, run_id: str | None = None, *, horizon: int =
             + f'<p class="muted">Trend from the {regimes["trend_bars"]}-bar average of an equal-weight index of the '
             f'symbols; volatility against its median. Returns compound only that regime\'s bars; '
             f'{regimes["warmup_bars"]} warm-up bars are in no regime.</p></div>')
+
+    if breakdown:
+        titles = {"exit": "Exit", "side": "Side", "holding": "Holding time", "symbol": "Symbol"}
+        rows = [[_td(titles[grouping]), _td(g["name"]), _td(g["trades"]), _td(_pct(g["win_rate"], signed=False)),
+                 _td(_num(g["pnl"]), _cls(g["pnl"])), _td(_pct(g["avg_return"]), _cls(g["avg_return"])),
+                 _td(f'{g["avg_bars"]:.1f}'), _td(_num(g["best"])), _td(_num(g["worst"]))]
+                for grouping in ("exit", "side", "holding", "symbol") for g in breakdown["groups"][grouping]]
+        out.append("<h2>Where the money comes from</h2><div class=\"card\">" + _table(
+            ["By", "Group", "Trades", "Won", "PnL", "Avg return", "Avg bars", "Best", "Worst"], rows)
+            + "".join(f'<p class="muted">• {_e(n)}</p>' for n in breakdown["observations"])
+            + '<p class="muted">Closed trades only. Small groups are noise; test a change with ab or walkforward '
+            "(see <code>trading-lab trades</code>).</p></div>")
 
     if breakers.get("trips"):
         out.append("<h2>Circuit breaker trips</h2><div class=\"card\"><ul>" + "".join(

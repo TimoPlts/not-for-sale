@@ -680,6 +680,11 @@ Trade-offs worth knowing:
   - group statistics and each observation on hand-made trades;
   - the CLI (text, JSON, CSV, a bad grouping, an unknown run) and a run without trades.
 
+### Stage 24B: Trade breakdown in the reports ✅
+- `DashboardData.trade_breakdown(run_id)`: groups by exit, side, holding time and symbol, with the totals and observations, without the per-trade list. It is None without trades and is part of the snapshot.
+- HTML report: a "Where the money comes from" table (one row per group) with the observations. Dashboard Research section: "Trades by exit type" and "Trades by holding time" tables, with observations as captions. `dashboard-data`: a "Trades by exit" line.
+- Tests: the data against `analyze_trades`, no section for a run without trades, the HTML report, the text view, and the rendered dashboard tables summing to the run's trades with the database unchanged.
+
 ## 5. Stage 11–24 status summary
 
 On top of the Stage 9/10 system:
@@ -697,7 +702,7 @@ On top of the Stage 9/10 system:
 - **Readability and reach (21):** monthly returns, Calmar and the longest drawdown (21A), Telegram alerts (21B), and config presets (21C).
 - **Running several configs live (22):** several paper runs on one VM with one watchdog (22A), a comparison of two live runs over the time they ran together (22B), and an overview of all paper runs in the dashboard (22C).
 - **Is it luck, and how is it going? (23):** probabilistic and deflated Sharpe ratios (23A), and a weekly digest of every paper run (23B).
-- **Where the money goes (24):** trade analysis by exit, symbol, side, holding time and entry time (24A).
+- **Where the money goes (24):** trade analysis by exit, symbol, side, holding time and entry time (24A), shown in the reports and the dashboard (24B).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

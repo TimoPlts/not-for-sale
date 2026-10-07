@@ -1079,6 +1079,10 @@ def cmd_dashboard_data(args: argparse.Namespace) -> int:
     usage = snap["usage"]["total"]
     if usage:
         print(f"Model usage: {usage['calls']} calls, {usage['cache_hits']} cache hits, {usage['failures']} failures")
+    breakdown = snap.get("trade_breakdown")
+    if breakdown:
+        print("Trades by exit: " + ", ".join(f"{g['name']} {g['trades']} ({g['pnl']:+,.2f})"
+                                             for g in breakdown["groups"]["exit"]))
     if len(snap["paper_runs"]) > 1:
         print("\nPaper runs:")
         for r in snap["paper_runs"]:
