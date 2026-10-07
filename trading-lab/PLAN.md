@@ -685,6 +685,11 @@ Trade-offs worth knowing:
 - HTML report: a "Where the money comes from" table (one row per group) with the observations. Dashboard Research section: "Trades by exit type" and "Trades by holding time" tables, with observations as captions. `dashboard-data`: a "Trades by exit" line.
 - Tests: the data against `analyze_trades`, no section for a run without trades, the HTML report, the text view, and the rendered dashboard tables summing to the run's trades with the database unchanged.
 
+### Stage 24C: "Sharpe is real" in the checkup ✅
+- `checkup` gains a ninth check after "Robust to resampling". It passes at a probabilistic Sharpe ratio of 95% or more and warns from 80%; it is n/a when undefined. It has its own advice when the run lost money.
+- The README example was regenerated from a fresh run (the demo's random-walk prices), and the thresholds list gained the new check.
+- Tests: the full check list on a real edge (which passes it), and every grade boundary and the losing-run advice through `evaluate`.
+
 ## 5. Stage 11–24 status summary
 
 On top of the Stage 9/10 system:
@@ -702,7 +707,7 @@ On top of the Stage 9/10 system:
 - **Readability and reach (21):** monthly returns, Calmar and the longest drawdown (21A), Telegram alerts (21B), and config presets (21C).
 - **Running several configs live (22):** several paper runs on one VM with one watchdog (22A), a comparison of two live runs over the time they ran together (22B), and an overview of all paper runs in the dashboard (22C).
 - **Is it luck, and how is it going? (23):** probabilistic and deflated Sharpe ratios (23A), and a weekly digest of every paper run (23B).
-- **Where the money goes (24):** trade analysis by exit, symbol, side, holding time and entry time (24A), shown in the reports and the dashboard (24B).
+- **Where the money goes (24):** trade analysis by exit, symbol, side, holding time and entry time (24A), shown in the reports and the dashboard (24B), and a "Sharpe is real" check in the checkup (24C).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

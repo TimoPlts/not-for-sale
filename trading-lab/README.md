@@ -77,6 +77,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 23B (complete):** `trading-lab digest`: one weekly message about every paper run (its week against the market, trades, watchdog) and the live comparisons, with a systemd timer that sends it.
 - **Stage 24A (complete):** `trading-lab trades`: a run's closed trades by exit type (stop, trailing stop, take-profit, time stop, kill switch, signal), symbol, side, holding time and entry weekday or hour.
 - **Stage 24B (complete):** the trade breakdown in the HTML report ("Where the money comes from"), the dashboard's Research section and `dashboard-data`.
+- **Stage 24C (complete):** a "Sharpe is real" check in `checkup`, based on the probabilistic Sharpe ratio.
 
 ### Stage 9/10 summary
 
@@ -252,18 +253,19 @@ trading-lab checkup --days 180                          # your config, the last 
 trading-lab checkup --start 2025-01-01 --end 2025-07-01 --html reports/checkup.html
 ```
 
-This is the quickest honest answer. It runs one backtest, then the cost, luck, resampling and regime checks below, and grades each one:
+This is the quickest honest answer. It runs one backtest, then the cost, luck, resampling, Sharpe and regime checks below, and grades each one:
 
 ```
-  [PASS] Enough trades             326 closed trades
-  [FAIL] Edge before costs         -3.15% with free trading
-  [FAIL] Survives costs            -19.60% as configured
+  [PASS] Enough trades             324 closed trades
+  [FAIL] Edge before costs         -3.39% with free trading
+  [FAIL] Survives costs            -19.74% as configured
   [FAIL] Not luck                  p = 0.627 (31 of 50 shuffled markets did as well)
   [FAIL] Robust to resampling      100% chance of a loss when the trades are resampled
-  [WARN] Beats buy & hold          -9.94% versus equal-weight buy & hold
-  [WARN] Drawdown                  worst drawdown -22.6%
+  [FAIL] Sharpe is real            0% chance the true Sharpe ratio is above 0 (sample length, skew, fat tails)
+  [WARN] Beats buy & hold          -9.90% versus equal-weight buy & hold
+  [WARN] Drawdown                  worst drawdown -22.7%
   [WARN] Works in several regimes  profitable in 2 of 6 market regimes
-Verdict: not convincing: failed Edge before costs, Survives costs, Not luck, Robust to resampling.
+Verdict: not convincing: failed Edge before costs, Survives costs, Not luck, Robust to resampling, Sharpe is real.
 ```
 
 (This is the default config on the offline demo's random-walk prices. It should fail, and it does.)
@@ -274,6 +276,7 @@ Each warning or failure comes with a next step. The thresholds:
 * **Survives costs:** break-even at 1.5x the configured costs or more.
 * **Not luck:** p < 0.05; up to 0.2 is a warning.
 * **Robust to resampling:** a loss in fewer than 10% of bootstrap resamples; up to 30% is a warning.
+* **Sharpe is real:** a probabilistic Sharpe ratio of at least 95% (the chance the true Sharpe ratio is above 0, allowing for the sample length and fat tails); 80% or more is a warning.
 * **Drawdown:** at most 20%; up to 35% is a warning.
 * **Works in several regimes:** profitable in at least half the market regimes.
 

@@ -31,7 +31,8 @@ def test_a_real_edge_passes_the_key_checks():
     assert report.permutation.p_value == pytest.approx(1 / 21)
     assert report.costs.row(1.0).metrics == report.metrics  # the 1x cost run is the backtest itself
     assert set(s) == {"Enough trades", "Edge before costs", "Survives costs", "Not luck", "Robust to resampling",
-                      "Beats buy & hold", "Drawdown", "Works in several regimes"}
+                      "Sharpe is real", "Beats buy & hold", "Drawdown", "Works in several regimes"}
+    assert s["Sharpe is real"] == PASS and report.metrics.probabilistic_sharpe >= 0.95
 
 
 def test_no_edge_fails_with_the_right_advice():
@@ -84,3 +85,22 @@ def test_cli(tmp_path, capsys):
     assert "  backtest..." in out and "Verdict:" in out
     assert "Strategy checkup" in html.read_text() and json.loads(js.read_text())["checks"]
     assert not (tmp_path / "x.db").exists()
+
+
+def test_sharpe_is_real_grades():
+    from dataclasses import replace
+
+    from trading_lab.research.checkup import evaluate
+
+    start = T0 + 600 * H
+    report = checkup(FOLLOWER, Trending(), start, start + 400 * H, permutations=2)
+    for psr, status in ((0.99, PASS), (0.95, PASS), (0.9, WARN), (0.8, WARN), (0.5, FAIL), (None, NA)):
+        report.metrics = replace(report.metrics, probabilistic_sharpe=psr)
+        check = next(c for c in evaluate(report) if c.name == "Sharpe is real")
+        assert check.status == status, psr
+    assert "chance the true Sharpe ratio is above 0" in next(
+        c for c in evaluate(replace(report, metrics=replace(report.metrics, probabilistic_sharpe=0.9)))
+        if c.name == "Sharpe is real").detail
+    lost = replace(report.metrics, probabilistic_sharpe=0.2, total_return=-0.05)
+    check = next(c for c in evaluate(replace(report, metrics=lost)) if c.name == "Sharpe is real")
+    assert check.status == FAIL and check.advice.startswith("it lost money")
