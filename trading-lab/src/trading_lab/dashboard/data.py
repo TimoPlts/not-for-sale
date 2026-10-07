@@ -82,6 +82,40 @@ class DashboardData:
                 return str(r["run_id"])
         return str(runs[0]["run_id"]) if runs else None
 
+    def paper_runs(self, *, now: datetime | None = None, max_behind: int = 2) -> list[dict[str, Any]]:
+        """Every paper run at a glance: equity, return, drawdown and the watchdog check (running runs first).
+
+        ``check`` is "OK" or the watchdog's problems for a running run, and None for
+        a run that is not running (stopped runs are not checked).
+        """
+        from trading_lab.status import check_status
+
+        rows = []
+        for r in self.store.list_runs(10_000):
+            if r["kind"] != "paper":
+                continue
+            run_id = str(r["run_id"])
+            _, config = self._run(run_id)
+            curve = self.store.load_equity_curve(run_id)
+            status = check_status(self.store, run_id, now=now, max_behind=max_behind, expect_running=False)
+            initial = config.portfolio.initial_cash
+            row: dict[str, Any] = {
+                "run_id": run_id, "status": r["status"], "timeframe": r["timeframe"], "symbols": r["symbols"],
+                "created_at": r["created_at"], "last_bar": None, "equity": None, "total_return": None,
+                "max_drawdown": None, "open_positions": None, "behind": status.behind,
+                "check": None if r["status"] != "running" else "OK" if status.ok else "; ".join(status.problems),
+            }
+            if not curve.empty:
+                equity = curve["equity"]
+                row.update({
+                    "last_bar": curve.index[-1], "equity": float(equity.iloc[-1]),
+                    "total_return": float(equity.iloc[-1]) / initial - 1.0,
+                    "max_drawdown": float((equity / equity.cummax().clip(lower=initial) - 1.0).min()),
+                    "open_positions": int(curve["open_positions"].iloc[-1]),
+                })
+            rows.append(_clean(row))
+        return sorted(rows, key=lambda row: (row["status"] != "running", row["run_id"]))
+
     def _run(self, run_id: str) -> tuple[dict[str, Any], AppConfig]:
         run = self.store.get_run(run_id)
         if run is None:
@@ -409,6 +443,7 @@ class DashboardData:
             "research": self.research(run_id),
             "regimes": self.regimes(run_id),
             "monthly_returns": self.monthly_returns(run_id),
+            "paper_runs": self.paper_runs(),
             "equity_points": len(curve),
         })
 

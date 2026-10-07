@@ -1009,6 +1009,13 @@ def cmd_dashboard_data(args: argparse.Namespace) -> int:
     usage = snap["usage"]["total"]
     if usage:
         print(f"Model usage: {usage['calls']} calls, {usage['cache_hits']} cache hits, {usage['failures']} failures")
+    if len(snap["paper_runs"]) > 1:
+        print("\nPaper runs:")
+        for r in snap["paper_runs"]:
+            numbers = ("no bars yet" if r["equity"] is None else
+                       f"equity {r['equity']:,.2f}  return {r['total_return']:+.2%}  "
+                       f"max drawdown {r['max_drawdown']:.2%}  open {r['open_positions']}")
+            print(f"  {r['run_id']:<16} {r['status']:<9} {numbers}  watchdog: {r['check'] or 'not running'}")
     return 0
 
 

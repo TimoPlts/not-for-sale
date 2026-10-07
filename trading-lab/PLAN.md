@@ -638,6 +638,13 @@ Trade-offs worth knowing:
 - CLI: `trading-lab live-compare RUN_A RUN_B [--min-days 14] [--json]`, read-only.
 - Tests: hand-made curves where the overlap, base equity, fees, trades, exposure and each day's return are checked exactly; the sign test and every verdict; notes; two real paper runs started a day apart (no head start) and the CLI (text, JSON, errors).
 
+### Stage 22C: All paper runs at a glance ✅
+- `DashboardData.paper_runs(now=None, max_behind=2)`: one row per paper run, with running runs first and then by id. Each row has status, timeframe, symbols, last bar, equity, return, max drawdown (the same formulas as `overview`), open positions, candles waiting, and the watchdog check.
+  - The check is "OK" or the `check_status` problems for a running run, and None for a run that is not running.
+  - It is also part of the `dashboard-data` snapshot (`paper_runs`).
+- The dashboard shows a "Paper runs" table above the portfolio when there are at least two paper runs, with a pointer to `live-compare`. `dashboard-data` prints the same list. A single run looks exactly as before.
+- Tests: rows against each run's overview, the order, a stopped run (not checked), a run without bars, a stalled check later, the JSON snapshot, the text view, no table for a single run, and the rendered dashboard table, with the database unchanged.
+
 ## 5. Stage 11–22 status summary
 
 On top of the Stage 9/10 system:
@@ -653,7 +660,7 @@ On top of the Stage 9/10 system:
 - **Not fooling yourself (19):** a permutation test against shuffled markets (19A), sweep stability scores (19B), and market regimes in the report and dashboard (19C).
 - **One verdict and smarter exits (20):** a one-command strategy checkup (20A), a time stop (20B), and regime-dependent strategy weights (20C).
 - **Readability and reach (21):** monthly returns, Calmar and the longest drawdown (21A), Telegram alerts (21B), and config presets (21C).
-- **Running several configs live (22):** several paper runs on one VM with one watchdog (22A), and a comparison of two live runs over the time they ran together (22B).
+- **Running several configs live (22):** several paper runs on one VM with one watchdog (22A), a comparison of two live runs over the time they ran together (22B), and an overview of all paper runs in the dashboard (22C).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

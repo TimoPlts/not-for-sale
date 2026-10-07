@@ -72,6 +72,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 21C (complete):** `trading-lab init-config PRESET`: ready-made configs (trend, trend-shorts, conservative, mean-reversion) to test with `checkup` and `ab`.
 - **Stage 22A (complete):** several paper runs side by side on one VM: a systemd template (`trading-lab-paper@NAME`, one config per run) and `status --all`, which checks every running paper run.
 - **Stage 22B (complete):** `trading-lab live-compare RUN_A RUN_B`: which of two paper runs is doing better over the time they ran together? Metrics, better days with a sign test, and the settings that differ.
+- **Stage 22C (complete):** with several paper runs, the dashboard and `dashboard-data` open with an overview table: each run's status, equity, return, drawdown, open positions, last bar and watchdog check.
 
 ### Stage 9/10 summary
 
@@ -162,6 +163,7 @@ trading-lab dashboard                  # http://127.0.0.1:8501 ; --host/--port t
 
 One page, refreshed automatically (every 60 s by default):
 
+* **Paper runs** (only when there are several): every paper run's status, equity, return, max drawdown, open positions, last bar and watchdog check, running runs first.
 * **Portfolio:** equity, daily PnL, drawdown, exposure, realized/unrealized PnL, breaker status (with a banner when the kill switch or daily limit is active).
 * **Equity curve** against equal-weight buy & hold, and the **drawdown** chart.
 * **Open positions** (entry, current price, size, unrealized PnL, stop) and working simulated orders.

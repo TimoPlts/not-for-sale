@@ -48,6 +48,21 @@ def _breaker_label(breakers: dict[str, Any]) -> str:
     return "OK"
 
 
+def paper_runs_section(data: DashboardData) -> None:
+    """All paper runs side by side; shown only when there are several."""
+    rows = data.paper_runs()
+    if len(rows) < 2:
+        return
+    st.subheader("Paper runs")
+    st.dataframe(pd.DataFrame([{
+        "Run": r["run_id"], "Status": r["status"], "Equity": _num(r["equity"]), "Return": _pct(r["total_return"]),
+        "Max drawdown": _pct(r["max_drawdown"], signed=False), "Open positions": r["open_positions"],
+        "Last bar": (r["last_bar"] or "-")[:16].replace("T", " "),
+        "Watchdog": r["check"] if r["check"] is not None else "not running",
+    } for r in rows]), hide_index=True, width="stretch")
+    st.caption("Compare two of them over the time they ran together: `trading-lab live-compare RUN_A RUN_B`.")
+
+
 def portfolio_section(data: DashboardData, run_id: str) -> None:
     o = data.overview(run_id)
     st.subheader("Portfolio")
@@ -264,6 +279,7 @@ def render(db_path: str, run_id: str | None, horizon: int) -> None:
             return
         run_id = run_id or data.default_run_id()
         assert run_id is not None
+        paper_runs_section(data)
         portfolio_section(data, run_id)
         charts_section(data, run_id)
         positions_section(data, run_id)
