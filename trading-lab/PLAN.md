@@ -668,7 +668,19 @@ Trade-offs worth knowing:
 - `deploy/systemd/trading-lab-digest.service` and `.timer`: Mondays at 07:52 UTC, `Persistent=true`, read-only paths. Setup is in `DEPLOYMENT.md` section 5e.
 - Tests: three paper runs (one stopped before the period, one started and stopped inside it), checked against `build_summary` and `live_compare`; a stalled check; the pair cap; an empty database; the CLI (text, JSON, alert despite `min_level`, no secret in the output, errors); the systemd units.
 
-## 5. Stage 11–23 status summary
+### Stage 24A: Trade analysis ✅
+- `research/trades.py`: `analyze_trades(store, run_id, groupings=...)` groups a run's closed trades by exit, symbol, side, holding time (bars) and entry weekday, plus the entry hour on request.
+  - `GroupStats` gives trades, wins, PnL, average return and bars, best, worst and profit factor.
+  - The exit type comes from the decision that filled the exit order: stop-loss or trailing stop, take-profit, end of backtest, or for exits at the next open, the decision that scheduled them (time stop, kill switch, otherwise signal). The kill switch's scheduled exits were recorded only as "signal exit" before, and are now told apart.
+  - Observations cover a result resting on its best few trades, the costliest exit type, symbol and side (at least 3 trades), and long holds against shorter ones (noting that stops close losers sooner by design).
+- CLI: `trading-lab trades [RUN_ID] [--by ...] [--json] [--csv FILE]`, read-only.
+- Tests:
+  - the exit mapping;
+  - on real backtests: groups adding up to the run's trades and PnL, time-stop trades held exactly `max_holding_bars`, long and short sides, kill-switch exits with `flatten_on_halt`;
+  - group statistics and each observation on hand-made trades;
+  - the CLI (text, JSON, CSV, a bad grouping, an unknown run) and a run without trades.
+
+## 5. Stage 11–24 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -685,6 +697,7 @@ On top of the Stage 9/10 system:
 - **Readability and reach (21):** monthly returns, Calmar and the longest drawdown (21A), Telegram alerts (21B), and config presets (21C).
 - **Running several configs live (22):** several paper runs on one VM with one watchdog (22A), a comparison of two live runs over the time they ran together (22B), and an overview of all paper runs in the dashboard (22C).
 - **Is it luck, and how is it going? (23):** probabilistic and deflated Sharpe ratios (23A), and a weekly digest of every paper run (23B).
+- **Where the money goes (24):** trade analysis by exit, symbol, side, holding time and entry time (24A).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

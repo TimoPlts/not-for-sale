@@ -25,6 +25,7 @@
     trading-lab export RUN_ID DIR [--holds] [--force]
     trading-lab costs [--days N | --start/--end] [--multipliers 0,0.5,1,2,3]
     trading-lab regimes [RUN_ID] [--trend-bars 50] [--vol-bars 24] [--json]
+    trading-lab trades [RUN_ID] [--by exit,symbol,side,holding,weekday[,hour]] [--json] [--csv FILE]
     trading-lab ab A.toml B.toml [--days 180 | --start/--end] [--windows 6] [--metric total_return]
     trading-lab status [PAPER_RUN_ID | --all] [--max-behind 2] [--alert] [--json]   (watchdog; exit 1 if not OK)
     trading-lab live-compare RUN_A RUN_B [--min-days 14] [--json]   (two paper runs over the time they ran together)
@@ -644,6 +645,32 @@ def cmd_regimes(args: argparse.Namespace) -> int:
         except ValueError as exc:
             raise TradingLabError(str(exc)) from None
     print(_json.dumps(report.to_dict(), indent=2) if args.json else format_regimes(report))
+    return 0
+
+
+def cmd_trades(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.research.trades import analyze_trades, format_trades
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    groupings = [g.strip() for g in args.by.split(",") if g.strip()]
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        run_id = args.run_id or _latest_run_id(store)
+        try:
+            analysis = analyze_trades(store, run_id, groupings=groupings)
+        except ValueError as exc:
+            raise TradingLabError(str(exc)) from None
+    print(_json.dumps(analysis.to_dict(), indent=2, default=str) if args.json else format_trades(analysis))
+    if args.csv:
+        rows = analysis.to_dict()["trades"]
+        Path(args.csv).parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(rows, columns=["symbol", "side", "opened_at", "closed_at", "pnl", "return_pct", "bars_held",
+                                    "exit_reason"]).to_csv(args.csv, index=False)
+        print(f"Trades written to {Path(args.csv).resolve()}", file=sys.stderr if args.json else sys.stdout)
     return 0
 
 
@@ -1635,6 +1662,15 @@ def build_parser() -> argparse.ArgumentParser:
     rg.add_argument("--vol-bars", type=int, default=24, help="bars of returns for volatility (default 24)")
     rg.add_argument("--json", action="store_true", help="machine-readable output")
     rg.set_defaults(func=cmd_regimes)
+
+    tr = sub.add_parser("trades", help="a run's closed trades by exit type, symbol, side, holding time, weekday, hour")
+    tr.add_argument("run_id", nargs="?", help="default: the latest run")
+    tr.add_argument("--by", default="exit,symbol,side,holding,weekday",
+                    help="groupings, comma-separated: exit, symbol, side, holding, weekday, hour "
+                         "(default: all but hour)")
+    tr.add_argument("--json", action="store_true", help="machine-readable output")
+    tr.add_argument("--csv", metavar="FILE", help="also write every trade with its exit type and holding time")
+    tr.set_defaults(func=cmd_trades)
 
     ex = sub.add_parser("export", help="write a stored run to CSV files and a JSON summary")
     ex.add_argument("run_id")

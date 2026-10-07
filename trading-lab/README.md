@@ -75,6 +75,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 22C (complete):** with several paper runs, the dashboard and `dashboard-data` open with an overview table: each run's status, equity, return, drawdown, open positions, last bar and watchdog check.
 - **Stage 23A (complete):** the probabilistic Sharpe ratio (how likely the true Sharpe is above 0) in every report, and the deflated Sharpe ratio of a sweep's winner (does it beat the luckiest of all the settings tried?).
 - **Stage 23B (complete):** `trading-lab digest`: one weekly message about every paper run (its week against the market, trades, watchdog) and the live comparisons, with a systemd timer that sends it.
+- **Stage 24A (complete):** `trading-lab trades`: a run's closed trades by exit type (stop, trailing stop, take-profit, time stop, kill switch, signal), symbol, side, holding time and entry weekday or hour.
 
 ### Stage 9/10 summary
 
@@ -379,6 +380,33 @@ Some typical readings:
 * Losing mostly in *sideways / volatile* markets is the classic whipsaw.
 
 Combine it with `allow_short` or the trend filter, then backtest again. The database is only read.
+
+## Where does the money come from? (`trades`)
+
+```bash
+trading-lab trades                          # the latest run
+trading-lab trades <run id> --by exit,holding,hour --csv trades.csv
+```
+
+It groups a run's closed trades and shows, for each group, the trades, wins, PnL, average return, average holding time, best and worst trade, and profit factor. The groups are:
+
+* **exit:** what closed the position: stop-loss, trailing stop, take-profit, time stop, kill switch, signal (the vote turned), or the end of a backtest;
+* **symbol** and **side** (long or short);
+* **holding time:** 1-2, 3-6, 7-24, 25-72 or more than 72 bars;
+* **entry weekday**, and with `--by ...,hour` the entry hour (UTC).
+
+A few observations point at the biggest effects: a result that rests on a handful of outliers, the costliest exit type, symbol or side, and long holds against short ones. For example:
+
+```
+By exit
+                   trades   won         pnl  avg ret avg bars       best      worst    pf
+  signal              100   37%     -911.63   -0.49%     23.0     +86.62     -85.86  0.58
+  stop-loss             3    0%     -273.75   -5.24%     16.0     -90.07     -93.06  0.00
+  trailing stop        10   30%      -40.97   -0.21%     43.1     +76.32     -42.15  0.76
+  time stop             9   89%     +552.46   +3.52%     72.0    +111.90     -20.08 28.51
+```
+
+(A 90-day synthetic backtest of the `trend` preset: an illustration of the layout, not a result.) Small groups are noise. Turn a hunch from this table into a config change and test it with `ab` or `walkforward` before trusting it. `--csv` writes every trade with its exit type and holding time. Read-only.
 
 ## Could a market without patterns do as well? (`permutation-test`)
 
