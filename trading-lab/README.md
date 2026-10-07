@@ -59,6 +59,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 17B (complete):** `trading-lab costs`: the same backtest at 0x to 3x fees and slippage, with the break-even cost level.
 - **Stage 17C (complete):** `trading-lab regimes`: a run's performance by market regime (trend up, sideways or down, and calm or volatile).
 - **Stage 18A (complete):** `trading-lab ab A.toml B.toml`: is a config change really better? Both configs over independent windows, with a sign test.
+- **Stage 18B (complete):** `trading-lab status`: a watchdog that checks the paper trader is alive and keeping up, with a systemd timer that alerts you when it is not.
 
 ### Stage 9/10 summary
 
@@ -436,6 +437,10 @@ The pieces that make unattended operation work:
 * `trading-lab paper --run-id NAME` starts the named run, or resumes it if it already exists. Restarts therefore always continue the same run.
 * SIGTERM (`systemctl stop`) finishes the current cycle, saves it and marks the run `stopped`.
 * `--log-file PATH` (global option) writes a rotating log (10 MB × 5) of all paper activity and warnings. `--log-level` controls its detail.
+* `trading-lab status` is a watchdog. A systemd timer in `deploy/systemd/` runs `status --alert` every 15 minutes and alerts you if the trader has crashed, hung or keeps failing. It exits 1 when:
+  * more than 2 closed candles have not been processed;
+  * 3 or more cycles in a row have failed;
+  * the run is not running (`--allow-stopped` allows that).
 
 ### When things fail
 

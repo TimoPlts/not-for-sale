@@ -1,0 +1,28 @@
+# Watchdog for the PAPER trader: checks that it is running and keeping up with the candles,
+# and sends an alert (configured [alerts] channels) when it is not. Read-only; trades nothing.
+# Template: install together with trading-lab-watchdog.timer (see docs/DEPLOYMENT.md):
+#   sudo cp deploy/systemd/trading-lab-watchdog.* /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now trading-lab-watchdog.timer
+
+[Unit]
+Description=trading-lab paper trading watchdog (read-only)
+
+[Service]
+Type=oneshot
+User=tradinglab
+Group=tradinglab
+WorkingDirectory=/opt/trading-lab/trading-lab
+# Only for the alert channel settings (webhook URL / SMTP); the check itself needs no secrets.
+EnvironmentFile=/etc/trading-lab/trading-lab.env
+ExecStart=/opt/trading-lab/trading-lab/.venv/bin/trading-lab \
+    --config /opt/trading-lab/trading-lab/config/default.toml \
+    status vm-paper-1 --alert
+# Exit code 1 (not OK) marks the unit failed: visible in `systemctl --failed` and the journal.
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ReadOnlyPaths=/opt/trading-lab/trading-lab

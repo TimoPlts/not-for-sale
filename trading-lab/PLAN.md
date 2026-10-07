@@ -536,6 +536,17 @@ Trade-offs worth knowing:
 - CLI: `trading-lab ab A.toml B.toml [--days N | --start/--end] [--windows 6] [--metric M] [--export JSON]`. Command-line market overrides apply to both configs. Nothing is stored.
 - Tests: the config diff (including added strategy tables); window arithmetic and validation; each window equal to a standalone backtest; identical configs tie; sign tests and every verdict, including lower-is-better metrics and undefined values; unfair comparisons refused; the CLI (export, bad windows, missing file, shared overrides).
 
+### Stage 18B: Paper-run watchdog ✅
+- `status.py`: `check_status(store, run_id, now, max_behind=2, max_errors=3, expect_running=True)` reads a paper run (read-only) and reports:
+  - closed candles not yet processed (`behind`, from the saved last processed candle and the timeframe);
+  - consecutive failed cycles and the last error (from the trader's saved health);
+  - the run status and the latest equity.
+
+  Problems are being stalled beyond `max_behind`, `max_errors` failed cycles, a run that is not running (a note only with `expect_running=False`), and no cycle at all long after creation. `latest_paper_run` prefers the running paper run.
+- CLI: `trading-lab status [RUN_ID] [--max-behind N] [--max-errors N] [--allow-stopped] [--alert] [--json]`. It exits 1 when not OK. `--alert` sends one critical alert through the configured channels.
+- `deploy/systemd/trading-lab-watchdog.service` (oneshot, read-only paths, the environment file only for alert settings) and `.timer` (every 15 minutes) are documented in `DEPLOYMENT.md` (section 5c).
+- Tests: a run keeping up (one waiting candle is normal); a stalled run; stopped runs (strict and relaxed); failing cycles up to the threshold; choosing the run and rejecting backtests and unknown ids; the CLI (exit codes, JSON, an alert sent without leaking the URL, alerts disabled, read-only); the templates.
+
 ## 5. Stage 11–17 status summary
 
 On top of the Stage 9/10 system:
