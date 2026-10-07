@@ -64,6 +64,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 19A (complete):** `trading-lab permutation-test`: could a market with no pattern have produced the result? The same backtest on shuffled-candle markets.
 - **Stage 19B (complete):** `sweep` scores every setting by its neighbours (`stable` column, `--rank stability`), so you pick a plateau rather than a lucky peak.
 - **Stage 19C (complete):** the market-regime table in the HTML report, the dashboard and `dashboard-data`.
+- **Stage 20A (complete):** `trading-lab checkup`: is this strategy any good? Every research check at once, with a pass/warn/fail verdict and next steps.
 
 ### Stage 9/10 summary
 
@@ -211,6 +212,40 @@ Relative to buy & hold: excess return -5.44%, alpha -44.02%/yr, beta 0.34, corre
 * **information ratio:** excess return per unit of tracking error.
 
 A strategy can beat buy & hold in a falling market simply by holding cash. Alpha and beta separate "less exposed" from "better at picking", and they are computed from per-bar returns, with definitions in `src/trading_lab/metrics/relative.py`.
+
+## Is this strategy any good? (`checkup`)
+
+```bash
+trading-lab checkup --days 180                          # your config, the last 180 days
+trading-lab checkup --start 2025-01-01 --end 2025-07-01 --html reports/checkup.html
+```
+
+This is the quickest honest answer. It runs one backtest, then the cost, luck, resampling and regime checks below, and grades each one:
+
+```
+  [PASS] Enough trades             326 closed trades
+  [FAIL] Edge before costs         -3.15% with free trading
+  [FAIL] Survives costs            -19.60% as configured
+  [FAIL] Not luck                  p = 0.627 (31 of 50 shuffled markets did as well)
+  [FAIL] Robust to resampling      100% chance of a loss when the trades are resampled
+  [WARN] Beats buy & hold          -9.94% versus equal-weight buy & hold
+  [WARN] Drawdown                  worst drawdown -22.6%
+  [WARN] Works in several regimes  profitable in 2 of 6 market regimes
+Verdict: not convincing: failed Edge before costs, Survives costs, Not luck, Robust to resampling.
+```
+
+(This is the default config on the offline demo's random-walk prices. It should fail, and it does.)
+
+Each warning or failure comes with a next step. The thresholds:
+
+* **Enough trades:** at least 30.
+* **Survives costs:** break-even at 1.5x the configured costs or more.
+* **Not luck:** p < 0.05; up to 0.2 is a warning.
+* **Robust to resampling:** a loss in fewer than 10% of bootstrap resamples; up to 30% is a warning.
+* **Drawdown:** at most 20%; up to 35% is a warning.
+* **Works in several regimes:** profitable in at least half the market regimes.
+
+The overall verdict is the worst check. A full pass is still one period, in-sample: confirm it with `walkforward` or `ab`. A 90-day, four-symbol checkup takes about a minute (`--permutations` sets the size of the luck test). `--html` writes a one-page report and `--json` the full results. Nothing is stored.
 
 ## How much do costs decide? (`costs`)
 

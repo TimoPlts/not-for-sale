@@ -2,6 +2,7 @@
 
 from trading_lab.research.ab import ABResult, ab_test, config_diff, format_ab
 from trading_lab.research.agent_eval import AgentEval, evaluate_agents, evaluate_run, format_agent_eval
+from trading_lab.research.checkup import Checkup, checkup, checkup_html, format_checkup
 from trading_lab.research.costs import CostSensitivity, cost_sensitivity, format_costs
 from trading_lab.research.attribution import (
     Attribution,
@@ -44,6 +45,10 @@ from trading_lab.research.walkforward import (
 )
 
 __all__ = [
+    "Checkup",
+    "checkup",
+    "checkup_html",
+    "format_checkup",
     "PermutationResult",
     "format_permutation",
     "permutation_test",
