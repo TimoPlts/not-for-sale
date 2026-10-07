@@ -66,6 +66,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 19C (complete):** the market-regime table in the HTML report, the dashboard and `dashboard-data`.
 - **Stage 20A (complete):** `trading-lab checkup`: is this strategy any good? Every research check at once, with a pass/warn/fail verdict and next steps.
 - **Stage 20B (complete):** an opt-in time stop (`risk.max_holding_bars`): positions exit at the next open after N bars.
+- **Stage 20C (complete):** opt-in regime-dependent strategy weights (`[voting.regime_weights]`): trend followers can count more in trends, and mean reversion in sideways markets.
 
 ### Stage 9/10 summary
 
@@ -852,6 +853,30 @@ atr_period = 14
 * **Shorts:** both strategies signal in both directions, so they work naturally with `allow_short = true`.
 
 To see whether they help on your symbols and timeframe, compare them on the same period. For example, `trading-lab sweep --param strategies.donchian.weight=0,1` runs the strategy on and off, and `walkforward` tests it out of sample.
+
+## Regime-dependent weights (opt-in)
+
+```toml
+[voting.regime_weights.up]       # this symbol is in an uptrend
+donchian = 2.0
+rsi = 0.5
+[voting.regime_weights.down]
+donchian = 2.0
+rsi = 0.5
+[voting.regime_weights.sideways]
+donchian = 0.0                   # breakouts mostly whipsaw in a range
+rsi = 1.5
+```
+
+For each symbol and bar, the regime comes from the candles up to that bar only:
+
+* **up:** the close is above its `regime_bars` (default 50) simple average, and that average is higher than `regime_slope_bars` (default 10) bars ago;
+* **down:** the close is below a falling average;
+* **sideways:** anything else.
+
+Each strategy's voting weight is multiplied by its number for the current regime. Strategies that are not listed keep their weight. During the first `regime_bars` bars there is no regime, so the normal weights apply. The ensemble signal records the regime, and its votes record the effective weights, so `agent-report` and the dashboard show what counted. Backtests and live runs use the same labels as `trading-lab regimes` (per symbol rather than for the whole market).
+
+This is an easy way to overfit. Pick the numbers from reasoning, not from a sweep, and check the result with `trading-lab ab` against the same config without the table, then with `permutation-test`.
 
 ## Short selling (simulated, off by default)
 

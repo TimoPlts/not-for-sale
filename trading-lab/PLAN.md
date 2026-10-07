@@ -593,7 +593,13 @@ Trade-offs worth knowing:
 - `risk.max_holding_bars` (default 0, off). At the close of the bar in which a position reaches that many bars held (the entry bar counts), the session schedules its exit for the next open. The exit is a protected `risk_manager` intent, like the kill switch's, so strategies cannot cancel it. It is skipped when an exit is already scheduled or the position was stopped out. The exit decision reads `time stop: held N bars`, and shorts are covered alike.
 - Tests: the exit timing and reasons; strategies cannot cancel it, and shorts; off by default; a stop-loss first; validation; backtest and live equal across a resume one bar before a time stop.
 
-## 5. Stage 11–19 status summary
+### Stage 20C: Regime-dependent strategy weights ✅
+- `VotingConfig.regime_weights` (`[voting.regime_weights.<up|down|sideways>]` tables of strategy multipliers in [0, 100]), plus `regime_bars` and `regime_slope_bars`. It is normalised to sorted tuples, round-trips through TOML, `to_dict` and `from_dict`, and must only name configured strategies. It is off when empty.
+- `engine/filters.trend_labels` is the causal SMA-and-slope trend label, shared with `research.regimes.classify`. `filter_columns(candles, risk, voting)` adds a per-bar `regime`, None during warm-up. The engines load enough history for it.
+- `VotingEngine.combine(signals, multipliers)` applies the multipliers. The votes record the effective weights. A bar where every weight is 0 is a HOLD with a reason. The session passes the bar's regime multipliers and records `regime` on the ensemble signal.
+- Tests: config parsing, validation and round trips, with older configs still loading; labels identical to the regime report and causal; filter columns; voting with multipliers (and unchanged without); the session using each bar's regime (none during warm-up); backtests changing with the table, with live matching the backtest.
+
+## 5. Stage 11–20 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -606,6 +612,7 @@ On top of the Stage 9/10 system:
 - **Strategy research (17):** opt-in trend-following strategies (17A), cost sensitivity with a break-even level (17B), and performance by market regime (17C).
 - **Decisions and operations (18):** A/B tests of whole configs over independent windows (18A), a watchdog with a systemd timer (18B), and volatility-targeted sizing (18C).
 - **Not fooling yourself (19):** a permutation test against shuffled markets (19A), sweep stability scores (19B), and market regimes in the report and dashboard (19C).
+- **One verdict and smarter exits (20):** a one-command strategy checkup (20A), a time stop (20B), and regime-dependent strategy weights (20C).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

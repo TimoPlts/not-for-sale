@@ -8,20 +8,42 @@ from typing import Mapping
 import numpy as np
 import pandas as pd
 
-from trading_lab.config import RiskConfig
+from trading_lab.config import RiskConfig, VotingConfig
+
+WARMUP = "warm-up"
 
 
-def filter_columns(candles: pd.DataFrame, risk: RiskConfig) -> list[dict[str, float | None]]:
-    """For each bar: ``{"trend_sma": simple average of the last N closes, up to and including the bar}``.
+def trend_labels(close: pd.Series, trend_bars: int, slope_bars: int) -> np.ndarray:
+    """Per bar: "up" (close above a rising ``trend_bars`` SMA), "down" (below a falling one),
+    "sideways", or ``WARMUP`` before the average exists. Uses bars up to each bar only."""
+    sma = close.rolling(trend_bars, min_periods=trend_bars).mean()
+    rising, falling = sma > sma.shift(slope_bars), sma < sma.shift(slope_bars)
+    return np.where(sma.isna(), WARMUP,
+                    np.where((close > sma) & rising, "up", np.where((close < sma) & falling, "down", "sideways")))
 
-    A simple (not exponential) average does not depend on where the data
-    window starts, so live paper trading sees exactly the backtest's values.
+
+def filter_columns(
+    candles: pd.DataFrame, risk: RiskConfig, voting: VotingConfig | None = None
+) -> list[dict[str, float | str | None]]:
+    """Per-bar market facts, each from candles up to and including the bar:
+
+    * ``trend_sma``: simple average of the last ``trend_filter_period`` closes (trend filter);
+    * ``regime``: the trend label for regime-dependent strategy weights (``voting.regime_weights``).
+
+    Simple (not exponential) averages do not depend on where the data window
+    starts, so live paper trading sees exactly the backtest's values.
     """
-    if risk.trend_filter_period <= 0:
-        return [{} for _ in range(len(candles))]
-    period = risk.trend_filter_period
-    sma = candles["close"].rolling(period, min_periods=period).mean().to_numpy()
-    return [{"trend_sma": float(v) if math.isfinite(v) else None} for v in sma]
+    rows: list[dict[str, float | str | None]] = [{} for _ in range(len(candles))]
+    if risk.trend_filter_period > 0:
+        period = risk.trend_filter_period
+        sma = candles["close"].rolling(period, min_periods=period).mean().to_numpy()
+        for row, v in zip(rows, sma):
+            row["trend_sma"] = float(v) if math.isfinite(v) else None
+    if voting is not None and voting.regime_weights:
+        labels = trend_labels(candles["close"], voting.regime_bars, voting.regime_slope_bars)
+        for row, label in zip(rows, labels):
+            row["regime"] = None if label == WARMUP else str(label)
+    return rows
 
 
 def correlation_lookup(

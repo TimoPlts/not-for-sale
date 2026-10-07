@@ -92,6 +92,15 @@ num_std = 2.0
 buy_threshold = 0.15          # net weighted score needed to BUY
 sell_threshold = 0.15         # net weighted score needed to SELL
 min_agreeing = 1              # min number of strategies voting that way
+# Optional regime-dependent weights (off unless present). The regime per symbol and bar is
+# "up" (close above a rising 50-bar average), "down" (below a falling one) or "sideways".
+# regime_bars = 50
+# regime_slope_bars = 10
+# [voting.regime_weights.up]
+# donchian = 2.0                # trend followers count double in trends ...
+# rsi = 0.5
+# [voting.regime_weights.sideways]
+# donchian = 0.0                # ... and not at all in sideways markets
 
 [backtest]
 liquidate_at_end = false      # true = sell open positions at the final close

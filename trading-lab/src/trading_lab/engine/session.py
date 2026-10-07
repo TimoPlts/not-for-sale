@@ -386,7 +386,12 @@ class TradingSession:
                 state = sig.metadata.get("risk_state")
                 if isinstance(state, str) and "error" not in sig.metadata:
                     self.risk_states[sym] = (ts, state)
-            ensemble = self.voting.combine(strat_sigs)
+            regime = market.get(sym, {}).get("regime")
+            multipliers = self.config.voting.regime_multipliers(regime) if isinstance(regime, str) else {}
+            ensemble = self.voting.combine(strat_sigs, multipliers or None)
+            if multipliers:
+                ensemble = Signal(ensemble.strategy, ensemble.symbol, ensemble.direction, ensemble.confidence,
+                                  ensemble.timestamp, {**ensemble.metadata, "regime": regime})
             self.records.signals.extend(strat_sigs)
             self.records.signals.append(ensemble)
             self._schedule(sym, ts, ensemble, bars[sym], market.get(sym, {}))

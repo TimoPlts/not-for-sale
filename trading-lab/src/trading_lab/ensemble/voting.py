@@ -12,7 +12,9 @@ Scoring, for signals ``i`` with weight ``w_i`` and confidence ``c_i``:
 * HOLD otherwise
 
 Abstentions (HOLD) dilute the score, and opposing votes cancel out. The
-ensemble's confidence is ``|net|``. The full vote breakdown goes into the
+ensemble's confidence is ``|net|``. ``combine`` can take per-strategy weight
+multipliers (regime-dependent weights); the votes then record the effective
+weights, and a bar on which every participating weight is 0 is a HOLD. The full vote breakdown goes into the
 metadata so every decision can be audited. Any producer of ``Signal``s, such
 as a future AI agent, can take part by being given a weight.
 """
@@ -47,7 +49,7 @@ class VotingEngine:
     def weights(self) -> Mapping[str, float]:
         return dict(self._weights)
 
-    def combine(self, signals: Sequence[Signal]) -> Signal:
+    def combine(self, signals: Sequence[Signal], multipliers: Mapping[str, float] | None = None) -> Signal:
         if not signals:
             raise ValueError("cannot combine an empty list of signals")
         symbol, timestamp = signals[0].symbol, signals[0].timestamp
@@ -61,15 +63,20 @@ class VotingEngine:
                 raise ValueError(f"duplicate signal from strategy {sig.strategy!r}")
             seen.add(sig.strategy)
 
-        total_weight = sum(self._weights[s.strategy] for s in signals)
+        weight = {s.strategy: self._weights[s.strategy] * (multipliers or {}).get(s.strategy, 1.0) for s in signals}
+        total_weight = sum(weight.values())
         if total_weight <= 0:
+            if multipliers:
+                return Signal(ENSEMBLE_NAME, symbol, Direction.HOLD, 0.0, timestamp,
+                              {"reason": "every participating weight is 0 under the regime multipliers",
+                               "regime_multipliers": dict(multipliers)})
             raise ValueError("participating strategies have zero total weight")
 
         buy_score = sum(
-            self._weights[s.strategy] * s.confidence for s in signals if s.direction is Direction.BUY
+            weight[s.strategy] * s.confidence for s in signals if s.direction is Direction.BUY
         ) / total_weight
         sell_score = sum(
-            self._weights[s.strategy] * s.confidence
+            weight[s.strategy] * s.confidence
             for s in signals
             if s.direction is Direction.SELL
         ) / total_weight
@@ -97,10 +104,12 @@ class VotingEngine:
                     "strategy": s.strategy,
                     "direction": s.direction.value,
                     "confidence": s.confidence,
-                    "weight": self._weights[s.strategy],
+                    "weight": weight[s.strategy],
                 }
                 for s in signals
             ],
         }
+        if multipliers:
+            metadata["regime_multipliers"] = dict(multipliers)
         confidence = min(abs(net), 1.0) if direction is not Direction.HOLD else 0.0
         return Signal(ENSEMBLE_NAME, symbol, direction, confidence, timestamp, metadata)

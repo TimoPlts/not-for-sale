@@ -31,9 +31,10 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from trading_lab.engine.filters import WARMUP, trend_labels
+
 TRENDS = ("up", "sideways", "down")
 VOLS = ("calm", "volatile")
-WARMUP = "warm-up"
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,10 +83,7 @@ def classify(index: pd.Series, *, trend_bars: int = 50, slope_bars: int = 10, vo
     """Per-bar ``trend`` and ``volatility`` labels for an index level series."""
     if trend_bars < 2 or slope_bars < 1 or vol_bars < 2:
         raise ValueError("trend_bars and vol_bars must be >= 2 and slope_bars >= 1")
-    sma = index.rolling(trend_bars, min_periods=trend_bars).mean()
-    rising, falling = sma > sma.shift(slope_bars), sma < sma.shift(slope_bars)
-    trend = np.where(sma.isna(), WARMUP,
-                     np.where((index > sma) & rising, "up", np.where((index < sma) & falling, "down", "sideways")))
+    trend = trend_labels(index, trend_bars, slope_bars)
     returns = np.log(index).diff()
     vol = returns.rolling(vol_bars, min_periods=vol_bars).std(ddof=0)
     median = vol.median()
