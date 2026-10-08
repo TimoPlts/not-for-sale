@@ -20,7 +20,7 @@ sudo -u tradinglab git clone https://github.com/TimoPlts/not-for-sale.git /opt/t
 cd /opt/trading-lab/trading-lab
 sudo -u tradinglab python3 -m venv .venv
 sudo -u tradinglab .venv/bin/pip install -e ".[dashboard]"     # add ,dev to run the tests
-sudo -u tradinglab .venv/bin/python -m pytest -q                 # optional, needs ".[dev,dashboard]"
+sudo -u tradinglab .venv/bin/python -m pytest -q -n auto         # optional, needs ".[dev,dashboard]"
 ```
 
 Python 3.11 or newer is required.

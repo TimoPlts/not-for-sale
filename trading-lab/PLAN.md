@@ -690,7 +690,29 @@ Trade-offs worth knowing:
 - The README example was regenerated from a fresh run (the demo's random-walk prices), and the thresholds list gained the new check.
 - Tests: the full check list on a real edge (which passes it), and every grade boundary and the losing-run advice through `evaluate`.
 
-## 5. Stage 11–24 status summary
+### Stage 25A: A faster test suite ✅
+- Profiling (`--durations`) showed the time spread over many live-against-backtest and resume tests. These are the safety net, so they stay as they are.
+- `pytest-xdist` joins the `dev` extra. `pytest -n auto` runs all 752 tests in about 1 min 50 s on 4 cores, against 7 to 10.5 minutes one at a time. Every test passed in parallel, which shows they use only their own temporary files. It is opt-in, so plain `pytest` behaves as before.
+- The digest fixture (the slowest setup at about 30 s) now simulates 3 days instead of 9 and tests a 2-day digest, with the same cases: a run stopped before the period, one started and stopped inside it, and two running. It takes about 10 s.
+- README and DEPLOYMENT.md use `pytest -n auto`.
+
+### Stage 25B: Trade excursions (MAE/MFE) ✅
+- `research/trades.py`: each trade gets `mae` (0 or negative) and `mfe` (0 or positive) as fractions of the break-even entry price, as in the PnL.
+  - They span the lows and highs of the stored candles from the entry bar up to the exit bar, plus the exit price; shorts are mirrored.
+  - Runs without stored candles (before schema v3) get None.
+- Groups gain `avg_mae` and `avg_mfe`. `Excursions` summarises:
+  - the dip that 90% of winners stayed within, next to the fixed stop-loss (None for ATR stops, which differ per trade);
+  - the losing trades that were at least 1% up at some point;
+  - the e-ratio.
+- The `trades` text, JSON and CSV include them.
+- Tests: excursions by hand (long, short, never adverse, exit in the entry bar) and the summary by hand; every trade of a long and a long/short backtest recomputed independently from the bars, with the exit inside the excursion range; the stop shown or not; a run without candles; the CLI.
+
+### Stage 25C: Excursions in the reports ✅
+- `trades.excursion_sentences` turns the summary into plain sentences, from the object or its `to_dict()`. The text output, the HTML report and the dashboard share it.
+- HTML report: MAE and MFE columns in "Where the money comes from", plus the summary sentences. Dashboard: `avg_mae` and `avg_mfe` columns in the trade tables, with the summary as captions. The snapshot's `trade_breakdown` carries `excursions`.
+- Tests: the same sentences from the object and the dict; the snapshot against `analyze_trades`; the HTML columns and sentences, with the stop shown; the dashboard captions and columns, without a stop for ATR stops.
+
+## 5. Stage 11–25 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -708,6 +730,7 @@ On top of the Stage 9/10 system:
 - **Running several configs live (22):** several paper runs on one VM with one watchdog (22A), a comparison of two live runs over the time they ran together (22B), and an overview of all paper runs in the dashboard (22C).
 - **Is it luck, and how is it going? (23):** probabilistic and deflated Sharpe ratios (23A), and a weekly digest of every paper run (23B).
 - **Where the money goes (24):** trade analysis by exit, symbol, side, holding time and entry time (24A), shown in the reports and the dashboard (24B), and a "Sharpe is real" check in the checkup (24C).
+- **Faster feedback and deeper trade analysis (25):** the test suite on every core (25A), and trade excursions (25B), also in the reports and the dashboard (25C).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

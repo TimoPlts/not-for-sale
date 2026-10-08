@@ -224,9 +224,14 @@ def research_section(data: DashboardData, run_id: str) -> None:
     if breakdown:
         for grouping, title in (("exit", "Trades by exit type"), ("holding", "Trades by holding time")):
             frame = pd.DataFrame(breakdown["groups"][grouping])[["name", "trades", "win_rate", "pnl", "avg_return",
-                                                                  "avg_bars", "best", "worst"]]
+                                                                  "avg_bars", "best", "worst", "avg_mae",
+                                                                  "avg_mfe"]]
             st.markdown(title)
             st.dataframe(frame, hide_index=True, width="stretch")
+        from trading_lab.research.trades import excursion_sentences
+
+        for sentence in excursion_sentences(breakdown.get("excursions")):
+            st.caption(sentence)
         for note in breakdown["observations"]:
             st.caption(f"• {note}")
     results = research["research_results"]

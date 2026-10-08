@@ -324,12 +324,17 @@ def build_html_report(db_path: str, run_id: str | None = None, *, horizon: int =
         titles = {"exit": "Exit", "side": "Side", "holding": "Holding time", "symbol": "Symbol"}
         rows = [[_td(titles[grouping]), _td(g["name"]), _td(g["trades"]), _td(_pct(g["win_rate"], signed=False)),
                  _td(_num(g["pnl"]), _cls(g["pnl"])), _td(_pct(g["avg_return"]), _cls(g["avg_return"])),
-                 _td(f'{g["avg_bars"]:.1f}'), _td(_num(g["best"])), _td(_num(g["worst"]))]
+                 _td(f'{g["avg_bars"]:.1f}'), _td(_num(g["best"])), _td(_num(g["worst"])),
+                 _td(_pct(g.get("avg_mae"))), _td(_pct(g.get("avg_mfe")))]
                 for grouping in ("exit", "side", "holding", "symbol") for g in breakdown["groups"][grouping]]
+        from trading_lab.research.trades import excursion_sentences
+
         out.append("<h2>Where the money comes from</h2><div class=\"card\">" + _table(
-            ["By", "Group", "Trades", "Won", "PnL", "Avg return", "Avg bars", "Best", "Worst"], rows)
+            ["By", "Group", "Trades", "Won", "PnL", "Avg return", "Avg bars", "Best", "Worst", "MAE", "MFE"], rows)
+            + "".join(f'<p>{_e(s)}</p>' for s in excursion_sentences(breakdown.get("excursions")))
             + "".join(f'<p class="muted">• {_e(n)}</p>' for n in breakdown["observations"])
-            + '<p class="muted">Closed trades only. Small groups are noise; test a change with ab or walkforward '
+            + '<p class="muted">Closed trades only. MAE/MFE: the worst and best move against and for the entry '
+            "while the trade was open. Small groups are noise; test a change with ab or walkforward "
             "(see <code>trading-lab trades</code>).</p></div>")
 
     if breakers.get("trips"):
