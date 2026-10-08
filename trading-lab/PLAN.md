@@ -737,6 +737,12 @@ Trade-offs worth knowing:
   - every command logging the expected rows through the CLI (text and JSON);
   - the checkup check absent without a log, passing against weak trials and failing against 200.
 
+### Stage 26B: The trial log in sweeps and the dashboard ✅
+- `cli._earlier_trials` reads the logged trials overlapping a period, or None when recording is off. `checkup` and `sweep` share it.
+- `sweep` prints "Against all N logged trials on overlapping data (this sweep included): DSR" next to its own deflated Sharpe, when the log holds earlier trials.
+- `DashboardData.trial_log(run_id)` gives the trials overlapping the run's bars (count, configs, luck bar, best, the run's Sharpe), or None. It is in the snapshot, the dashboard's Research section (a caption) and `dashboard-data` (a line).
+- Tests: the sweep line only with earlier trials and recording on, with the right count; the dashboard data, snapshot, text line and caption; no log, no line.
+
 ## 5. Stage 11–26 status summary
 
 On top of the Stage 9/10 system:
@@ -756,7 +762,7 @@ On top of the Stage 9/10 system:
 - **Is it luck, and how is it going? (23):** probabilistic and deflated Sharpe ratios (23A), and a weekly digest of every paper run (23B).
 - **Where the money goes (24):** trade analysis by exit, symbol, side, holding time and entry time (24A), shown in the reports and the dashboard (24B), and a "Sharpe is real" check in the checkup (24C).
 - **Faster feedback and deeper trade analysis (25):** the test suite on every core (25A), and trade excursions (25B), also in the reports and the dashboard (25C).
-- **Counting the tries (26):** an opt-in trial log, the `trials` command and a checkup check against it (26A).
+- **Counting the tries (26):** an opt-in trial log, the `trials` command and a checkup check against it (26A), used by sweeps and shown in the dashboard (26B).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

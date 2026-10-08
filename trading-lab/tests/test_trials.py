@@ -190,3 +190,53 @@ def test_store_summary_helper(tmp_path):
         store.add_trials([row(T0, T0 + D, 1.0), row(T0 + 5 * D, T0 + 6 * D, 2.0, fingerprint="b")])
         s = trial_summary(store, "1h", T0, T0 + 2 * D)
     assert s.count == 1 and s.trials[0]["config_fingerprint"] == "a"
+
+
+def test_sweep_deflates_against_the_log(tmp_path, capsys):
+    cfg = config_file(tmp_path)
+    period = ["--synthetic", "3", "--start", "2024-02-01", "--end", "2024-02-11"]
+    assert main(["--config", cfg, "sweep", *period, "--param", "strategies.rsi.period=7,14"]) == 0
+    assert "Against all" not in capsys.readouterr().out  # nothing logged before the first sweep
+    assert main(["--config", cfg, "sweep", *period, "--param", "strategies.rsi.period=10,21,28"]) == 0
+    out = capsys.readouterr().out
+    line = next(x for x in out.splitlines() if x.startswith("Against all"))
+    assert line.startswith("Against all 5 logged trials on overlapping data (this sweep included): ")
+    off = config_file(tmp_path, record=False, name="off.toml")
+    assert main(["--config", off, "sweep", *period, "--param", "strategies.rsi.period=10,21"]) == 0
+    assert "Against all" not in capsys.readouterr().out
+
+
+def test_dashboard_trial_log(tmp_path, monkeypatch, capsys):
+    from trading_lab.dashboard import DashboardData
+
+    cfg = config_file(tmp_path)
+    period = ["--synthetic", "3", "--start", "2024-02-01", "--end", "2024-02-11"]
+    assert main(["--config", cfg, "sweep", *period, "--param", "strategies.rsi.period=7,21"]) == 0
+    assert main(["--config", cfg, "backtest", *period]) == 0  # stored as a run, and logged
+    capsys.readouterr()
+    db = tmp_path / "h.db"
+    with DashboardData(db) as data:
+        run_id = data.default_run_id()
+        log = data.trial_log(run_id)
+        with SQLiteStore(db, readonly=True) as store:
+            run = store.get_run(run_id)
+        assert log["count"] == 3 and log["configs"] == 3  # rsi 7 and 21, and the backtest's default rsi 14
+        assert log["luck_bar_sharpe"] is not None and log["run_sharpe"] is not None
+        assert data.snapshot(run_id)["trial_log"] == log
+        assert run["timeframe"] == log["timeframe"]
+    assert main(["--config", cfg, "dashboard-data"]) == 0
+    assert "Trial log: 3 trials on overlapping data, luck bar Sharpe" in capsys.readouterr().out
+    pytest.importorskip("streamlit")
+    from test_dashboard_app import render
+
+    at = render(monkeypatch, db)
+    assert any(c.value.startswith("Trial log: 3 trials (3 configs)") for c in at.caption)
+
+
+def test_no_trial_log_for_the_dashboard(tmp_path):
+    from trading_lab.dashboard import DashboardData
+
+    cfg = config_file(tmp_path, record=False)
+    assert main(["--config", cfg, "backtest", "--synthetic", "3", "--start", "2024-02-01", "--end", "2024-02-03"]) == 0
+    with DashboardData(tmp_path / "h.db") as data:
+        assert data.trial_log(data.default_run_id()) is None

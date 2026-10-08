@@ -82,6 +82,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 25B (complete):** `trades` shows how far each trade went against you and for you while it was open (MAE/MFE), next to the configured stop-loss.
 - **Stage 25C (complete):** the excursions in the HTML report and the dashboard as well.
 - **Stage 26A (complete):** an opt-in trial log (`[storage] record_trials = true`) of every backtest, sweep, A/B test, checkup and permutation test. `trading-lab trials` counts how many configs you tried on the same data, and `checkup` grades a result against all of them.
+- **Stage 26B (complete):** with the trial log on, `sweep` also deflates its winner against every logged trial on the same data, and the dashboard and `dashboard-data` show the trial count and luck bar for the run's period.
 
 ### Stage 9/10 summary
 
@@ -310,7 +311,7 @@ Trials on 1h data overlapping 2024-01-01 -> 2024-03-01: 10 (10 distinct configs;
   the best of 10 trials would reach a Sharpe of about 2.76 by luck alone (given how much their Sharpe ratios vary); a new result must clear that bar
 ```
 
-(Synthetic data; an illustration of the layout.) A trial counts if its period overlaps the one asked about on the same timeframe. Any overlap counts, which errs on the strict side. The same config re-run on the same period is one trial. With the log on, `checkup` adds a **Beats your other trials** check: the deflated Sharpe ratio of the new result against every logged trial on overlapping data. The honest fix for a failure there is fresh data you have not tuned on, not another tweak. Recording is off by default and never changes any result.
+(Synthetic data; an illustration of the layout.) A trial counts if its period overlaps the one asked about on the same timeframe. Any overlap counts, which errs on the strict side. The same config re-run on the same period is one trial. With the log on, `checkup` adds a **Beats your other trials** check: the deflated Sharpe ratio of the new result against every logged trial on overlapping data. The honest fix for a failure there is fresh data you have not tuned on, not another tweak. With the log on, `sweep` adds a second deflated Sharpe line, against all logged trials on overlapping data with its own combinations included. The dashboard's Research section and `dashboard-data` show how many trials overlap the run you are looking at, next to the luck bar. Recording is off by default and never changes any result.
 
 ## How much do costs decide? (`costs`)
 

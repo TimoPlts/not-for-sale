@@ -433,6 +433,23 @@ class DashboardData:
         del out["trades"]  # every trade is in recent_trades / export; keep the snapshot small
         return _clean(out)
 
+    def trial_log(self, run_id: str) -> dict[str, Any] | None:
+        """Logged research trials overlapping this run's period (see ``research.trials``); None when there are none."""
+        from trading_lab.research.trials import trial_summary
+
+        run, _ = self._run(run_id)
+        curve = self.store.load_equity_curve(run_id)
+        if curve.empty:
+            return None
+        summary = trial_summary(self.store, run["timeframe"], curve.index[0].to_pydatetime(),
+                                curve.index[-1].to_pydatetime() + pd.Timedelta(seconds=_tf_seconds(run["timeframe"])))
+        if not summary.count:
+            return None
+        metrics = run_metrics(self.store, run_id)
+        out = summary.to_dict()
+        out["run_sharpe"] = None if metrics is None else metrics.sharpe_ratio
+        return _clean(out)
+
     def snapshot(self, run_id: str | None = None, *, horizon: int = 4) -> dict[str, Any]:
         """Everything the dashboard shows, as one JSON-serialisable dict."""
         run_id = run_id or self.default_run_id()
@@ -455,6 +472,7 @@ class DashboardData:
             "regimes": self.regimes(run_id),
             "monthly_returns": self.monthly_returns(run_id),
             "trade_breakdown": self.trade_breakdown(run_id),
+            "trial_log": self.trial_log(run_id),
             "paper_runs": self.paper_runs(),
             "equity_points": len(curve),
         })

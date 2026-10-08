@@ -234,6 +234,15 @@ def research_section(data: DashboardData, run_id: str) -> None:
             st.caption(sentence)
         for note in breakdown["observations"]:
             st.caption(f"• {note}")
+    trials = data.trial_log(run_id)
+    if trials:
+        bar = trials["luck_bar_sharpe"]
+        sharpe = trials["run_sharpe"]
+        st.caption(f"Trial log: {trials['count']} trials ({trials['configs']} configs) on data overlapping this run"
+                   + ("" if bar is None else f"; the best of them would reach a Sharpe of about {bar:.2f} by luck "
+                                             "alone")
+                   + ("" if sharpe is None else f"; this run's Sharpe is {sharpe:.2f}")
+                   + " (see `trading-lab trials`)")
     results = research["research_results"]
     if results:
         rows = []

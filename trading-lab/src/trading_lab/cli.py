@@ -544,6 +544,7 @@ def cmd_sweep(args: argparse.Namespace) -> int:
           f"ranked by {args.metric} | data: {provider.name}")
 
     llm = _grid_llm(cfg, grid)
+    earlier = _earlier_trials(cfg, start, end)
     store = SQLiteStore(cfg.storage.db_path) if args.save else None
     try:
         results = run_sweep(
@@ -582,6 +583,15 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     if dsr is not None and len(results) > 1:
         print(f"\nDeflated Sharpe of row 1: {dsr:.0%}, the chance its true Sharpe beats what the luckiest of "
               f"{len(results)} settings would show by chance ({_dsr_verdict(dsr)})")
+    if earlier is not None and earlier.count and results[0].returns:
+        from trading_lab.research.trials import TrialSummary, deflated_against_log, trial
+
+        combined = TrialSummary(earlier.timeframe, start, end, [
+            *earlier.trials, *(trial("sweep", apply_params(cfg, r.params), start, end, r.metrics) for r in results)])
+        dsr_log = deflated_against_log(combined, results[0].returns)
+        if dsr_log is not None:
+            print(f"Against all {combined.count} logged trials on overlapping data (this sweep included): "
+                  f"{dsr_log:.0%} ({_dsr_verdict(dsr_log)})")
     print("\nNote: the best in-sample row is optimistic by construction; use walkforward to check it.")
     _print_provider_usage(llm)
     if args.export:
@@ -859,13 +869,7 @@ def cmd_checkup(args: argparse.Namespace) -> int:
     print(f"Checkup: {start:%Y-%m-%d} -> {end:%Y-%m-%d} | {cfg.market.timeframe} | "
           f"{', '.join(cfg.market.symbols)} | data: {provider.name}")
     llm = shared_llm_provider([cfg])
-    earlier = None
-    if cfg.storage.record_trials and Path(cfg.storage.db_path).exists():
-        from trading_lab.research.trials import trial_summary
-        from trading_lab.storage import SQLiteStore
-
-        with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
-            earlier = trial_summary(store, cfg.market.timeframe, start, end)
+    earlier = _earlier_trials(cfg, start, end)
     report = checkup(cfg, provider, start, end, permutations=args.permutations, llm_provider=llm,
                      allow_agents=args.allow_agents, progress=lambda step: print(f"  {step}..."), trials=earlier)
     print()
@@ -915,6 +919,17 @@ def cmd_walkforward(args: argparse.Namespace) -> int:
         print("Out-of-sample is worse than in-sample: expect live results closer to the out-of-sample numbers.")
     _print_provider_usage(llm)
     return 0
+
+
+def _earlier_trials(cfg: AppConfig, start: datetime, end: datetime) -> Any:
+    """The logged trials overlapping ``start``-``end`` (a ``TrialSummary``), or None when recording is off."""
+    if not cfg.storage.record_trials or not Path(cfg.storage.db_path).exists():
+        return None
+    from trading_lab.research.trials import trial_summary
+    from trading_lab.storage import SQLiteStore
+
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        return trial_summary(store, cfg.market.timeframe, start, end)
 
 
 def _log_trials(cfg: AppConfig, rows: Sequence[tuple[str, AppConfig, datetime, datetime, Any, str]]) -> None:
@@ -1139,6 +1154,12 @@ def cmd_dashboard_data(args: argparse.Namespace) -> int:
     usage = snap["usage"]["total"]
     if usage:
         print(f"Model usage: {usage['calls']} calls, {usage['cache_hits']} cache hits, {usage['failures']} failures")
+    trials = snap.get("trial_log")
+    if trials:
+        bar = trials["luck_bar_sharpe"]
+        print(f"Trial log: {trials['count']} trials on overlapping data"
+              + ("" if bar is None else f", luck bar Sharpe {bar:.2f}")
+              + ("" if trials["run_sharpe"] is None else f", this run {trials['run_sharpe']:.2f}"))
     breakdown = snap.get("trade_breakdown")
     if breakdown:
         print("Trades by exit: " + ", ".join(f"{g['name']} {g['trades']} ({g['pnl']:+,.2f})"
