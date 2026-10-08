@@ -91,6 +91,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 29B (complete):** two opt-in voters on market context: `funding` (futures positioning, the desk's "whale" seat) and `sentiment` (the Fear & Greed index, the "shill" seat), from public data, without look-ahead, with synthetic versions for offline tests.
 - **Stage 29C (complete):** the desk's confirmation gate (`voting.confirmers`, `min_confirms`, `confirm_mode`): a new entry needs N confirmations, or no objection, from named voters; exits are never gated. Plus a `desk` preset.
 - **Stage 29D (complete):** the weekly seat review: `desk --seats` and the weekly digest show, for every voter, how often its calls were right, the PnL of the trades it backed or opposed, and whether it is earning its seat.
+- **Stage 30A (complete):** `trading-lab validate CONFIG`: should this config get a paper run? The checkup, an A/B test against the config you run now, the outlook, sizing and exits, and one strict recommendation, with a summary to paste and an HTML report.
 
 ### Stage 9/10 summary
 
@@ -259,6 +260,50 @@ trading-lab ab config/default.toml config/trend.toml --days 180
 | `mean-reversion` | RSI and Bollinger only (MACD off), a 3% take-profit, a 24-bar time stop, and mean reversion muted in down-trends |
 
 The file lists only what the preset changes. Everything else keeps the defaults documented in `config/default.toml`, so you can see exactly what you are testing. An existing file is never overwritten without `--force`. Presets are starting points to test, not recommendations.
+
+## Should it get a paper run? (`validate`)
+
+One command for the whole question, on real data (run it where the bot has internet access):
+
+```bash
+trading-lab init-config desk                                    # or any config you want to try
+trading-lab validate config/desk.toml --days 180                # against config/default.toml
+trading-lab validate config/desk.toml --baseline config/runs/default.toml --html reports/desk.html
+```
+
+It runs on the same period and data:
+* the checkup (below);
+* an A/B test against the baseline, aligned to the candidate's symbols, timeframe and cash so only the strategy settings differ;
+* the outlook (bad-case drawdown and losing streak);
+* the risk per trade for a 20% drawdown budget (`--max-drawdown`);
+* the best and worst exit types.
+
+Then it gives one strict recommendation:
+
+* **not ready:** the checkup fails, or the baseline is clearly better;
+* **strong candidate:** every check passes and it clearly beats the baseline;
+* **paper-trade it next to the baseline:** anything in between. Promising but unproven needs live evidence, not more tuning.
+
+```
+Validation of config/desk.toml (2026-06-10 -> 2026-10-08)
+  backtest: return -11.26%, max drawdown -13.5%, 168 trades, Sharpe -2.55 (buy & hold +1.54%)
+  checkup: FAIL (not convincing: failed Edge before costs, Survives costs, Not luck, Robust to resampling, Sharpe is real)
+    [FAIL] Edge before costs: -2.72% with free trading
+    [FAIL] Survives costs: -11.26% as configured
+    [FAIL] Not luck: p = 0.455 (4 of 10 shuffled markets did as well)
+    [FAIL] Robust to resampling: 94% chance of a loss when the trades are resampled
+    [FAIL] Sharpe is real: 7% chance the true Sharpe ratio is above 0 (sample length, skew, fat tails)
+    [WARN] Beats buy & hold: -12.80% versus equal-weight buy & hold
+  against the built-in defaults (A = baseline, B = candidate; 6 windows compared): B leads 4 of 6 windows, but that could easily be chance (p = 0.34); use more windows or a longer period; return -13.34% vs -18.83%
+  outlook (168 trades): bad-case drawdown 23.8%, bad-case losing streak 15, chance of a loss 95%
+  sizing for a 20% bad-case drawdown: risk_per_trade_pct 0.0081 (0.81x the current)
+  exits: best time stop (+2,148.37 over 41), worst signal (-2,089.62 over 87)
+Recommendation: NOT READY
+  - the checkup failed: Edge before costs, Survives costs, Not luck, Robust to resampling, Sharpe is real
+One period, in-sample for anything tuned on it. The next step for any candidate is a paper run next to the baseline (trading-lab-paper@NAME, then live-compare), never real money.
+```
+
+(The `desk` preset on the synthetic random walk, which has no edge to find, so "not ready" is the right answer. Real data is what matters.) The text is short enough to paste into a chat or an issue. `--html` and `--json` write the full report. With the trial log on, the result is logged and judged against earlier trials. Any candidate goes to a paper run next to the baseline (`trading-lab-paper@NAME`, then `live-compare`), never straight to money.
 
 ## Is this strategy any good? (`checkup`)
 

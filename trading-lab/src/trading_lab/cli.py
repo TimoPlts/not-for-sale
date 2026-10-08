@@ -30,6 +30,7 @@
     trading-lab outlook [RUN_ID] [--trades N] [--samples 5000] [--json]   (drawdowns and streaks to expect)
     trading-lab size [RUN_ID] --max-drawdown 20% [--trades N] [--json]   (risk per trade for a drawdown budget)
     trading-lab desk [RUN_ID | --all] [--hours 24] [--alert] [--json]   (the funnel: leads -> fills -> exits)
+    trading-lab validate CONFIG [--baseline B.toml] [--days 180] [--html FILE]   (should it get a paper run?)
     trading-lab ab A.toml B.toml [--days 180 | --start/--end] [--windows 6] [--metric total_return]
     trading-lab status [PAPER_RUN_ID | --all] [--max-behind 2] [--alert] [--json]   (watchdog; exit 1 if not OK)
     trading-lab live-compare RUN_A RUN_B [--min-days 14] [--json]   (two paper runs over the time they ran together)
@@ -1016,6 +1017,50 @@ def cmd_checkup(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_validate(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.research.validate import format_validation, validate, validation_html
+    from trading_lab.strategy_factory import shared_llm_provider
+
+    if not Path(args.candidate).exists():
+        raise TradingLabError(f"no config file at {args.candidate}")
+    candidate = _load_config(argparse.Namespace(**{**vars(args), "config": args.candidate}))
+    baseline_path = args.baseline or ("config/default.toml" if Path("config/default.toml").exists() else None)
+    if baseline_path is not None and not Path(baseline_path).exists():
+        raise TradingLabError(f"no config file at {baseline_path}")
+    baseline = (load_config(baseline_path) if baseline_path else AppConfig())
+    start, end = _period(args, args.days)
+    provider = _provider(candidate, args.synthetic)
+    print(f"Validating {args.candidate} against {baseline_path or 'the built-in defaults'} | "
+          f"{start:%Y-%m-%d} -> {end:%Y-%m-%d} | {candidate.market.timeframe} | "
+          f"{', '.join(candidate.market.symbols)} | data: {provider.name}")
+    llm = shared_llm_provider([candidate, baseline])
+    try:
+        result = validate(candidate, baseline, provider, start, end, label=args.candidate,
+                          baseline_label=baseline_path or "the built-in defaults", windows=args.windows,
+                          permutations=args.permutations, max_drawdown=args.max_drawdown, llm_provider=llm,
+                          allow_agents=args.allow_agents, trials=_earlier_trials(candidate, start, end),
+                          progress=lambda step: print(f"  {step}..."))
+    except ValueError as exc:
+        raise TradingLabError(str(exc)) from None
+    print()
+    print(format_validation(result))
+    _print_provider_usage(llm)
+    rows = [("checkup", candidate, start, end, result.checkup.metrics, "validate")]
+    if result.ab is not None:
+        rows += [("ab", c, w.start, w.end, m, f"{side} validate")
+                 for w in result.ab.windows for side, c, m in (("B", candidate, w.b),)]
+    _log_trials(candidate, rows)
+    for path, text in ((args.html, lambda: validation_html(result)),
+                       (args.json, lambda: _json.dumps(result.to_dict(), indent=2, default=str) + "\n")):
+        if path:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_text(text(), encoding="utf-8")
+            print(f"Written to {Path(path).resolve()}")
+    return 0
+
+
 def cmd_walkforward(args: argparse.Namespace) -> int:
     from trading_lab.research import walk_forward
 
@@ -1832,6 +1877,21 @@ def build_parser() -> argparse.ArgumentParser:
     ck.add_argument("--html", metavar="FILE", help="also write a one-page HTML report")
     ck.add_argument("--json", metavar="FILE", help="also write the full results as JSON")
     ck.set_defaults(func=cmd_checkup)
+
+    va = sub.add_parser("validate", help="should this config get a paper run? every check, one recommendation")
+    va.add_argument("candidate", help="the config to validate, e.g. config/desk.toml")
+    va.add_argument("--baseline", help="the config you run now (default config/default.toml, else the defaults)")
+    market_options(va)
+    va.add_argument("--start", type=_date, help="YYYY-MM-DD (UTC)")
+    va.add_argument("--end", type=_date, help="YYYY-MM-DD (UTC, exclusive); default now")
+    va.add_argument("--days", type=int, default=180, help="length when --start is omitted (default 180)")
+    va.add_argument("--windows", type=int, default=6, help="A/B windows (default 6)")
+    va.add_argument("--permutations", type=int, default=50, help="shuffled markets in the luck test (default 50)")
+    va.add_argument("--max-drawdown", type=_fraction, default=0.2, help="drawdown budget for sizing (default 20%%)")
+    va.add_argument("--allow-agents", action="store_true", help="run the luck test with AI agents too")
+    va.add_argument("--html", metavar="FILE", help="also write a one-page HTML report")
+    va.add_argument("--json", metavar="FILE", help="also write the full results as JSON")
+    va.set_defaults(func=cmd_validate)
 
     pt = sub.add_parser("permutation-test", help="could a market with no pattern produce this? shuffled-candle test")
     market_options(pt)
