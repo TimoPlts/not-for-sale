@@ -826,7 +826,28 @@ Trade-offs worth knowing:
 - `desk --seats` (text and JSON). The weekly digest adds a "Which seats earned their place" section for every running paper run (`build_digest(seats=False)` leaves it out).
 - Tests: the verdicts by hand; the seats against the attribution; the order; the CLI (text, JSON); and the digest section with and without seats.
 
-## 5. Stage 11–29 status summary
+### Stage 30A: One command to validate a config ✅
+- `research/validate.py`: `validate(config, baseline, provider, start, end, ...)` runs:
+  - the checkup (with the trial log when given);
+  - an A/B test against the baseline, aligned by `align` to the candidate's symbols, timeframe and cash, and skipped when the configs are identical;
+  - one in-memory backtest for the outlook, the sizing for a drawdown budget and the exit groups.
+  All share one memoised data provider.
+- `recommend` is strict: **not ready** if any check fails or the baseline wins with p < 0.05; **strong candidate** only if every check passes and the candidate wins with p < 0.05; otherwise **paper-trade it next to the baseline**, with the reasons.
+- `format_validation` gives a compact text to paste, `validation_html` the checkup page with the recommendation, and `to_dict` the JSON.
+- CLI: `trading-lab validate CONFIG [--baseline B.toml] [--days 180 | --start/--end] [--windows 6] [--permutations 50] [--max-drawdown 20%] [--allow-agents] [--html FILE] [--json FILE]` plus the market options. The baseline defaults to `config/default.toml`, else the built-in defaults. With recording on, it logs the checkup and the candidate's A/B windows.
+- Tests: the alignment; every recommendation path by hand; a full validation on synthetic data (all parts present, text, HTML order, JSON); identical configs skipping the A/B test; the CLI (aligned baseline, files, trial-log rows, errors).
+
+### Stage 30B: Context data on disk and prefetch ✅
+- `data/context.CachedContextFeed` stores a feed's values in `<cache_dir>/context/<feed>/<symbol>.csv`; sentiment goes in one `all.csv`.
+  - Covered requests are served from the file. Otherwise only the missing tail is fetched, or the whole range when it starts before the file.
+  - Within a process, a range already asked for is not asked again (no request every bar for values not yet published).
+  - A failing source falls back to the file; with no file the error is raised.
+  - Values round-trip exactly (`%.17g` and round-trip parsing), so cached and fresh runs give identical votes; a one-bit difference was caught and fixed.
+- `CachedProvider.context_feed` wraps the inner feeds, one per feed name.
+- CLI: `trading-lab prefetch [--days 365 | --start/--end] [--no-context]` plus the market options. It fills the cache with candles, funding per symbol and sentiment, reports rows per source, and exits 1 if any failed. DEPLOYMENT.md section 3b describes it.
+- Tests: fetching only the missing parts; exact equality from disk in a new process; no repeated requests within a process; the fallback when a source is down (and the error without a file); sentiment stored once; the provider wrapping; and `prefetch` (files written, `--no-context`, the cache switched off).
+
+## 5. Stage 11–30 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -849,6 +870,7 @@ On top of the Stage 9/10 system:
 - **What to expect (27):** forward drawdowns, returns and losing streaks from a run's trades (27A), shown in the reports and the dashboard (27B).
 - **Acting on it (28):** the risk per trade for a drawdown budget (28A), verified by a backtest at that size (28B).
 - **The desk (29):** the funnel from first vote to closed trade with lead IDs, and an evening desk report (29A), the positioning and sentiment voters (29B), the confirmation gate with a `desk` preset (29C), and the weekly seat review (29D).
+- **From idea to paper run (30):** one command to validate a config with a strict recommendation (30A), and context data on disk with a prefetch command (30B).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

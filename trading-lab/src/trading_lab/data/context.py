@@ -272,6 +272,82 @@ class FearGreedFeed(ContextFeed):
         return _window(self._values, since, until)
 
 
+class CachedContextFeed(ContextFeed):
+    """A feed's values kept in ``<cache_dir>/<feed>/<symbol>.csv``, fetching only what is missing.
+
+    * Requests already covered by the file are served from it; otherwise only
+      the missing tail (or the whole range, if it starts before the file) is
+      fetched and merged in.
+    * Within one process a range is not asked for again, so a value that is
+      not published yet does not cause a request on every bar.
+    * If the source fails, what the file has is served instead (the strategies'
+      ``max_age_hours`` still turns old data into HOLD); with no file, the
+      error is raised.
+
+    Sentiment is the same for every symbol and is stored once.
+    """
+
+    def __init__(self, inner: ContextFeed, cache_dir: str | Any, *,
+                 clock: Callable[[], datetime] | None = None) -> None:
+        from pathlib import Path
+
+        self._inner = inner
+        self.kind = inner.kind
+        self._dir = Path(cache_dir) / inner.name
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._asked: dict[str, tuple[pd.Timestamp, pd.Timestamp]] = {}
+        self._slack = pd.Timedelta(hours=8) if self.kind == FUNDING else pd.Timedelta(days=1) + SENTIMENT_LAG
+
+    @property
+    def name(self) -> str:
+        return self._inner.name
+
+    def path(self, symbol: str) -> Any:
+        key = "all" if self.kind == SENTIMENT else symbol.replace("/", "-")
+        return self._dir / f"{key}.csv"
+
+    def _load(self, symbol: str) -> pd.Series:
+        path = self.path(symbol)
+        if not path.exists():
+            return pd.Series(dtype="float64", name=self.kind, index=pd.DatetimeIndex([], tz="UTC"))
+        frame = pd.read_csv(path, index_col="known_at", float_precision="round_trip")
+        frame.index = pd.to_datetime(frame.index, utc=True)
+        return frame[self.kind].astype("float64").sort_index()
+
+    def _save(self, symbol: str, values: pd.Series) -> None:
+        path = self.path(symbol)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".csv.tmp")
+        values.rename(self.kind).rename_axis("known_at").to_frame().to_csv(
+            tmp, date_format="%Y-%m-%dT%H:%M:%S%z", float_format="%.17g")  # exact round trip
+        tmp.replace(path)
+
+    def series(self, symbol: str, since: datetime, until: datetime) -> pd.Series:
+        start, end = to_utc_timestamp(since), to_utc_timestamp(until)
+        key = "all" if self.kind == SENTIMENT else symbol
+        cached = self._load(symbol)
+        asked = self._asked.get(key)
+        if asked is not None and asked[0] <= start and end <= asked[1]:
+            return _window(cached, since, until)
+        has_start = not cached.empty and cached.index[0] <= start + self._slack
+        has_end = not cached.empty and cached.index[-1] >= min(end, to_utc_timestamp(self._clock())) - self._slack
+        if not (has_start and has_end):
+            fetch_from = cached.index[-1] if has_start else start
+            try:
+                fresh = self._inner.series(symbol, fetch_from.to_pydatetime(), until)
+            except FeedError:
+                if cached.empty:
+                    raise
+                return _window(cached, since, until)  # the source is down: serve what is stored
+            if not fresh.empty:
+                merged = pd.concat([cached, fresh])
+                cached = merged[~merged.index.duplicated(keep="last")].sort_index()
+                self._save(symbol, cached)
+        lo, hi = asked if asked is not None else (start, end)
+        self._asked[key] = (min(lo, start), max(hi, end))
+        return _window(cached, since, until)
+
+
 def value_asof(series: pd.Series, times: pd.DatetimeIndex) -> tuple[np.ndarray, np.ndarray]:
     """For each time, the latest value known at it and when it became known (NaN / NaT if none)."""
     if series.empty:
