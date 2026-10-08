@@ -875,7 +875,15 @@ Trade-offs worth knowing:
 - `research/tournament.py`: `rescale_sharpe` converts a per-bar Sharpe ratio between timeframes (square-root-of-time); each candidate is deflated against the field in its own bar length. Before, a daily candidate would have been compared with hourly Sharpe ratios.
 - Tests: the preset trades rarely on a synthetic year (365 daily equity points); a live paper run of it equals its backtest fill for fill on daily bars; the rescaling; a tournament mixing a daily and an hourly candidate.
 
-## 5. Stage 11–32 status summary
+### Stage 33: Trend filter on a longer timeframe ✅
+- `config.py`: `risk.trend_filter_timeframe` ("" = the trading timeframe, as before). It must be a supported timeframe, a multiple of `market.timeframe`, and needs `trend_filter_period > 0`. Configs stored by earlier versions load unchanged and still resume.
+- `engine/filters.py`:
+  - `higher_timeframe_sma`: per bar, the average of the last N completed periods' closes (a period's close is its last bar's close; periods are aligned to UTC midnight; a period counts once a bar closing at or after its end has closed).
+  - Each window is averaged on its own, not with pandas' running sum, which differed in the last digit depending on where the data window starts. That would have let live and backtest disagree on a knife-edge entry.
+  - `trend_filter_history` (the backtest and the live trader load (N + 1) periods of bars) and `trend_filter_label` for decision reasons ("below its 100 x 1d average").
+- Tests: exact values on crafted series (hourly to daily and to 4h), independence from the window's start, a missing last hour, `filter_columns` and the history, validation, the round trip and old configs, blocked entries with their reason, live == backtest fill for fill with the daily filter.
+
+## 5. Stage 11–33 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -901,6 +909,7 @@ On top of the Stage 9/10 system:
 - **From idea to paper run (30):** one command to validate a config with a strict recommendation (30A), and context data on disk with a prefetch command (30B).
 - **Choosing what to paper-trade (31):** a tournament of candidates with deflation across the field (31A), and a paper plan for the winner (31B).
 - **Trading less (32):** a time-series momentum strategy (32A), and a daily `swing` preset with a tournament that compares timeframes fairly (32B).
+- **The bigger picture (33):** the trend filter on completed daily (or any longer) periods.
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

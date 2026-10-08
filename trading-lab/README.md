@@ -97,6 +97,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 31B (complete):** `trading-lab paper-plan NAME`: write `config/runs/NAME.toml` for the winner (same database, loads back identically) and print the commands for a side-by-side paper run.
 - **Stage 32A (complete):** an opt-in `tsmom` strategy (time-series momentum): is the price higher than one, three and six months ago?
 - **Stage 32B (complete):** a `swing` preset that trades daily bars a few times a month, so fees eat less, and a tournament that compares daily and hourly candidates fairly.
+- **Stage 33 (complete):** the trend filter on a longer timeframe (`risk.trend_filter_timeframe = "1d"`): hourly strategies only buy above the 100-day average of completed daily closes, identical live and in backtests.
 
 ### Stage 9/10 summary
 
@@ -1354,6 +1355,7 @@ Two optional filters in `[risk]`. They can only **block new entries**. They neve
 | setting | effect |
 |---------|--------|
 | `trend_filter_period = 200` | no new entry while the close is below its 200-bar **simple** moving average. A simple average is used so live and backtest see the same value. With too little history to compute it, entries are blocked. |
+| `trend_filter_timeframe = "1d"` | the average is taken over completed **daily** closes instead of bars: with `trend_filter_period = 100`, an hourly strategy only buys while the price is above its 100-day average (a 200-bar average on hourly bars covers barely 8 days). A day counts once it is over, so the day in progress never moves the line. It must be a multiple of `market.timeframe`; empty (the default) keeps the bar average. |
 | `block_entries_on_risk_states = ["extreme"]` | no new entry while the latest `risk_state` reported for that symbol (by `qwen_risk`) is in the list, for up to `risk_state_max_age_bars` (8) bars after the answer. The last reported state is saved with live runs, so it survives `--resume`. |
 | `max_correlated_positions = 1` | no new entry while that many open, working or already-scheduled positions moved with it: their per-bar log-return correlation over the last `correlation_lookback` (48) bars is at least `correlation_threshold` (0.8). BTC, ETH, SOL and DOGE often move together, so this keeps one market move from hitting several positions at once. An unknown correlation (too little data) counts as correlated. |
 

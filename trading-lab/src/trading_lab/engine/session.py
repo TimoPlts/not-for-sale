@@ -42,7 +42,8 @@ period:
   * The stop-loss cooldown only follows stop exits that lost money.
   * Optional entry filters only block NEW entries (recorded as IGNORED):
       - ``risk.trend_filter_period``: no entry while the close is below its
-        simple moving average (``market`` passed to ``close_bar``); an unknown
+        simple moving average (``market`` passed to ``close_bar``), of bars or
+        of completed ``risk.trend_filter_timeframe`` periods; an unknown
         average (too little history) also blocks;
       - ``risk.max_correlated_positions``: no entry while that many open, working
         or scheduled positions have a rolling return correlation with it of at
@@ -96,6 +97,7 @@ from trading_lab.core.models import (
     Signal,
 )
 from trading_lab.data.base import timeframe_delta
+from trading_lab.engine.filters import trend_filter_label
 from trading_lab.ensemble import VotingEngine
 from trading_lab.execution import CostModel, PaperExecutor
 from trading_lab.execution.costs import MarketStats
@@ -668,13 +670,13 @@ class TradingSession:
         """Why a new entry signalled at the close of ``ts`` is filtered out, or None."""
         cfg = self.config.risk
         if cfg.trend_filter_period > 0:
-            sma = market.get("trend_sma")
+            sma, label = market.get("trend_sma"), trend_filter_label(cfg)
             if sma is None:
-                return f"trend filter: not enough history for the {cfg.trend_filter_period}-bar average"
+                return f"trend filter: not enough history for the {label} average"
             if side is Side.SELL and close > sma:
-                return f"trend filter: close {close:.8g} above its {cfg.trend_filter_period}-bar average {sma:.8g}"
+                return f"trend filter: close {close:.8g} above its {label} average {sma:.8g}"
             if side is Side.BUY and close < sma:
-                return f"trend filter: close {close:.8g} below its {cfg.trend_filter_period}-bar average {sma:.8g}"
+                return f"trend filter: close {close:.8g} below its {label} average {sma:.8g}"
         if cfg.max_correlated_positions > 0:
             correlations = market.get("correlations") or {}
             exposed = sorted(set(self.portfolio.positions) | set(self.resting) | {
