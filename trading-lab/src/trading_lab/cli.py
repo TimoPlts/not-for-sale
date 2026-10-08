@@ -32,6 +32,8 @@
     trading-lab desk [RUN_ID | --all] [--hours 24] [--alert] [--json]   (the funnel: leads -> fills -> exits)
     trading-lab validate CONFIG [--baseline B.toml] [--days 180] [--html FILE]   (should it get a paper run?)
     trading-lab prefetch [--days 365] [--no-context]   (download candles, funding and sentiment into the cache)
+    trading-lab tournament [PRESET|CONFIG ...] [--baseline B.toml] [--days 180] [--html FILE]   (rank candidates)
+    trading-lab paper-plan PRESET|CONFIG [--run-id NAME]   (write config/runs/NAME.toml for a side-by-side paper run)
     trading-lab ab A.toml B.toml [--days 180 | --start/--end] [--windows 6] [--metric total_return]
     trading-lab status [PAPER_RUN_ID | --all] [--max-behind 2] [--alert] [--json]   (watchdog; exit 1 if not OK)
     trading-lab live-compare RUN_A RUN_B [--min-days 14] [--json]   (two paper runs over the time they ran together)
@@ -1095,6 +1097,110 @@ def cmd_prefetch(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def _baseline(args: argparse.Namespace) -> tuple[AppConfig, str]:
+    """The config you run now: --baseline, else config/default.toml, else the defaults (with market options)."""
+    path = args.baseline or ("config/default.toml" if Path("config/default.toml").exists() else None)
+    if path is not None and not Path(path).exists():
+        raise TradingLabError(f"no config file at {path}")
+    return _load_config(argparse.Namespace(**{**vars(args), "config": path})), path or "the built-in defaults"
+
+
+def cmd_tournament(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.presets import PRESETS
+    from trading_lab.research.tournament import format_tournament, tournament, tournament_html
+    from trading_lab.strategy_factory import shared_llm_provider
+
+    baseline, baseline_label = _baseline(args)
+    candidates: dict[str, AppConfig] = {}
+    for item in args.candidates or list(PRESETS):
+        if item in PRESETS:
+            candidates[item] = PRESETS[item].config(baseline)  # the preset on top of your settings
+        elif Path(item).exists():
+            candidates[Path(item).stem] = _load_config(argparse.Namespace(**{**vars(args), "config": item}))
+        else:
+            raise TradingLabError(f"{item!r} is neither a preset ({', '.join(PRESETS)}) nor a config file")
+    start, end = _period(args, args.days)
+    provider = _provider(baseline, args.synthetic)
+    print(f"Tournament: {len(candidates)} candidate(s) against {baseline_label} | {start:%Y-%m-%d} -> "
+          f"{end:%Y-%m-%d} | {baseline.market.timeframe} | data: {provider.name}")
+    llm = shared_llm_provider([baseline, *candidates.values()])
+    try:
+        result = tournament(candidates, baseline, provider, start, end, baseline_label=baseline_label,
+                            windows=args.windows, permutations=args.permutations, max_drawdown=args.max_drawdown,
+                            llm_provider=llm, trials=lambda c: _earlier_trials(c, start, end),
+                            progress=lambda step: print(f"  {step}"))
+    except ValueError as exc:
+        raise TradingLabError(str(exc)) from None
+    print()
+    print(format_tournament(result))
+    _print_provider_usage(llm)
+    for entry in result.entries:
+        _log_trials(candidates[entry.name], [("checkup", candidates[entry.name], start, end,
+                                              entry.validation.checkup.metrics, f"tournament {entry.name}")])
+    for path, text in ((args.html, lambda: tournament_html(result)),
+                       (args.json, lambda: _json.dumps(result.to_dict(), indent=2, default=str) + "\n")):
+        if path:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_text(text(), encoding="utf-8")
+            print(f"Written to {Path(path).resolve()}")
+    return 0
+
+
+def cmd_paper_plan(args: argparse.Namespace) -> int:
+    import re
+    import tomllib
+
+    from trading_lab.presets import PRESETS, render
+    from trading_lab.status import running_paper_runs
+    from trading_lab.storage import SQLiteStore
+
+    baseline, baseline_label = _baseline(args)
+    if args.candidate in PRESETS:
+        config, source = PRESETS[args.candidate].config(baseline), f"preset {args.candidate!r} on {baseline_label}"
+        default_id = args.candidate
+    elif Path(args.candidate).exists():
+        config = load_config(args.candidate)
+        source, default_id = args.candidate, Path(args.candidate).stem
+    else:
+        raise TradingLabError(f"{args.candidate!r} is neither a preset ({', '.join(PRESETS)}) nor a config file")
+    run_id = args.run_id or default_id
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", run_id):
+        raise TradingLabError(f"run id {run_id!r} must be 1-40 letters, digits, '-' or '_' (it names a systemd unit)")
+    notes = []
+    if config.storage.db_path != baseline.storage.db_path:  # one database, so status --all, desk and compare see it
+        config = config.with_overrides({"storage": {"db_path": baseline.storage.db_path}})
+        notes.append(f"storage.db_path set to {baseline.storage.db_path} (the baseline's database)")
+    path = Path(args.dir) / f"{run_id}.toml"
+    if path.exists() and not args.force:
+        raise TradingLabError(f"{path} exists; use --force to replace it")
+    header = (f"trading-lab paper run {run_id!r}: {source}.\n"
+              "Started by systemd as trading-lab-paper@" + run_id + " (see docs/DEPLOYMENT.md, section 5d).\n"
+              "Paper trading only: simulated fills, no orders ever reach an exchange.")
+    text = render(config, header=header)
+    if AppConfig.from_mapping(tomllib.loads(text)) != config:
+        raise TradingLabError("internal error: the written config would not load back identically")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    print(f"Wrote {path} ({source})")
+    for note in notes:
+        print(f"  note: {note}")
+    running = []
+    if Path(baseline.storage.db_path).exists():
+        with SQLiteStore(baseline.storage.db_path, readonly=True) as store:
+            running = running_paper_runs(store)
+    current = next((r for r in running if r != run_id), "<your current run id>")
+    print("\nNext steps on the VM (paper trading only):")
+    print("  sudo cp deploy/systemd/trading-lab-paper@.service /etc/systemd/system/   # once")
+    print(f"  sudo systemctl daemon-reload && sudo systemctl enable --now trading-lab-paper@{run_id}")
+    print("  trading-lab status --all                     # both runs alive?")
+    print(f"  trading-lab live-compare {current} {run_id}   # after a few weeks: which one is doing better?")
+    if running:
+        print(f"Running paper runs in {baseline.storage.db_path}: {', '.join(running)}")
+    return 0
+
+
 def cmd_walkforward(args: argparse.Namespace) -> int:
     from trading_lab.research import walk_forward
 
@@ -1919,6 +2025,28 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--days", type=int, default=365, help="length when --start is omitted (default 365)")
     pf.add_argument("--no-context", action="store_true", help="candles only (skip funding and sentiment)")
     pf.set_defaults(func=cmd_prefetch)
+
+    tn = sub.add_parser("tournament", help="validate several presets or configs and rank them for a paper run")
+    tn.add_argument("candidates", nargs="*", help="preset names or config files (default: every preset)")
+    tn.add_argument("--baseline", help="the config you run now (default config/default.toml, else the defaults)")
+    market_options(tn)
+    tn.add_argument("--start", type=_date, help="YYYY-MM-DD (UTC)")
+    tn.add_argument("--end", type=_date, help="YYYY-MM-DD (UTC, exclusive); default now")
+    tn.add_argument("--days", type=int, default=180, help="length when --start is omitted (default 180)")
+    tn.add_argument("--windows", type=int, default=6, help="A/B windows per candidate (default 6)")
+    tn.add_argument("--permutations", type=int, default=20, help="shuffled markets per luck test (default 20)")
+    tn.add_argument("--max-drawdown", type=_fraction, default=0.2, help="drawdown budget for sizing (default 20%%)")
+    tn.add_argument("--html", metavar="FILE", help="also write an HTML report")
+    tn.add_argument("--json", metavar="FILE", help="also write the full results as JSON")
+    tn.set_defaults(func=cmd_tournament)
+
+    pp_ = sub.add_parser("paper-plan", help="write config/runs/NAME.toml for a side-by-side paper run of a candidate")
+    pp_.add_argument("candidate", help="a preset name or a config file (e.g. the tournament winner)")
+    pp_.add_argument("--run-id", help="the paper run's name (default: the preset or file name)")
+    pp_.add_argument("--baseline", help="the config you run now (default config/default.toml, else the defaults)")
+    pp_.add_argument("--dir", default="config/runs", help="where to write it (default config/runs)")
+    pp_.add_argument("--force", action="store_true", help="replace an existing file")
+    pp_.set_defaults(func=cmd_paper_plan, symbols=None, timeframe=None, synthetic=None)
 
     va = sub.add_parser("validate", help="should this config get a paper run? every check, one recommendation")
     va.add_argument("candidate", help="the config to validate, e.g. config/desk.toml")

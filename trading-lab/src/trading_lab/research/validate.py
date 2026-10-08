@@ -61,6 +61,7 @@ class Validation:
     aligned: list[str] = field(default_factory=list)  # baseline settings aligned to the candidate
     recommendation: str = ""
     reasons: list[str] = field(default_factory=list)
+    returns: tuple[float, ...] = ()  # per-bar returns of the candidate's backtest (for deflation across candidates)
 
     def to_dict(self) -> dict[str, Any]:
         return {"label": self.label, "baseline": self.baseline_label, "start": self.start.isoformat(),
@@ -134,7 +135,9 @@ def validate(config: AppConfig, baseline: AppConfig, provider: MarketDataProvide
         outlook = outlook_for_run(store, run.run_id, samples=2000)
         sizing = size_for_drawdown(store, run.run_id, max_drawdown, samples=1000) if outlook is not None else None
         trades = analyze_trades(store, run.run_id, groupings=("exit",)) if run.trades else None
-    out = Validation(label, baseline_label, start, end, check, ab, outlook, sizing, trades, aligned)
+    equity = [config.portfolio.initial_cash, *run.equity_curve["equity"].tolist()]
+    out = Validation(label, baseline_label, start, end, check, ab, outlook, sizing, trades, aligned,
+                     returns=tuple(float(b / a - 1.0) for a, b in zip(equity, equity[1:])))
     out.recommendation, out.reasons = recommend(check, ab)
     return out
 

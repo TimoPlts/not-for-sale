@@ -847,7 +847,22 @@ Trade-offs worth knowing:
 - CLI: `trading-lab prefetch [--days 365 | --start/--end] [--no-context]` plus the market options. It fills the cache with candles, funding per symbol and sentiment, reports rows per source, and exits 1 if any failed. DEPLOYMENT.md section 3b describes it.
 - Tests: fetching only the missing parts; exact equality from disk in a new process; no repeated requests within a process; the fallback when a source is down (and the error without a file); sentiment stored once; the provider wrapping; and `prefetch` (files written, `--no-context`, the cache switched off).
 
-## 5. Stage 11–30 status summary
+### Stage 31A: Tournament ✅
+- `research/tournament.py`: `tournament(candidates, baseline, provider, start, end, ...)` runs `validate` for each candidate on one memoised data provider. The `Validation` now keeps the candidate's per-bar returns.
+  - Each candidate gets its deflated Sharpe against the whole field (the aligned baseline included).
+  - Ranking: recommendation, then the share of A/B windows won, then the Sharpe ratio.
+  - `winner` is the best entry unless it is "not ready".
+- `format_tournament` (a ranked table, the next step, and a caution when the winner's deflated Sharpe is under 50%), `tournament_html` and `to_dict`.
+- CLI: `trading-lab tournament [PRESET|CONFIG ...] [--baseline] [--days 180] [--windows 6] [--permutations 20] [--max-drawdown] [--html] [--json]` plus the market options. The default is every preset, built on the baseline config. With recording on, each candidate's checkup is logged.
+
+### Stage 31B: Paper plan ✅
+- CLI: `trading-lab paper-plan PRESET|CONFIG [--run-id NAME] [--baseline] [--dir config/runs] [--force]`.
+  - It writes the candidate as `config/runs/NAME.toml` (`presets.render`: only the differences, with a header) and refuses to write unless it loads back identically.
+  - It forces the baseline's `storage.db_path`, so status, desk and live-compare see both runs.
+  - It validates the run id (it names a systemd unit), refuses to overwrite without `--force`, and prints the systemctl and live-compare commands with the running baseline run's id when the database has one.
+- Tests: the ranking and texts on fakes (winner, caution, nobody ready); a tournament on synthetic data (order, deflated values, JSON, no candidates); the CLI (a preset plus a file, HTML/JSON, an unknown candidate); `paper-plan` (an exact round trip, the commands with the running run id, refusing to overwrite, the database override, a bad id, an unknown candidate).
+
+## 5. Stage 11–31 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -871,6 +886,7 @@ On top of the Stage 9/10 system:
 - **Acting on it (28):** the risk per trade for a drawdown budget (28A), verified by a backtest at that size (28B).
 - **The desk (29):** the funnel from first vote to closed trade with lead IDs, and an evening desk report (29A), the positioning and sentiment voters (29B), the confirmation gate with a `desk` preset (29C), and the weekly seat review (29D).
 - **From idea to paper run (30):** one command to validate a config with a strict recommendation (30A), and context data on disk with a prefetch command (30B).
+- **Choosing what to paper-trade (31):** a tournament of candidates with deflation across the field (31A), and a paper plan for the winner (31B).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

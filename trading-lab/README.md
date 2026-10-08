@@ -93,6 +93,8 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 29D (complete):** the weekly seat review: `desk --seats` and the weekly digest show, for every voter, how often its calls were right, the PnL of the trades it backed or opposed, and whether it is earning its seat.
 - **Stage 30A (complete):** `trading-lab validate CONFIG`: should this config get a paper run? The checkup, an A/B test against the config you run now, the outlook, sizing and exits, and one strict recommendation, with a summary to paste and an HTML report.
 - **Stage 30B (complete):** funding and sentiment are kept on disk next to the candles (fetching only what is missing, serving the file when a source is down), and `trading-lab prefetch` downloads candles, funding and sentiment for a period in one go.
+- **Stage 31A (complete):** `trading-lab tournament`: validate every preset (or your configs) against the config you run now and rank them, with each one's deflated Sharpe against the whole field.
+- **Stage 31B (complete):** `trading-lab paper-plan NAME`: write `config/runs/NAME.toml` for the winner (same database, loads back identically) and print the commands for a side-by-side paper run.
 
 ### Stage 9/10 summary
 
@@ -305,6 +307,30 @@ One period, in-sample for anything tuned on it. The next step for any candidate 
 ```
 
 (The `desk` preset on the synthetic random walk, which has no edge to find, so "not ready" is the right answer. Real data is what matters.) The text is short enough to paste into a chat or an issue. `--html` and `--json` write the full report. With the trial log on, the result is logged and judged against earlier trials. Any candidate goes to a paper run next to the baseline (`trading-lab-paper@NAME`, then `live-compare`), never straight to money.
+
+## Which one should I paper-trade? (`tournament`, `paper-plan`)
+
+```bash
+trading-lab tournament --days 365                          # every preset against config/default.toml
+trading-lab tournament trend desk config/mine.toml --html reports/tournament.html
+trading-lab paper-plan desk                                # set up the winner as a paper run
+```
+
+`tournament` runs `validate` for every candidate on the same data. Candidates are preset names (applied on top of your current config, so they trade your symbols) or config files. It ranks them:
+
+1. by recommendation (strong candidate, then paper-trade it, then not ready);
+2. then by A/B windows won against the baseline;
+3. then by Sharpe ratio.
+
+Trying several candidates and keeping the best makes the best look better than it is. So each one also shows its deflated Sharpe against the whole field, and a winner below 50% gets a caution that it may just be the luckiest. If no candidate is ready, it says so: keep the baseline and change the strategy, not its parameters.
+
+`paper-plan NAME` turns the winner into a paper run next to the one you have. It:
+
+* writes `config/runs/NAME.toml` (only the settings that differ from the defaults; it checks that the file loads back identically);
+* keeps your database, so `status --all`, the desk report and `live-compare` see both runs;
+* prints the `systemctl` commands and the `live-compare` command for later.
+
+It changes nothing on the server itself.
 
 ## Is this strategy any good? (`checkup`)
 
