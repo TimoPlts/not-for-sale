@@ -814,6 +814,12 @@ Trade-offs worth knowing:
   - the real feeds against fakes (pagination, the perpetual symbol, memo tails, retries, errors, the credential refusal, the index's lag and refresh);
   - the provider's feed selection and the config.
 
+### Stage 29C: The confirmation gate ✅
+- New `[voting]` settings: `confirmers` (strategy names), `min_confirms` (0 = off, the default) and `confirm_mode` (`agree` or `not_against`). They are validated: confirmers must be enabled strategies with a positive weight, `min_confirms` at most their number, no duplicates.
+- `TradingSession.confirmation_shortfall` checks a new entry (long or short) against the ensemble's votes. An unconfirmed entry is IGNORED with "blocked by confirmation: n of m needed (mode; confirmed: ...; against: ...)", which the desk funnel counts as "filter: confirmation". Exits and covers are never gated.
+- The `desk` preset is the trend preset plus `funding` and `sentiment` (weight 0.5), as `not_against` confirmers that must both not object. `config/default.toml` documents the settings.
+- Tests: the config validation and round trip; the gate by hand in both modes and for shorts; a backtest where every executed entry had its confirmations and the blocked ones are recorded; the funnel count; and the `desk` preset with vetoes, matching live paper trading fill for fill and veto for veto.
+
 ## 5. Stage 11–29 status summary
 
 On top of the Stage 9/10 system:
@@ -836,7 +842,7 @@ On top of the Stage 9/10 system:
 - **Counting the tries (26):** an opt-in trial log, the `trials` command and a checkup check against it (26A), used by sweeps and shown in the dashboard (26B).
 - **What to expect (27):** forward drawdowns, returns and losing streaks from a run's trades (27A), shown in the reports and the dashboard (27B).
 - **Acting on it (28):** the risk per trade for a drawdown budget (28A), verified by a backtest at that size (28B).
-- **The desk (29):** the funnel from first vote to closed trade with lead IDs, and an evening desk report (29A), and the positioning and sentiment voters (29B).
+- **The desk (29):** the funnel from first vote to closed trade with lead IDs, and an evening desk report (29A), the positioning and sentiment voters (29B), and the confirmation gate with a `desk` preset (29C).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

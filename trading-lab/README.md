@@ -89,6 +89,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 28B (complete):** `size --verify` re-runs the stored backtest at the suggested size and compares the real drawdown and return with the estimate.
 - **Stage 29A (complete):** `trading-lab desk`: the desk funnel (scanned, leads, confirmed, cleared, executed, closed) with a lead ID for every setup, why confirmed setups died, and an evening desk report at 21:00 through the alert channels.
 - **Stage 29B (complete):** two opt-in voters on market context: `funding` (futures positioning, the desk's "whale" seat) and `sentiment` (the Fear & Greed index, the "shill" seat), from public data, without look-ahead, with synthetic versions for offline tests.
+- **Stage 29C (complete):** the desk's confirmation gate (`voting.confirmers`, `min_confirms`, `confirm_mode`): a new entry needs N confirmations, or no objection, from named voters; exits are never gated. Plus a `desk` preset.
 
 ### Stage 9/10 summary
 
@@ -252,6 +253,7 @@ trading-lab ab config/default.toml config/trend.toml --days 180
 |---|---|
 | `trend` | Donchian breakouts and an EMA crossover join the vote, plus a 4% trailing stop and a 72-bar time stop |
 | `trend-shorts` | the same, trading both directions (simulated, fully collateralised shorts) |
+| `desk` | the trend preset plus the desk's whale and shill seats: `funding` and `sentiment` vote, and either one can veto a new entry (the confirmation gate below) |
 | `conservative` | half the risk per trade, volatility-targeted positions, ATR stops, a 200-bar trend filter, tighter breakers |
 | `mean-reversion` | RSI and Bollinger only (MACD off), a 3% take-profit, a 24-bar time stop, and mean reversion muted in down-trends |
 
@@ -585,7 +587,20 @@ The bot is organised like a small trading desk, for BTC, ETH and other large coi
 | execution and exits | the paper executor; stops, trailing stops, take-profit, time stop | fills at the next open, manages every open position |
 | evening report | `desk`, `summary`, `digest`, Telegram alerts | tells you what happened without opening a chart |
 
-No seat holds keys or can place a real order. `trading-lab desk` shows the funnel that every setup passes through:
+No seat holds keys or can place a real order.
+
+**Confirmations.** The desk rule "nothing executes without the confirmations" is a config setting:
+
+```toml
+[voting]
+confirmers = ["funding", "sentiment"]   # enabled strategies with a weight
+min_confirms = 2
+confirm_mode = "not_against"            # "agree": they must vote the same way; "not_against": they must not object
+```
+
+A new entry, long or short, then needs `min_confirms` of the confirmers to confirm it, or not to object. Otherwise it is skipped as "blocked by confirmation: 1 of 2 needed (... against: funding)" and counted in the funnel. Exits are never gated: getting out does not wait for anyone. It is off by default (`min_confirms = 0`). The `desk` preset (`trading-lab init-config desk`) sets it up with `funding` and `sentiment` as vetoes. As with every preset, test it with `checkup` and `ab` before relying on it.
+
+`trading-lab desk` shows the funnel that every setup passes through:
 
 1. **scanned:** every symbol-bar evaluated;
 2. **leads:** a strategy or agent voted to enter while flat;
