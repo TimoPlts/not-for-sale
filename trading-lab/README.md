@@ -81,6 +81,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 25A (complete):** the test suite runs on every core (`pytest -n auto`): about 2 minutes instead of 7 to 10.
 - **Stage 25B (complete):** `trades` shows how far each trade went against you and for you while it was open (MAE/MFE), next to the configured stop-loss.
 - **Stage 25C (complete):** the excursions in the HTML report and the dashboard as well.
+- **Stage 26A (complete):** an opt-in trial log (`[storage] record_trials = true`) of every backtest, sweep, A/B test, checkup and permutation test. `trading-lab trials` counts how many configs you tried on the same data, and `checkup` grades a result against all of them.
 
 ### Stage 9/10 summary
 
@@ -282,8 +283,34 @@ Each warning or failure comes with a next step. The thresholds:
 * **Sharpe is real:** a probabilistic Sharpe ratio of at least 95% (the chance the true Sharpe ratio is above 0, allowing for the sample length and fat tails); 80% or more is a warning.
 * **Drawdown:** at most 20%; up to 35% is a warning.
 * **Works in several regimes:** profitable in at least half the market regimes.
+* **Beats your other trials** (only with the trial log, below, holding earlier trials on overlapping data): a deflated Sharpe ratio of at least 95% against all of them; 50% or more is a warning.
 
 The overall verdict is the worst check. A full pass is still one period, in-sample: confirm it with `walkforward` or `ab`. A 90-day, four-symbol checkup takes about a minute (`--permutations` sets the size of the luck test). `--html` writes a one-page report and `--json` the full results. Nothing is stored.
+
+## How many configs have you tried? (`trials`)
+
+Try enough settings and one of them looks good by luck alone. `sweep` corrects for its own grid (the deflated Sharpe ratio), but not for the sweeps, A/B tests and backtests you ran last week on the same data. Turn on the trial log to keep count:
+
+```toml
+[storage]
+record_trials = true
+```
+
+From then on, `backtest`, `sweep` (each combination), `ab` (each config in each window), `checkup` and `permutation-test` (the real-market run) each add a row to the database. A row holds the config fingerprint, the timeframe, symbols and period, the return, the Sharpe ratio and the number of bars. Walk-forward test windows are out of sample by design and are not logged.
+
+```bash
+trading-lab trials                                    # the whole log
+trading-lab trials --start 2024-01-01 --end 2024-03-01 --json
+```
+
+```
+Trials on 1h data overlapping 2024-01-01 -> 2024-03-01: 10 (10 distinct configs; 2 repeated run(s) not counted again)
+  by command: checkup 2, sweep 10
+  best Sharpe -0.25: sweep rsi.period=28 min_agreeing=2, 2024-01-01 -> 2024-03-01, return -0.14%
+  the best of 10 trials would reach a Sharpe of about 2.76 by luck alone (given how much their Sharpe ratios vary); a new result must clear that bar
+```
+
+(Synthetic data; an illustration of the layout.) A trial counts if its period overlaps the one asked about on the same timeframe. Any overlap counts, which errs on the strict side. The same config re-run on the same period is one trial. With the log on, `checkup` adds a **Beats your other trials** check: the deflated Sharpe ratio of the new result against every logged trial on overlapping data. The honest fix for a failure there is fresh data you have not tuned on, not another tweak. Recording is off by default and never changes any result.
 
 ## How much do costs decide? (`costs`)
 

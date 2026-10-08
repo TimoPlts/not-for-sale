@@ -26,6 +26,7 @@
     trading-lab costs [--days N | --start/--end] [--multipliers 0,0.5,1,2,3]
     trading-lab regimes [RUN_ID] [--trend-bars 50] [--vol-bars 24] [--json]
     trading-lab trades [RUN_ID] [--by exit,symbol,side,holding,weekday[,hour]] [--json] [--csv FILE]
+    trading-lab trials [--days N | --start/--end] [--timeframe 1h] [--json]   (the research trial log)
     trading-lab ab A.toml B.toml [--days 180 | --start/--end] [--windows 6] [--metric total_return]
     trading-lab status [PAPER_RUN_ID | --all] [--max-behind 2] [--alert] [--json]   (watchdog; exit 1 if not OK)
     trading-lab live-compare RUN_A RUN_B [--min-days 14] [--json]   (two paper runs over the time they ran together)
@@ -220,6 +221,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     print("\n=== Decisions ===")
     print(", ".join(f"{k}={v}" for k, v in sorted(result.actions().items())))
     _print_signal_usage(result.signals)
+    _log_trials(cfg, [("backtest", cfg, start, end, result.metrics, args.notes or "")])
 
     if args.export:
         from trading_lab.export import fills_frame, trades_frame
@@ -572,8 +574,10 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     if bench is not None:
         print(f"\nBuy & hold over the same period: {bench.total_return:+.2%} "
               f"(max drawdown {-bench.max_drawdown:.1%})")
-    from trading_lab.research.sweep import deflated_sharpe_of_best
+    from trading_lab.research.sweep import apply_params, deflated_sharpe_of_best
 
+    _log_trials(cfg, [("sweep", apply_params(cfg, r.params), start, end, r.metrics, _short(r.params))
+                      for r in results])
     dsr = deflated_sharpe_of_best(results)
     if dsr is not None and len(results) > 1:
         print(f"\nDeflated Sharpe of row 1: {dsr:.0%}, the chance its true Sharpe beats what the luckiest of "
@@ -674,6 +678,40 @@ def cmd_trades(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_trials(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.research.trials import TrialSummary, format_trial_summary, trial_summary
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    timeframe = args.timeframe or cfg.market.timeframe
+    end = args.end or datetime.now(timezone.utc)
+    if args.start is None and args.days is None:  # the whole log
+        start = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    else:
+        start = args.start or end - timedelta(days=args.days)
+    if end <= start:
+        raise TradingLabError("--end must be after --start")
+    if Path(cfg.storage.db_path).exists():
+        with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+            summary = trial_summary(store, timeframe, start, end)
+    else:
+        summary = TrialSummary(timeframe, start, end)
+    if summary.trials and args.start is None and args.days is None:  # show the span actually covered
+        summary.start = min(t["period_start"] for t in summary.trials)
+        summary.end = max(t["period_end"] for t in summary.trials)
+    if args.json:
+        data = summary.to_dict()
+        data["trials"] = summary.trials
+        print(_json.dumps(data, indent=2, default=str))
+    else:
+        print(format_trial_summary(summary))
+        if not cfg.storage.record_trials:
+            print("\n(recording is off: [storage] record_trials = false)")
+    return 0
+
+
 def cmd_ab(args: argparse.Namespace) -> int:
     import json as _json
 
@@ -695,6 +733,9 @@ def cmd_ab(args: argparse.Namespace) -> int:
                      llm_provider=llm, progress=lambda i, n: print(f"  window {i}/{n}"))
     print()
     print(format_ab(result, (args.config_a, args.config_b)))
+    _log_trials(cfg_a, [("ab", c, w.start, w.end, m, f"{side} {path}")
+                        for w in result.windows
+                        for side, c, m, path in (("A", cfg_a, w.a, args.config_a), ("B", cfg_b, w.b, args.config_b))])
     _print_provider_usage(llm)
     if args.export:
         Path(args.export).parent.mkdir(parents=True, exist_ok=True)
@@ -797,6 +838,7 @@ def cmd_permutation_test(args: argparse.Namespace) -> int:
     )
     print()
     print(format_permutation(result))
+    _log_trials(cfg, [("permutation-test", cfg, start, end, result.real, "")])
     _print_provider_usage(llm)
     if args.export:
         Path(args.export).parent.mkdir(parents=True, exist_ok=True)
@@ -817,10 +859,18 @@ def cmd_checkup(args: argparse.Namespace) -> int:
     print(f"Checkup: {start:%Y-%m-%d} -> {end:%Y-%m-%d} | {cfg.market.timeframe} | "
           f"{', '.join(cfg.market.symbols)} | data: {provider.name}")
     llm = shared_llm_provider([cfg])
+    earlier = None
+    if cfg.storage.record_trials and Path(cfg.storage.db_path).exists():
+        from trading_lab.research.trials import trial_summary
+        from trading_lab.storage import SQLiteStore
+
+        with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+            earlier = trial_summary(store, cfg.market.timeframe, start, end)
     report = checkup(cfg, provider, start, end, permutations=args.permutations, llm_provider=llm,
-                     allow_agents=args.allow_agents, progress=lambda step: print(f"  {step}..."))
+                     allow_agents=args.allow_agents, progress=lambda step: print(f"  {step}..."), trials=earlier)
     print()
     print(format_checkup(report))
+    _log_trials(cfg, [("checkup", cfg, start, end, report.metrics, "")])
     _print_provider_usage(llm)
     for path, text in ((args.html, lambda: checkup_html(report)),
                        (args.json, lambda: _json.dumps(report.to_dict(), indent=2, default=str) + "\n")):
@@ -865,6 +915,16 @@ def cmd_walkforward(args: argparse.Namespace) -> int:
         print("Out-of-sample is worse than in-sample: expect live results closer to the out-of-sample numbers.")
     _print_provider_usage(llm)
     return 0
+
+
+def _log_trials(cfg: AppConfig, rows: Sequence[tuple[str, AppConfig, datetime, datetime, Any, str]]) -> None:
+    """Append to the trial log when ``storage.record_trials`` is on (see ``trading-lab trials``)."""
+    if not cfg.storage.record_trials:
+        return
+    from trading_lab.research.trials import record_trials, trial
+
+    written = record_trials(cfg, [trial(command, c, s, e, m, label) for command, c, s, e, m, label in rows])
+    print(f"({written} trial(s) logged to {cfg.storage.db_path}; see trading-lab trials)")
 
 
 def _latest_run_id(store: Any) -> str:
@@ -1675,6 +1735,14 @@ def build_parser() -> argparse.ArgumentParser:
     tr.add_argument("--json", action="store_true", help="machine-readable output")
     tr.add_argument("--csv", metavar="FILE", help="also write every trade with its exit type and holding time")
     tr.set_defaults(func=cmd_trades)
+
+    tl = sub.add_parser("trials", help="the research trial log: how many configs were tried on this data")
+    tl.add_argument("--days", type=float, help="trials overlapping the last N days (default: the whole log)")
+    tl.add_argument("--start", type=_date, help="YYYY-MM-DD (UTC)")
+    tl.add_argument("--end", type=_date, help="YYYY-MM-DD (UTC)")
+    tl.add_argument("--timeframe", help="default: the config's timeframe")
+    tl.add_argument("--json", action="store_true", help="machine-readable output, with every trial")
+    tl.set_defaults(func=cmd_trials)
 
     ex = sub.add_parser("export", help="write a stored run to CSV files and a JSON summary")
     ex.add_argument("run_id")

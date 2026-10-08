@@ -13,7 +13,7 @@ import math
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import pandas as pd
 
@@ -27,7 +27,7 @@ from trading_lab.core.models import (
     Signal,
 )
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _SCHEMA_V1 = """
 CREATE TABLE runs (
@@ -170,9 +170,27 @@ def _schema_v4(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE closed_trades ADD COLUMN side TEXT NOT NULL DEFAULT 'long'")
 
 
+_SCHEMA_V5 = """
+CREATE TABLE IF NOT EXISTS trials (             -- research trial log (storage.record_trials)
+    id             INTEGER PRIMARY KEY,
+    created_at     TEXT NOT NULL,
+    command        TEXT NOT NULL,               -- backtest | sweep | ab | checkup | permutation-test
+    label          TEXT NOT NULL,
+    config_fingerprint TEXT NOT NULL,
+    timeframe      TEXT NOT NULL,
+    symbols_json   TEXT NOT NULL,
+    period_start   TEXT NOT NULL,
+    period_end     TEXT NOT NULL,
+    total_return   REAL NOT NULL,
+    sharpe_ratio   REAL,                        -- annualised, as in the metrics
+    num_bars       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_trials_period ON trials(timeframe, period_start, period_end);
+"""
+
 # version -> SQL (or a function) that upgrades from version-1 to version.
 _MIGRATIONS: dict[int, str | Callable[[sqlite3.Connection], None]] = {
-    1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _schema_v4,
+    1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _schema_v4, 5: _SCHEMA_V5,
 }
 
 
@@ -647,6 +665,47 @@ class SQLiteStore:
             str(sym): group.set_index("timestamp")["close"].rename(str(sym))
             for sym, group in bars.groupby("symbol", sort=True)
         }
+
+    def add_trials(self, trials: Iterable[Mapping[str, Any]]) -> int:
+        """Append research trials (see ``research.trials``); returns how many were written."""
+        rows = [(
+            _ts(datetime.now(timezone.utc)), str(t["command"]), str(t.get("label", "")), str(t["config_fingerprint"]),
+            str(t["timeframe"]), _json(list(t["symbols"])), _ts(t["period_start"]), _ts(t["period_end"]),
+            float(t["total_return"]), None if t.get("sharpe_ratio") is None else float(t["sharpe_ratio"]),
+            int(t["num_bars"]),
+        ) for t in trials]
+        with self._tx():
+            self._conn.executemany(
+                "INSERT INTO trials (created_at, command, label, config_fingerprint, timeframe, symbols_json, "
+                "period_start, period_end, total_return, sharpe_ratio, num_bars) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+        return len(rows)
+
+    def load_trials(self, *, timeframe: str | None = None, start: datetime | None = None,
+                    end: datetime | None = None) -> list[dict[str, Any]]:
+        """Recorded trials, oldest first; with ``start``/``end`` only those whose period overlaps it."""
+        if not self.has_table("trials"):  # opened read-only before the v5 upgrade
+            return []
+        sql, params = "SELECT * FROM trials WHERE 1 = 1", []
+        if timeframe is not None:
+            sql += " AND timeframe = ?"
+            params.append(timeframe)
+        if start is not None:
+            sql += " AND period_end > ?"
+            params.append(_ts(start))
+        if end is not None:
+            sql += " AND period_start < ?"
+            params.append(_ts(end))
+        cur = self._conn.execute(sql + " ORDER BY id", params)
+        names = [c[0] for c in cur.description]
+        out = []
+        for row in cur.fetchall():
+            record = dict(zip(names, row))
+            record["symbols"] = json.loads(record.pop("symbols_json"))
+            for key in ("created_at", "period_start", "period_end"):
+                record[key] = _parse_ts(record[key])
+            out.append(record)
+        return out
 
     def list_research_results(self, kind: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
         sql, params = "SELECT id, created_at, kind, label, payload_json FROM research_results", []

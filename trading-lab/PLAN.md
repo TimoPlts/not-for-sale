@@ -712,7 +712,32 @@ Trade-offs worth knowing:
 - HTML report: MAE and MFE columns in "Where the money comes from", plus the summary sentences. Dashboard: `avg_mae` and `avg_mfe` columns in the trade tables, with the summary as captions. The snapshot's `trade_breakdown` carries `excursions`.
 - Tests: the same sentences from the object and the dict; the snapshot against `analyze_trades`; the HTML columns and sentences, with the stop shown; the dashboard captions and columns, without a stop for ATR stops.
 
-## 5. Stage 11–25 status summary
+### Stage 26A: The research trial log ✅
+- Schema v5: a `trials` table (command, label, config fingerprint, timeframe, symbols, period, return, annualised Sharpe, bars).
+  - The migration is idempotent (`IF NOT EXISTS`), and read-only databases from before v5 read as an empty log.
+  - `SQLiteStore.add_trials` and `load_trials(timeframe, start, end)`, where any overlap counts.
+- `[storage] record_trials = false` (default off, so nothing changes; validated). When on, the CLI logs one row per evaluated config and period:
+  - `backtest`;
+  - `sweep` (every combination);
+  - `ab` (each config in each window);
+  - `checkup`;
+  - `permutation-test` (the real run).
+  It prints a one-line notice.
+- `research/trials.py`:
+  - `trial` / `record_trials` build and write the rows;
+  - `TrialSummary` counts distinct (config, period) trials (repeats count once), distinct configs, per command, the best, the per-bar Sharpe variance and the luck bar (the expected best Sharpe of N luck-only trials, annualised);
+  - `deflated_against_log` gives the DSR of a new result against them.
+- CLI: `trading-lab trials [--days N | --start/--end] [--timeframe] [--json]`, read-only, with a note when recording is off.
+- `checkup(trials=...)` adds "Beats your other trials": pass from a DSR of 95%, warn from 50%. It appears only when the log holds earlier trials on overlapping data, so a checkup without a log is unchanged. The CLI reads the log before running and logs the checkup afterwards.
+- Tests:
+  - storage (overlap rules, touching ends, timeframes, read-only v4 databases, the upgrade, and the three older upgrade tests now expecting v5);
+  - the summary by hand (dedup, variance, luck bar);
+  - the DSR with and without the new result already logged;
+  - opt-in recording that creates no database when off;
+  - every command logging the expected rows through the CLI (text and JSON);
+  - the checkup check absent without a log, passing against weak trials and failing against 200.
+
+## 5. Stage 11–26 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -731,6 +756,7 @@ On top of the Stage 9/10 system:
 - **Is it luck, and how is it going? (23):** probabilistic and deflated Sharpe ratios (23A), and a weekly digest of every paper run (23B).
 - **Where the money goes (24):** trade analysis by exit, symbol, side, holding time and entry time (24A), shown in the reports and the dashboard (24B), and a "Sharpe is real" check in the checkup (24C).
 - **Faster feedback and deeper trade analysis (25):** the test suite on every core (25A), and trade excursions (25B), also in the reports and the dashboard (25C).
+- **Counting the tries (26):** an opt-in trial log, the `trials` command and a checkup check against it (26A).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.
