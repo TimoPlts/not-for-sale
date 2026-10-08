@@ -14,7 +14,9 @@ better than it is. So each candidate also gets its **deflated Sharpe ratio
 against the whole field**: the chance its true Sharpe beats what the luckiest
 of all the candidates (and the baseline) would show by chance
 (``metrics.sharpe``). A winner with a low deflated Sharpe is probably the
-luckiest, not the best.
+luckiest, not the best. Candidates may use different timeframes (the
+``swing`` preset trades daily bars): every Sharpe ratio of the field is
+converted to the candidate's bar length first (square-root-of-time).
 
 The result names one candidate for a paper run next to the baseline, or
 none when every candidate is "not ready". As always: one period, a paper
@@ -23,12 +25,14 @@ run before anything else, never real money.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Mapping
 
 from trading_lab.backtest import BacktestEngine
 from trading_lab.config import AppConfig
+from trading_lab.core.symbols import timeframe_to_seconds
 from trading_lab.data.base import MarketDataProvider
 from trading_lab.llm import LLMProvider
 from trading_lab.metrics.sharpe import deflated_sharpe, per_bar_sharpe
@@ -36,6 +40,17 @@ from trading_lab.research.sweep import MemoizedProvider
 from trading_lab.research.validate import NOT_READY, PAPER, STRONG, Validation, align, validate
 
 RANK = {STRONG: 0, PAPER: 1, NOT_READY: 2}
+
+
+def rescale_sharpe(sharpe: float | None, timeframe: str, to: str) -> float | None:
+    """A per-bar Sharpe ratio on ``timeframe`` bars expressed per ``to`` bar (square-root-of-time rule).
+
+    Candidates on different timeframes (an hourly and a daily one) have
+    per-bar Sharpe ratios in different units; deflation needs them in one.
+    """
+    if sharpe is None or timeframe == to:
+        return sharpe
+    return sharpe * math.sqrt(timeframe_to_seconds(to) / timeframe_to_seconds(timeframe))
 
 
 @dataclass
@@ -98,11 +113,13 @@ def tournament(candidates: Mapping[str, AppConfig], baseline: AppConfig, provide
     aligned, _ = align(baseline, first)
     base_run = BacktestEngine(aligned, memo, llm_provider=llm_provider).run(start, end)
     equity = [aligned.portfolio.initial_cash, *base_run.equity_curve["equity"].tolist()]
-    field_sharpes = [per_bar_sharpe([b / a - 1.0 for a, b in zip(equity, equity[1:])])]
-    field_sharpes += [per_bar_sharpe(e.validation.returns) for e in out.entries]
+    field = [(per_bar_sharpe([b / a - 1.0 for a, b in zip(equity, equity[1:])]), aligned.market.timeframe)]
+    field += [(per_bar_sharpe(e.validation.returns), candidates[e.name].market.timeframe) for e in out.entries]
     for entry in out.entries:
         if entry.validation.returns:
-            entry.deflated = deflated_sharpe(entry.validation.returns, field_sharpes)
+            timeframe = candidates[entry.name].market.timeframe
+            entry.deflated = deflated_sharpe(entry.validation.returns,
+                                             [rescale_sharpe(s, tf, timeframe) for s, tf in field])
     out.entries.sort(key=Entry.sort_key)
     return out
 
