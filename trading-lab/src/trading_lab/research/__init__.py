@@ -22,6 +22,7 @@ from trading_lab.research.experiments import (
     variant_overrides,
 )
 from trading_lab.research.live_compare import LiveComparison, format_live_compare, live_compare
+from trading_lab.research.trials import TrialSummary, record_trials, trial, trial_summary
 from trading_lab.research.trades import TradeAnalysis, analyze_trades, format_trades
 from trading_lab.research.permutation import PermutationResult, format_permutation, permutation_test
 from trading_lab.research.protocol import VariantSummary, sign_test_p, summarize
@@ -47,6 +48,10 @@ from trading_lab.research.walkforward import (
 )
 
 __all__ = [
+    "TrialSummary",
+    "record_trials",
+    "trial",
+    "trial_summary",
     "TradeAnalysis",
     "analyze_trades",
     "format_trades",

@@ -13,6 +13,8 @@ Sharpe is real              probabilistic Sharpe ratio: P(true Sharpe > 0)
 Beats buy & hold            excess return over equal-weight buy & hold
 Drawdown                    worst peak-to-trough loss
 Works in several regimes    profitable in more than one kind of market
+Beats your other trials     deflated Sharpe against the trial log (only when it
+                            holds earlier trials on overlapping data)
 ==========================  ===================================================
 
 Each check passes, warns or fails, with the number behind it and what to do
@@ -61,6 +63,8 @@ class Checkup:
     robustness: Robustness
     regimes: RegimeReport
     checks: list[Check] = field(default_factory=list)
+    trials: int = 0  # logged trials on overlapping data, this one included (0 = no log)
+    deflated_sharpe: float | None = None  # against those trials
 
     @property
     def overall(self) -> str:
@@ -85,6 +89,7 @@ class Checkup:
             "excess_return": self.excess_return, "costs": self.costs.to_dict(),
             "permutation": None if self.permutation is None else self.permutation.to_dict(),
             "prob_loss": self.robustness.prob_loss, "regimes": self.regimes.to_dict(),
+            "trials": self.trials, "deflated_sharpe": self.deflated_sharpe,
             "checks": [{"name": c.name, "status": c.status, "detail": c.detail, "advice": c.advice}
                        for c in self.checks],
         }
@@ -158,6 +163,16 @@ def evaluate(c: Checkup) -> list[Check]:
                             "see `trading-lab regimes`: consider a trend filter or allow_short for the weak ones"))
     else:
         checks.append(Check("Works in several regimes", NA, "the period is too short to classify regimes"))
+    if c.trials >= 2:
+        dsr = c.deflated_sharpe
+        checks.append(Check(
+            "Beats your other trials", _grade(dsr, lambda v: v >= 0.95, lambda v: v >= 0.5),
+            "n/a" if dsr is None else f"deflated Sharpe {dsr:.0%} against {c.trials} logged trials on overlapping "
+                                      "data",
+            "it lost money, so it cannot beat the luck bar of the other trials" if lost
+            else "after this many tries, a result this good is within what the luckiest of them would show: confirm "
+                 "it on data you have not tried configs on",
+        ))
     return checks
 
 
@@ -172,7 +187,9 @@ def checkup(
     llm_provider: LLMProvider | None = None,
     allow_agents: bool = False,
     progress: Callable[[str], None] | None = None,
+    trials: Any = None,
 ) -> Checkup:
+    """``trials``: a ``research.trials.TrialSummary`` of earlier trials on overlapping data, if logged."""
     from trading_lab.storage import SQLiteStore
     from trading_lab.strategy_factory import needs_llm
 
@@ -192,6 +209,14 @@ def checkup(
                                 allow_agents=allow_agents)
     excess = None if result.relative is None else result.relative.excess_return
     report = Checkup(start, end, result.metrics, result.benchmark, excess, costs, perm, robust, regimes)
+    if trials is not None and trials.count:
+        from trading_lab.research.trials import deflated_against_log, trial, trial_key
+
+        equity = [config.portfolio.initial_cash, *result.equity_curve["equity"].tolist()]
+        returns = [b / a - 1.0 for a, b in zip(equity, equity[1:])]
+        this = trial("checkup", config, start, end, result.metrics)
+        report.trials = trials.count + (trial_key(this) not in {trial_key(r) for r in trials.unique})
+        report.deflated_sharpe = deflated_against_log(trials, returns, include=this)
     report.checks = evaluate(report)
     return report
 

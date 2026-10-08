@@ -107,6 +107,8 @@ liquidate_at_end = false      # true = sell open positions at the final close
 
 [storage]
 db_path = "data/trading_lab.db"   # SQLite history of runs, signals, decisions, trades
+record_trials = false             # true = log every backtest/sweep/ab/checkup result, so `trading-lab trials`
+                                  # and `checkup` can count how many configs you tried on the same data
 
 # Qwen agents (one shared model, three roles; see README "Qwen agents").
 # weight = 0 switches an agent off completely: it is never called and casts no vote.

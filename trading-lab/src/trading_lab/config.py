@@ -390,12 +390,14 @@ class BacktestConfig:
 @dataclass(frozen=True, slots=True)
 class StorageConfig:
     db_path: str = "data/trading_lab.db"  # SQLite file; ":memory:" for no persistence
+    record_trials: bool = False  # log every backtest/sweep/ab/checkup result (see `trading-lab trials`)
 
     def __post_init__(self) -> None:
         _require(
             isinstance(self.db_path, str) and self.db_path.strip() != "",
             "storage.db_path must be a non-empty path",
         )
+        _require(isinstance(self.record_trials, bool), "storage.record_trials must be true or false")
 
 
 AGENT_MODES = ("live", "record", "replay")

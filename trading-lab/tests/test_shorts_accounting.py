@@ -184,7 +184,7 @@ def test_trades_keep_their_side(tmp_path):
         store.create_run("r", kind="backtest", timeframe="1h", symbols=["BTC/USDT"], exchange="x",
                          config={}, config_fingerprint="f")
         store.add_closed_trades("r", trades)
-        assert store.load_closed_trades("r") == trades and store.schema_version == SCHEMA_VERSION == 4
+        assert store.load_closed_trades("r") == trades and store.schema_version == SCHEMA_VERSION == 5
 
 
 def test_v3_databases_upgrade_and_old_trades_are_longs(tmp_path):
@@ -199,4 +199,4 @@ def test_v3_databases_upgrade_and_old_trades_are_longs(tmp_path):
     with SQLiteStore(path, readonly=True) as store:  # read-only: not upgraded, still readable
         assert store.schema_version == 3 and store.load_closed_trades("r")[0].side == "long"
     with SQLiteStore(path) as store:
-        assert store.schema_version == 4 and store.load_closed_trades("r")[0].side == "long"
+        assert store.schema_version == 5 and store.load_closed_trades("r")[0].side == "long"
