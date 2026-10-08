@@ -75,6 +75,9 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 22C (complete):** with several paper runs, the dashboard and `dashboard-data` open with an overview table: each run's status, equity, return, drawdown, open positions, last bar and watchdog check.
 - **Stage 23A (complete):** the probabilistic Sharpe ratio (how likely the true Sharpe is above 0) in every report, and the deflated Sharpe ratio of a sweep's winner (does it beat the luckiest of all the settings tried?).
 - **Stage 23B (complete):** `trading-lab digest`: one weekly message about every paper run (its week against the market, trades, watchdog) and the live comparisons, with a systemd timer that sends it.
+- **Stage 24A (complete):** `trading-lab trades`: a run's closed trades by exit type (stop, trailing stop, take-profit, time stop, kill switch, signal), symbol, side, holding time and entry weekday or hour.
+- **Stage 24B (complete):** the trade breakdown in the HTML report ("Where the money comes from"), the dashboard's Research section and `dashboard-data`.
+- **Stage 24C (complete):** a "Sharpe is real" check in `checkup`, based on the probabilistic Sharpe ratio.
 
 ### Stage 9/10 summary
 
@@ -172,7 +175,7 @@ One page, refreshed automatically (every 60 s by default):
 * **Latest decision:** every vote (RSI, MACD, Bollinger, Qwen Trend, Momentum, Risk) with confidence, weight and label, the ensemble result and the actions taken.
 * **AI rationales:** one card per agent and symbol.
 * **Agent performance** leaderboard: votes, confidence, correctness, trades influenced, pivotal trades, PnL when agreed or disagreed.
-* **Research:** strategy versus buy & hold return, max drawdown, Sharpe and profit factor, monthly returns, the market-regime table (see `trading-lab regimes`), plus saved experiments and walk-forward results.
+* **Research:** strategy versus buy & hold return, max drawdown, Sharpe and profit factor, monthly returns, the market-regime table (see `trading-lab regimes`), trades by exit type and holding time (see `trading-lab trades`), plus saved experiments and walk-forward results.
 * **Qwen usage:** calls, cache hits, failures, retries, latency and tokens.
 * **Recent trades and signals.**
 
@@ -250,18 +253,19 @@ trading-lab checkup --days 180                          # your config, the last 
 trading-lab checkup --start 2025-01-01 --end 2025-07-01 --html reports/checkup.html
 ```
 
-This is the quickest honest answer. It runs one backtest, then the cost, luck, resampling and regime checks below, and grades each one:
+This is the quickest honest answer. It runs one backtest, then the cost, luck, resampling, Sharpe and regime checks below, and grades each one:
 
 ```
-  [PASS] Enough trades             326 closed trades
-  [FAIL] Edge before costs         -3.15% with free trading
-  [FAIL] Survives costs            -19.60% as configured
+  [PASS] Enough trades             324 closed trades
+  [FAIL] Edge before costs         -3.39% with free trading
+  [FAIL] Survives costs            -19.74% as configured
   [FAIL] Not luck                  p = 0.627 (31 of 50 shuffled markets did as well)
   [FAIL] Robust to resampling      100% chance of a loss when the trades are resampled
-  [WARN] Beats buy & hold          -9.94% versus equal-weight buy & hold
-  [WARN] Drawdown                  worst drawdown -22.6%
+  [FAIL] Sharpe is real            0% chance the true Sharpe ratio is above 0 (sample length, skew, fat tails)
+  [WARN] Beats buy & hold          -9.90% versus equal-weight buy & hold
+  [WARN] Drawdown                  worst drawdown -22.7%
   [WARN] Works in several regimes  profitable in 2 of 6 market regimes
-Verdict: not convincing: failed Edge before costs, Survives costs, Not luck, Robust to resampling.
+Verdict: not convincing: failed Edge before costs, Survives costs, Not luck, Robust to resampling, Sharpe is real.
 ```
 
 (This is the default config on the offline demo's random-walk prices. It should fail, and it does.)
@@ -272,6 +276,7 @@ Each warning or failure comes with a next step. The thresholds:
 * **Survives costs:** break-even at 1.5x the configured costs or more.
 * **Not luck:** p < 0.05; up to 0.2 is a warning.
 * **Robust to resampling:** a loss in fewer than 10% of bootstrap resamples; up to 30% is a warning.
+* **Sharpe is real:** a probabilistic Sharpe ratio of at least 95% (the chance the true Sharpe ratio is above 0, allowing for the sample length and fat tails); 80% or more is a warning.
 * **Drawdown:** at most 20%; up to 35% is a warning.
 * **Works in several regimes:** profitable in at least half the market regimes.
 
@@ -379,6 +384,33 @@ Some typical readings:
 * Losing mostly in *sideways / volatile* markets is the classic whipsaw.
 
 Combine it with `allow_short` or the trend filter, then backtest again. The database is only read.
+
+## Where does the money come from? (`trades`)
+
+```bash
+trading-lab trades                          # the latest run
+trading-lab trades <run id> --by exit,holding,hour --csv trades.csv
+```
+
+It groups a run's closed trades and shows, for each group, the trades, wins, PnL, average return, average holding time, best and worst trade, and profit factor. The groups are:
+
+* **exit:** what closed the position: stop-loss, trailing stop, take-profit, time stop, kill switch, signal (the vote turned), or the end of a backtest;
+* **symbol** and **side** (long or short);
+* **holding time:** 1-2, 3-6, 7-24, 25-72 or more than 72 bars;
+* **entry weekday**, and with `--by ...,hour` the entry hour (UTC).
+
+A few observations point at the biggest effects: a result that rests on a handful of outliers, the costliest exit type, symbol or side, and long holds against short ones. For example:
+
+```
+By exit
+                   trades   won         pnl  avg ret avg bars       best      worst    pf
+  signal              100   37%     -911.63   -0.49%     23.0     +86.62     -85.86  0.58
+  stop-loss             3    0%     -273.75   -5.24%     16.0     -90.07     -93.06  0.00
+  trailing stop        10   30%      -40.97   -0.21%     43.1     +76.32     -42.15  0.76
+  time stop             9   89%     +552.46   +3.52%     72.0    +111.90     -20.08 28.51
+```
+
+(A 90-day synthetic backtest of the `trend` preset: an illustration of the layout, not a result.) Small groups are noise. Turn a hunch from this table into a config change and test it with `ab` or `walkforward` before trusting it. `--csv` writes every trade with its exit type and holding time. Read-only.
 
 ## Could a market without patterns do as well? (`permutation-test`)
 

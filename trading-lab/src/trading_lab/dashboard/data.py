@@ -422,6 +422,17 @@ class DashboardData:
         report = regimes_for_run(self.store, run_id)
         return None if not report.by_trend else _clean(report.to_dict())
 
+    def trade_breakdown(self, run_id: str) -> dict[str, Any] | None:
+        """Closed trades by exit type, side, holding time and symbol (see ``research.trades``); None without trades."""
+        from trading_lab.research.trades import analyze_trades
+
+        analysis = analyze_trades(self.store, run_id, groupings=("exit", "side", "holding", "symbol"))
+        if not analysis.rows:
+            return None
+        out = analysis.to_dict()
+        del out["trades"]  # every trade is in recent_trades / export; keep the snapshot small
+        return _clean(out)
+
     def snapshot(self, run_id: str | None = None, *, horizon: int = 4) -> dict[str, Any]:
         """Everything the dashboard shows, as one JSON-serialisable dict."""
         run_id = run_id or self.default_run_id()
@@ -443,6 +454,7 @@ class DashboardData:
             "research": self.research(run_id),
             "regimes": self.regimes(run_id),
             "monthly_returns": self.monthly_returns(run_id),
+            "trade_breakdown": self.trade_breakdown(run_id),
             "paper_runs": self.paper_runs(),
             "equity_points": len(curve),
         })

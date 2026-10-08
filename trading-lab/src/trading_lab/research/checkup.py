@@ -9,6 +9,7 @@ Edge before costs           profitable with free trading (``costs`` at 0x)
 Survives costs              profitable as configured, with room (break-even >= 1.5x)
 Not luck                    the permutation test against shuffled markets
 Robust to resampling        bootstrap probability of a loss
+Sharpe is real              probabilistic Sharpe ratio: P(true Sharpe > 0)
 Beats buy & hold            excess return over equal-weight buy & hold
 Drawdown                    worst peak-to-trough loss
 Works in several regimes    profitable in more than one kind of market
@@ -131,6 +132,13 @@ def evaluate(c: Checkup) -> list[Check]:
         "n/a" if pl is None else f"{pl:.0%} chance of a loss when the trades are resampled",
         "it lost money; resampling the trades only confirms that" if lost
         else "the result hangs on a few trades: look for a more consistent edge",
+    ))
+    psr = m.probabilistic_sharpe
+    checks.append(Check(
+        "Sharpe is real", _grade(psr, lambda v: v >= 0.95, lambda v: v >= 0.8),
+        "n/a" if psr is None else f"{psr:.0%} chance the true Sharpe ratio is above 0 (sample length, skew, fat tails)",
+        "it lost money, so its Sharpe ratio is not above 0" if lost
+        else "the Sharpe ratio could still be 0: use a longer period or more symbols for more evidence",
     ))
     if c.excess_return is not None:
         checks.append(Check(

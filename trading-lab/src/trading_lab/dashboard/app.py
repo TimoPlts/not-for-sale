@@ -220,6 +220,15 @@ def research_section(data: DashboardData, run_id: str) -> None:
         st.markdown(f"Market regimes (trend: {regimes['trend_bars']}-bar average; returns compound each "
                     "regime's bars)")
         st.dataframe(frame, hide_index=True, width="stretch")
+    breakdown = data.trade_breakdown(run_id)
+    if breakdown:
+        for grouping, title in (("exit", "Trades by exit type"), ("holding", "Trades by holding time")):
+            frame = pd.DataFrame(breakdown["groups"][grouping])[["name", "trades", "win_rate", "pnl", "avg_return",
+                                                                  "avg_bars", "best", "worst"]]
+            st.markdown(title)
+            st.dataframe(frame, hide_index=True, width="stretch")
+        for note in breakdown["observations"]:
+            st.caption(f"• {note}")
     results = research["research_results"]
     if results:
         rows = []

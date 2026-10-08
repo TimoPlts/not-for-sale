@@ -668,7 +668,29 @@ Trade-offs worth knowing:
 - `deploy/systemd/trading-lab-digest.service` and `.timer`: Mondays at 07:52 UTC, `Persistent=true`, read-only paths. Setup is in `DEPLOYMENT.md` section 5e.
 - Tests: three paper runs (one stopped before the period, one started and stopped inside it), checked against `build_summary` and `live_compare`; a stalled check; the pair cap; an empty database; the CLI (text, JSON, alert despite `min_level`, no secret in the output, errors); the systemd units.
 
-## 5. Stage 11–23 status summary
+### Stage 24A: Trade analysis ✅
+- `research/trades.py`: `analyze_trades(store, run_id, groupings=...)` groups a run's closed trades by exit, symbol, side, holding time (bars) and entry weekday, plus the entry hour on request.
+  - `GroupStats` gives trades, wins, PnL, average return and bars, best, worst and profit factor.
+  - The exit type comes from the decision that filled the exit order: stop-loss or trailing stop, take-profit, end of backtest, or for exits at the next open, the decision that scheduled them (time stop, kill switch, otherwise signal). The kill switch's scheduled exits were recorded only as "signal exit" before, and are now told apart.
+  - Observations cover a result resting on its best few trades, the costliest exit type, symbol and side (at least 3 trades), and long holds against shorter ones (noting that stops close losers sooner by design).
+- CLI: `trading-lab trades [RUN_ID] [--by ...] [--json] [--csv FILE]`, read-only.
+- Tests:
+  - the exit mapping;
+  - on real backtests: groups adding up to the run's trades and PnL, time-stop trades held exactly `max_holding_bars`, long and short sides, kill-switch exits with `flatten_on_halt`;
+  - group statistics and each observation on hand-made trades;
+  - the CLI (text, JSON, CSV, a bad grouping, an unknown run) and a run without trades.
+
+### Stage 24B: Trade breakdown in the reports ✅
+- `DashboardData.trade_breakdown(run_id)`: groups by exit, side, holding time and symbol, with the totals and observations, without the per-trade list. It is None without trades and is part of the snapshot.
+- HTML report: a "Where the money comes from" table (one row per group) with the observations. Dashboard Research section: "Trades by exit type" and "Trades by holding time" tables, with observations as captions. `dashboard-data`: a "Trades by exit" line.
+- Tests: the data against `analyze_trades`, no section for a run without trades, the HTML report, the text view, and the rendered dashboard tables summing to the run's trades with the database unchanged.
+
+### Stage 24C: "Sharpe is real" in the checkup ✅
+- `checkup` gains a ninth check after "Robust to resampling". It passes at a probabilistic Sharpe ratio of 95% or more and warns from 80%; it is n/a when undefined. It has its own advice when the run lost money.
+- The README example was regenerated from a fresh run (the demo's random-walk prices), and the thresholds list gained the new check.
+- Tests: the full check list on a real edge (which passes it), and every grade boundary and the losing-run advice through `evaluate`.
+
+## 5. Stage 11–24 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -685,6 +707,7 @@ On top of the Stage 9/10 system:
 - **Readability and reach (21):** monthly returns, Calmar and the longest drawdown (21A), Telegram alerts (21B), and config presets (21C).
 - **Running several configs live (22):** several paper runs on one VM with one watchdog (22A), a comparison of two live runs over the time they ran together (22B), and an overview of all paper runs in the dashboard (22C).
 - **Is it luck, and how is it going? (23):** probabilistic and deflated Sharpe ratios (23A), and a weekly digest of every paper run (23B).
+- **Where the money goes (24):** trade analysis by exit, symbol, side, holding time and entry time (24A), shown in the reports and the dashboard (24B), and a "Sharpe is real" check in the checkup (24C).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.
