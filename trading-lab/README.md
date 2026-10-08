@@ -86,6 +86,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 27A (complete):** `trading-lab outlook`: the drawdowns, returns and losing streaks to be ready for over the next trades, from a run's own trades.
 - **Stage 27B (complete):** the outlook in the HTML report ("What to be ready for"), the dashboard's Research section and `dashboard-data`.
 - **Stage 28A (complete):** `trading-lab size --max-drawdown 20%`: the risk per trade at which the bad-case drawdown matches your budget, using the size limits each entry recorded.
+- **Stage 28B (complete):** `size --verify` re-runs the stored backtest at the suggested size and compares the real drawdown and return with the estimate.
 
 ### Stage 9/10 summary
 
@@ -559,7 +560,15 @@ Suggested: risk_per_trade_pct = 0.0127 (1.27x the current setting). Confirm with
 warning: the run lost money: a smaller size only loses more slowly
 ```
 
-(The same synthetic `trend` backtest: an illustration, not advice.) Here the max position limit takes over from about 1.3x, which is why 1.5x and 2x look the same. "Size set by" shows which limit set each entry's size; if it is rarely `risk_per_trade`, scaling it changes little. A smaller size only makes a losing strategy lose more slowly. The suggestion is an estimate: equity, cash and overlapping positions would differ at another size, so confirm it with a backtest. Read-only.
+(The same synthetic `trend` backtest: an illustration, not advice.) Here the max position limit takes over from about 1.3x, which is why 1.5x and 2x look the same. "Size set by" shows which limit set each entry's size; if it is rarely `risk_per_trade`, scaling it changes little. A smaller size only makes a losing strategy lose more slowly. The suggestion is an estimate: equity, cash and overlapping positions would differ at another size. `--verify` checks it: it re-runs the stored backtest's config over the same period and data at the suggested risk per trade, in memory, and compares the result:
+
+```
+Verification backtest at 1.27x (risk_per_trade_pct 0.0127), same period and data:
+  max drawdown 14.7% (the run at 1x: 11.7%; estimated at this size: median 11.8%, bad case 20.0%): within the budget on this history
+  return -8.43% (1x: -6.67%), trades 122 (1x: 122)
+```
+
+One period is one path: a drawdown below the budget here does not prove the budget holds, it only shows the estimate is not off. `--verify` works on stored backtests, not paper runs, and not with AI agents (it would call the model). Read-only.
 
 ## Run summary
 

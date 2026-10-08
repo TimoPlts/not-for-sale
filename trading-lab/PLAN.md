@@ -771,6 +771,11 @@ Trade-offs worth knowing:
 - CLI: `trading-lab size [RUN_ID] --max-drawdown 20% [--trades N] [--samples 2000] [--seed 7] [--json]`, read-only. `--max-drawdown` accepts 0.2, 20% or 20.
 - Tests: size factors and headroom by hand (risk-bound and capped entries, no sizing); on a backtest, the chosen scale hits the target, bad-case drawdowns rise with scale, and the limit counts match the entries; unreachable targets both ways; a run without stored sizing; percent parsing (a double-division bug for "150%" was caught and fixed); the CLI.
 
+### Stage 28B: Verifying a size suggestion ✅
+- `research/sizing.verify_sizing` backtests the stored config with `risk_per_trade_pct` set to the suggestion, over the same period, in memory. `Verification` has the actual drawdown, return and trades, the run's own at 1x, the estimate's median and bad case at that scale, and `within_budget`.
+- CLI: `size --verify`, with the data source rebuilt like `reconcile`'s (synthetic runs replay their seed). It refuses up front, before any work, for paper runs (no fixed period) and configs with AI agents (no model calls). `--json` adds `verification`; without a suggestion it says so.
+- Tests: the verification equals an independent backtest at that risk; the text output; no suggestion; refusals for a paper run and an agents config.
+
 ## 5. Stage 11–28 status summary
 
 On top of the Stage 9/10 system:
@@ -792,7 +797,7 @@ On top of the Stage 9/10 system:
 - **Faster feedback and deeper trade analysis (25):** the test suite on every core (25A), and trade excursions (25B), also in the reports and the dashboard (25C).
 - **Counting the tries (26):** an opt-in trial log, the `trials` command and a checkup check against it (26A), used by sweeps and shown in the dashboard (26B).
 - **What to expect (27):** forward drawdowns, returns and losing streaks from a run's trades (27A), shown in the reports and the dashboard (27B).
-- **Acting on it (28):** the risk per trade for a drawdown budget (28A).
+- **Acting on it (28):** the risk per trade for a drawdown budget (28A), verified by a backtest at that size (28B).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

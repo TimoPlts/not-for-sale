@@ -20,8 +20,10 @@ s. ``binding`` counts which limit set each entry's size: if
 ``risk_per_trade`` rarely did, changing it changes little.
 
 It is still an estimate: equity, cash and concurrent positions would differ
-at another size. Confirm the suggestion with a backtest before relying on
-it. Read-only.
+at another size. ``verify_sizing`` checks a suggestion: it re-runs the stored
+backtest's config over the same period at the suggested risk per trade (in
+memory, nothing is stored) and compares the real drawdown and return with the
+estimate. Read-only.
 """
 
 from __future__ import annotations
@@ -168,6 +170,62 @@ def size_for_drawdown(store: Any, run_id: str, target: float = 0.20, *, horizon:
     if out.unmatched:
         out.warnings.append(f"{out.unmatched} trade(s) had no stored sizing and were scaled linearly")
     return out
+
+
+@dataclass(frozen=True, slots=True)
+class Verification:
+    scale: float
+    risk_per_trade_pct: float
+    max_drawdown: float  # the verification backtest's
+    total_return: float
+    trades: int
+    base_drawdown: float  # the original run's (1x)
+    base_return: float
+    base_trades: int
+    estimate_median: float  # the outlook's drawdowns at this scale
+    estimate_bad: float
+    target: float
+
+    @property
+    def within_budget(self) -> bool:
+        return self.max_drawdown <= self.target
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"scale": self.scale, "risk_per_trade_pct": self.risk_per_trade_pct,
+                "max_drawdown": self.max_drawdown, "total_return": self.total_return, "trades": self.trades,
+                "base_drawdown": self.base_drawdown, "base_return": self.base_return,
+                "base_trades": self.base_trades, "estimate_median": self.estimate_median,
+                "estimate_bad": self.estimate_bad, "target": self.target, "within_budget": self.within_budget}
+
+
+def verify_sizing(result: SizingResult, config: AppConfig, provider: Any, start: Any, end: Any,
+                  base: Any) -> Verification:
+    """Backtest ``config`` at the suggested risk per trade over ``start``-``end`` (``base``: the run's metrics)."""
+    from trading_lab.backtest import BacktestEngine
+
+    if result.scale is None or result.suggested_risk_pct is None:
+        raise ValueError("there is no suggestion to verify")
+    risk = min(1.0, round(result.suggested_risk_pct, 6))
+    scaled = config.with_overrides({"risk": {"risk_per_trade_pct": risk}})
+    metrics = BacktestEngine(scaled, provider).run(start, end).metrics
+    row = next(r for r in result.rows if r.scale == result.scale)
+    return Verification(result.scale, risk, metrics.max_drawdown, metrics.total_return, metrics.num_trades,
+                        base.max_drawdown, base.total_return, base.num_trades, row.outlook.drawdown_median,
+                        row.outlook.drawdown_bad, result.target)
+
+
+def format_verification(v: Verification) -> str:
+    verdict = ("within the budget on this history" if v.within_budget
+               else "above the budget on this history: size down further")
+    return "\n".join([
+        f"Verification backtest at {v.scale:.2f}x (risk_per_trade_pct {v.risk_per_trade_pct:.4f}), same period and "
+        "data:",
+        f"  max drawdown {v.max_drawdown:.1%} (the run at 1x: {v.base_drawdown:.1%}; estimated at this size: "
+        f"median {v.estimate_median:.1%}, bad case {v.estimate_bad:.1%}): {verdict}",
+        f"  return {v.total_return:+.2%} (1x: {v.base_return:+.2%}), trades {v.trades} (1x: {v.base_trades})",
+        "One period is one path: the bad case is about the paths that did not happen, so a drawdown below the "
+        "budget here does not prove the budget holds.",
+    ])
 
 
 def format_sizing(r: SizingResult | None, run_id: str = "") -> str:
