@@ -762,7 +762,16 @@ Trade-offs worth knowing:
 - Dashboard Research section: four metrics (bad-case drawdown, chance of a 20% drawdown, chance of a loss, bad-case losing streak) with a caption. `dashboard-data`: an "Outlook" line.
 - Tests: the data against `outlook_for_run`, the snapshot and text line, the HTML section (absent without trades), and the dashboard metrics.
 
-## 5. Stage 11–27 status summary
+### Stage 28A: Sizing to a drawdown budget ✅
+- `research/sizing.py`: `entry_sizing` reads each filled entry's recorded size limits and matches them to its trade by symbol and entry time.
+  - `size_factor(sizing, s) = min(s x risk_per_trade size, smallest other limit) / actual size`. Entries without stored sizing scale linearly. `headroom` is the scale at which another limit takes over.
+  - `size_for_drawdown` scales each trade's return by its factor and runs the outlook simulation with the same draws at every scale. It bisects (geometrically, 0.05x to 10x) for the scale whose bad-case drawdown equals the target.
+  - It reports the standard scales (0.25x to 2x) plus the chosen one, the suggested `risk_per_trade_pct`, which limit set each entry's size, and the median headroom.
+  - Warnings: an unreachable target (too small, or capped by other limits), a losing run, `risk_per_trade` rarely setting the size, and trades without stored sizing.
+- CLI: `trading-lab size [RUN_ID] --max-drawdown 20% [--trades N] [--samples 2000] [--seed 7] [--json]`, read-only. `--max-drawdown` accepts 0.2, 20% or 20.
+- Tests: size factors and headroom by hand (risk-bound and capped entries, no sizing); on a backtest, the chosen scale hits the target, bad-case drawdowns rise with scale, and the limit counts match the entries; unreachable targets both ways; a run without stored sizing; percent parsing (a double-division bug for "150%" was caught and fixed); the CLI.
+
+## 5. Stage 11–28 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -783,6 +792,7 @@ On top of the Stage 9/10 system:
 - **Faster feedback and deeper trade analysis (25):** the test suite on every core (25A), and trade excursions (25B), also in the reports and the dashboard (25C).
 - **Counting the tries (26):** an opt-in trial log, the `trials` command and a checkup check against it (26A), used by sweeps and shown in the dashboard (26B).
 - **What to expect (27):** forward drawdowns, returns and losing streaks from a run's trades (27A), shown in the reports and the dashboard (27B).
+- **Acting on it (28):** the risk per trade for a drawdown budget (28A).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

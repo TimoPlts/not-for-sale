@@ -28,6 +28,7 @@
     trading-lab trades [RUN_ID] [--by exit,symbol,side,holding,weekday[,hour]] [--json] [--csv FILE]
     trading-lab trials [--days N | --start/--end] [--timeframe 1h] [--json]   (the research trial log)
     trading-lab outlook [RUN_ID] [--trades N] [--samples 5000] [--json]   (drawdowns and streaks to expect)
+    trading-lab size [RUN_ID] --max-drawdown 20% [--trades N] [--json]   (risk per trade for a drawdown budget)
     trading-lab ab A.toml B.toml [--days 180 | --start/--end] [--windows 6] [--metric total_return]
     trading-lab status [PAPER_RUN_ID | --all] [--max-behind 2] [--alert] [--json]   (watchdog; exit 1 if not OK)
     trading-lab live-compare RUN_A RUN_B [--min-days 14] [--json]   (two paper runs over the time they ran together)
@@ -742,6 +743,39 @@ def cmd_outlook(args: argparse.Namespace) -> int:
         print(_json.dumps(None if outlook is None else outlook.to_dict(), indent=2))
     else:
         print(format_outlook(outlook, run_id))
+    return 0
+
+
+def _fraction(text: str) -> float:
+    """``0.2``, ``20%`` or ``20`` (a bare number of 1 or more is a percentage) as a fraction."""
+    text = text.strip()
+    try:
+        value = float(text.rstrip("%"))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {text!r}") from None
+    return value / 100.0 if text.endswith("%") or value >= 1 else value
+
+
+def cmd_size(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.research.sizing import format_sizing, size_for_drawdown
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        run_id = args.run_id or _latest_run_id(store)
+        try:
+            result = size_for_drawdown(store, run_id, args.max_drawdown, horizon=args.trades, samples=args.samples,
+                                       seed=args.seed)
+        except ValueError as exc:
+            raise TradingLabError(str(exc)) from None
+    if args.json:
+        print(_json.dumps(None if result is None else result.to_dict(), indent=2))
+    else:
+        print(format_sizing(result, run_id))
     return 0
 
 
@@ -1799,6 +1833,15 @@ def build_parser() -> argparse.ArgumentParser:
     ol.add_argument("--seed", type=int, default=7, help="random seed (default 7)")
     ol.add_argument("--json", action="store_true", help="machine-readable output")
     ol.set_defaults(func=cmd_outlook)
+
+    sz = sub.add_parser("size", help="the risk per trade at which the bad-case drawdown matches a budget")
+    sz.add_argument("run_id", nargs="?", help="default: the latest run")
+    sz.add_argument("--max-drawdown", type=_fraction, default=0.2, help="bad-case drawdown budget (default 20%%)")
+    sz.add_argument("--trades", type=int, help="trades per simulated future (default: as many as the run made)")
+    sz.add_argument("--samples", type=int, default=2000, help="simulated futures per scale (default 2000)")
+    sz.add_argument("--seed", type=int, default=7, help="random seed (default 7)")
+    sz.add_argument("--json", action="store_true", help="machine-readable output")
+    sz.set_defaults(func=cmd_size)
 
     ex = sub.add_parser("export", help="write a stored run to CSV files and a JSON summary")
     ex.add_argument("run_id")

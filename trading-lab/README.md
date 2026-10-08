@@ -85,6 +85,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 26B (complete):** with the trial log on, `sweep` also deflates its winner against every logged trial on the same data, and the dashboard and `dashboard-data` show the trial count and luck bar for the run's period.
 - **Stage 27A (complete):** `trading-lab outlook`: the drawdowns, returns and losing streaks to be ready for over the next trades, from a run's own trades.
 - **Stage 27B (complete):** the outlook in the HTML report ("What to be ready for"), the dashboard's Research section and `dashboard-data`.
+- **Stage 28A (complete):** `trading-lab size --max-drawdown 20%`: the risk per trade at which the bad-case drawdown matches your budget, using the size limits each entry recorded.
 
 ### Stage 9/10 summary
 
@@ -525,6 +526,40 @@ Trades are drawn independently and drawdowns are measured trade by trade, so rea
 ```
 
 (The 90-day synthetic `trend` backtest from the `trades` section: an illustration of the layout, not a result.) Size positions so that the bad-case drawdown and losing streak are something you would sit through. A strategy is usually abandoned at its worst moment, and this shows roughly how bad that moment can get. The real thing can be worse: trades are drawn independently, drawdowns are measured trade by trade, and markets unlike the tested period are not in the sample. Read-only.
+
+## How big should positions be? (`size`)
+
+```bash
+trading-lab size --max-drawdown 20%            # the latest run
+trading-lab size <run id> --max-drawdown 15% --trades 300 --json
+```
+
+It finds the multiple of `risk.risk_per_trade_pct` at which the outlook's bad-case drawdown (1 in 20) equals your budget. The scaling is per trade, from the size limits each entry recorded:
+
+* at a scale s, an entry's size is s times its risk-per-trade size, but no more than its other limits (max position, total exposure, cash, liquidity, volatility target);
+* scaling up stops helping where another limit takes over.
+
+```
+Run bt-7169d978c6ec: sizing for a bad-case (1 in 20) drawdown of 20% (risk.risk_per_trade_pct is 1.00%)
+  size set by: risk_per_trade 100%
+  beyond about 1.31x, another limit (e.g. max_position_pct) sets most entries' size, so larger scales change little
+
+ scale risk/trade  dd median   dd bad  return med  P(loss)  streak bad
+ 0.25x      0.25%       2.4%     4.3%       -1.8%      90%          13
+ 0.50x      0.50%       4.8%     8.4%       -3.6%      91%          13
+ 0.75x      0.75%       7.1%    12.3%       -5.4%      91%          13
+ 1.00x      1.00%       9.4%    16.1%       -7.2%      91%          13
+ 1.27x      1.27%      11.8%    20.0%       -9.0%      91%          13  <- target
+ 1.50x      1.50%      12.2%    20.6%       -9.3%      91%          13
+ 2.00x      2.00%      12.2%    20.6%       -9.3%      91%          13
+
+Suggested: risk_per_trade_pct = 0.0127 (1.27x the current setting). Confirm with a backtest before using it:
+  [risk]
+  risk_per_trade_pct = 0.0127
+warning: the run lost money: a smaller size only loses more slowly
+```
+
+(The same synthetic `trend` backtest: an illustration, not advice.) Here the max position limit takes over from about 1.3x, which is why 1.5x and 2x look the same. "Size set by" shows which limit set each entry's size; if it is rarely `risk_per_trade`, scaling it changes little. A smaller size only makes a losing strategy lose more slowly. The suggestion is an estimate: equity, cash and overlapping positions would differ at another size, so confirm it with a backtest. Read-only.
 
 ## Run summary
 
