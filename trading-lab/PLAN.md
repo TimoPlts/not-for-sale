@@ -707,6 +707,11 @@ Trade-offs worth knowing:
 - The `trades` text, JSON and CSV include them.
 - Tests: excursions by hand (long, short, never adverse, exit in the entry bar) and the summary by hand; every trade of a long and a long/short backtest recomputed independently from the bars, with the exit inside the excursion range; the stop shown or not; a run without candles; the CLI.
 
+### Stage 25C: Excursions in the reports ✅
+- `trades.excursion_sentences` turns the summary into plain sentences, from the object or its `to_dict()`. The text output, the HTML report and the dashboard share it.
+- HTML report: MAE and MFE columns in "Where the money comes from", plus the summary sentences. Dashboard: `avg_mae` and `avg_mfe` columns in the trade tables, with the summary as captions. The snapshot's `trade_breakdown` carries `excursions`.
+- Tests: the same sentences from the object and the dict; the snapshot against `analyze_trades`; the HTML columns and sentences, with the stop shown; the dashboard captions and columns, without a stop for ATR stops.
+
 ## 5. Stage 11–25 status summary
 
 On top of the Stage 9/10 system:
@@ -725,7 +730,7 @@ On top of the Stage 9/10 system:
 - **Running several configs live (22):** several paper runs on one VM with one watchdog (22A), a comparison of two live runs over the time they ran together (22B), and an overview of all paper runs in the dashboard (22C).
 - **Is it luck, and how is it going? (23):** probabilistic and deflated Sharpe ratios (23A), and a weekly digest of every paper run (23B).
 - **Where the money goes (24):** trade analysis by exit, symbol, side, holding time and entry time (24A), shown in the reports and the dashboard (24B), and a "Sharpe is real" check in the checkup (24C).
-- **Faster feedback and deeper trade analysis (25):** the test suite on every core (25A), and trade excursions (25B).
+- **Faster feedback and deeper trade analysis (25):** the test suite on every core (25A), and trade excursions (25B), also in the reports and the dashboard (25C).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

@@ -326,21 +326,29 @@ def _pct(value: float | None) -> str:
     return "n/a" if value is None else f"{value:+.1%}"
 
 
+def excursion_sentences(x: Excursions | dict[str, Any] | None) -> list[str]:
+    """The excursion summary in plain sentences (from an ``Excursions`` or its ``to_dict()``)."""
+    if x is None:
+        return []
+    d = x.to_dict() if isinstance(x, Excursions) else x
+    out = []
+    if d["winners_mae_p90"] is not None:
+        stop = "" if d["stop_loss_pct"] is None else f"; the stop-loss is {d['stop_loss_pct']:.1%}"
+        out.append(f"90% of winning trades went at most {abs(d['winners_mae_p90']):.2%} against the entry{stop}")
+    if d["losers"]:
+        out.append(f"{d['losers_in_profit']} of {d['losers']} losing trades were at least "
+                   f"{d['profit_threshold']:.0%} in profit at some point")
+    if d["e_ratio"] is not None:
+        out.append(f"e-ratio {d['e_ratio']:.2f} (average mfe / average |mae|; above 1, trades move further "
+                   "for you than against you)")
+    return out
+
+
 def _format_excursions(x: Excursions | None) -> list[str]:
     if x is None:
         return ["", "Excursions: n/a (no stored candles for this run)"]
-    lines = ["", f"Excursions (mae: worst move against the entry while open, mfe: best move for it; "
-                 f"{x.trades} trades)"]
-    if x.winners_mae_p90 is not None:
-        stop = "" if x.stop_loss_pct is None else f"; the stop-loss is {x.stop_loss_pct:.1%}"
-        lines.append(f"  90% of winning trades went at most {abs(x.winners_mae_p90):.2%} against the entry{stop}")
-    if x.losers:
-        lines.append(f"  {x.losers_in_profit} of {x.losers} losing trades were at least {x.profit_threshold:.0%} "
-                     "in profit at some point")
-    if x.e_ratio is not None:
-        lines.append(f"  e-ratio {x.e_ratio:.2f} (average mfe / average |mae|; above 1, trades move further "
-                     "for you than against you)")
-    return lines
+    return ["", f"Excursions (mae: worst move against the entry while open, mfe: best move for it; "
+                f"{x.trades} trades)"] + [f"  {s}" for s in excursion_sentences(x)]
 
 
 def format_trades(a: TradeAnalysis) -> str:

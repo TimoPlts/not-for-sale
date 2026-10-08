@@ -80,6 +80,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 24C (complete):** a "Sharpe is real" check in `checkup`, based on the probabilistic Sharpe ratio.
 - **Stage 25A (complete):** the test suite runs on every core (`pytest -n auto`): about 2 minutes instead of 7 to 10.
 - **Stage 25B (complete):** `trades` shows how far each trade went against you and for you while it was open (MAE/MFE), next to the configured stop-loss.
+- **Stage 25C (complete):** the excursions in the HTML report and the dashboard as well.
 
 ### Stage 9/10 summary
 
@@ -177,7 +178,7 @@ One page, refreshed automatically (every 60 s by default):
 * **Latest decision:** every vote (RSI, MACD, Bollinger, Qwen Trend, Momentum, Risk) with confidence, weight and label, the ensemble result and the actions taken.
 * **AI rationales:** one card per agent and symbol.
 * **Agent performance** leaderboard: votes, confidence, correctness, trades influenced, pivotal trades, PnL when agreed or disagreed.
-* **Research:** strategy versus buy & hold return, max drawdown, Sharpe and profit factor, monthly returns, the market-regime table (see `trading-lab regimes`), trades by exit type and holding time (see `trading-lab trades`), plus saved experiments and walk-forward results.
+* **Research:** strategy versus buy & hold return, max drawdown, Sharpe and profit factor, monthly returns, the market-regime table (see `trading-lab regimes`), trades by exit type and holding time with their excursions (see `trading-lab trades`), plus saved experiments and walk-forward results.
 * **Qwen usage:** calls, cache hits, failures, retries, latency and tokens.
 * **Recent trades and signals.**
 

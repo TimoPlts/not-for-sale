@@ -121,3 +121,43 @@ def test_cli(runs, tmp_path, capsys):
     assert all(t["mae"] <= 0 <= t["mfe"] for t in data["trades"])
     frame = pd.read_csv(csv)
     assert {"mae", "mfe"} <= set(frame.columns) and frame["mae"].max() <= 0
+
+
+def test_sentences_from_object_or_dict(runs):
+    from trading_lab.research.trades import excursion_sentences
+
+    db, longs, _, _ = runs
+    with SQLiteStore(db, readonly=True) as store:
+        a = analyze_trades(store, longs.run_id)
+    sentences = excursion_sentences(a.excursions)
+    assert sentences == excursion_sentences(a.excursions.to_dict()) and len(sentences) == 3
+    assert excursion_sentences(None) == []
+
+
+def test_html_report_and_snapshot(runs, tmp_path):
+    from trading_lab.dashboard import DashboardData
+
+    db, longs, _, _ = runs
+    with DashboardData(db) as data:
+        breakdown = data.trade_breakdown(longs.run_id)
+        a = analyze_trades(data.store, longs.run_id)
+    assert breakdown["excursions"] == pytest.approx(a.excursions.to_dict())
+    assert all(g["avg_mae"] <= 0 <= g["avg_mfe"] for g in breakdown["groups"]["exit"])
+    page = tmp_path / "r.html"
+    assert main(["--db", str(db), "report", longs.run_id, "--html", str(page)]) == 0
+    html = page.read_text()
+    assert "<th>MAE</th>" in html and "<th>MFE</th>" in html
+    assert "90% of winning trades went at most" in html and "the stop-loss is 5.0%" in html
+
+
+def test_dashboard_shows_them(runs, monkeypatch):
+    pytest.importorskip("streamlit")
+    from test_dashboard_app import render
+
+    db, _, _, atr = runs  # the latest run is the ATR backtest
+    at = render(monkeypatch, db)
+    captions = " ".join(c.value for c in at.caption)
+    assert "90% of winning trades went at most" in captions and "e-ratio" in captions
+    assert "the stop-loss is" not in captions  # ATR stops differ per trade
+    table = next(df.value for df in at.dataframe if "avg_mae" in df.value.columns)
+    assert (table["avg_mae"] <= 0).all() and (table["avg_mfe"] >= 0).all()
