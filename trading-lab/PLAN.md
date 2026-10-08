@@ -862,7 +862,20 @@ Trade-offs worth knowing:
   - It validates the run id (it names a systemd unit), refuses to overwrite without `--force`, and prints the systemctl and live-compare commands with the running baseline run's id when the database has one.
 - Tests: the ranking and texts on fakes (winner, caution, nobody ready); a tournament on synthetic data (order, deflated values, JSON, no candidates); the CLI (a preset plus a file, HTML/JSON, an unknown candidate); `paper-plan` (an exact round trip, the commands with the running run id, refusing to overwrite, the database override, a bad id, an unknown candidate).
 
-## 5. Stage 11–31 status summary
+### Stage 32A: Time-series momentum ✅
+- `strategies/trend.py`: `TimeSeriesMomentumStrategy` (`tsmom`, opt-in), an `IndicatorStrategy`.
+  - For each of `lookbacks` (default 20, 60, 120 bars) it takes the return over that horizon. The score is (horizons up - horizons down) / horizons; BUY at `>= threshold` (default 0.3), SELL at `<= -threshold`, HOLD in between.
+  - Confidence: the mean of the agreeing returns in units of one-bar log volatility (`vol_window` bars) times the square root of the horizon, halved, through `scaled_confidence`.
+  - `history_bars` is just the warmup plus one (no smoothing to converge), so a daily backtest does not load 300 extra days for it.
+  - Parameter validation: a non-empty list of distinct horizons up to 5000 bars, a threshold in (0, 1], a volatility window of at least 2.
+- Tests: vectorised == bar by bar, the direction and score on crafted series (two of three horizons, the threshold, warmup), confidence growing with the move (0.5 without volatility), validation, opt-in and recorded parameters.
+
+### Stage 32B: Swing preset and timeframe-aware deflation ✅
+- `presets.py`: `swing`: daily bars, RSI/Bollinger/MACD off, `tsmom` (weight 1.5, 20/60/120), Donchian 55/20, a 20/100 SMA in state mode; 3-ATR stops, 1.5% risk per trade, at most 45% per position, 25% volatility target, a 100-day trend filter, a 15% trailing stop from +10%. Untuned on purpose: a tournament candidate, not a recommendation.
+- `research/tournament.py`: `rescale_sharpe` converts a per-bar Sharpe ratio between timeframes (square-root-of-time); each candidate is deflated against the field in its own bar length. Before, a daily candidate would have been compared with hourly Sharpe ratios.
+- Tests: the preset trades rarely on a synthetic year (365 daily equity points); a live paper run of it equals its backtest fill for fill on daily bars; the rescaling; a tournament mixing a daily and an hourly candidate.
+
+## 5. Stage 11–32 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -887,6 +900,7 @@ On top of the Stage 9/10 system:
 - **The desk (29):** the funnel from first vote to closed trade with lead IDs, and an evening desk report (29A), the positioning and sentiment voters (29B), the confirmation gate with a `desk` preset (29C), and the weekly seat review (29D).
 - **From idea to paper run (30):** one command to validate a config with a strict recommendation (30A), and context data on disk with a prefetch command (30B).
 - **Choosing what to paper-trade (31):** a tournament of candidates with deflation across the field (31A), and a paper plan for the winner (31B).
+- **Trading less (32):** a time-series momentum strategy (32A), and a daily `swing` preset with a tournament that compares timeframes fairly (32B).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

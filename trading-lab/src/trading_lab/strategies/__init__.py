@@ -13,7 +13,11 @@ from trading_lab.strategies.bollinger import BollingerMeanReversionStrategy  # n
 from trading_lab.strategies.context import ContextStrategy, FundingStrategy, SentimentStrategy  # noqa: E402
 from trading_lab.strategies.macd import MacdStrategy  # noqa: E402
 from trading_lab.strategies.rsi import RsiStrategy  # noqa: E402
-from trading_lab.strategies.trend import DonchianBreakoutStrategy, MovingAverageCrossStrategy  # noqa: E402
+from trading_lab.strategies.trend import (  # noqa: E402
+    DonchianBreakoutStrategy,
+    MovingAverageCrossStrategy,
+    TimeSeriesMomentumStrategy,
+)
 
 __all__ = [
     "BollingerMeanReversionStrategy",
@@ -26,6 +30,7 @@ __all__ = [
     "MovingAverageCrossStrategy",
     "RsiStrategy",
     "Strategy",
+    "TimeSeriesMomentumStrategy",
     "available_strategies",
     "build_strategies",
     "create_strategy",

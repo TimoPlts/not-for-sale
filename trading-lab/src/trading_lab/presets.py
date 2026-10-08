@@ -55,6 +55,19 @@ PRESETS: dict[str, Preset] = {p.name: p for p in (
                         "stop_mode": "atr", "trend_filter_period": 200, "max_drawdown_pct": 0.15,
                         "daily_loss_limit_pct": 0.03},
            }),
+    Preset("swing", "daily bars and few trades, so fees matter less: time-series momentum, a 55/20-day "
+           "Donchian breakout and a 20/100-day average vote; ATR stops, volatility-sized positions and a "
+           "100-day trend filter. Untuned: a candidate for the tournament", {
+               "market": {"timeframe": "1d"},
+               "strategies": {"rsi": {"enabled": False}, "bollinger": {"enabled": False},
+                              "macd": {"enabled": False},
+                              "tsmom": {"weight": 1.5, "lookbacks": [20, 60, 120]},
+                              "donchian": {"weight": 1.0, "entry_period": 55, "exit_period": 20},
+                              "ma_cross": {"weight": 1.0, "fast": 20, "slow": 100, "signal_on": "state"}},
+               "risk": {"stop_mode": "atr", "atr_stop_multiple": 3.0, "risk_per_trade_pct": 0.015,
+                        "max_position_pct": 0.45, "position_volatility_pct": 0.25, "trend_filter_period": 100,
+                        "trailing_stop_pct": 0.15, "trailing_activation_pct": 0.10},
+           }),
     Preset("mean-reversion", "RSI and Bollinger only, quick profits and a one-day time stop; mean reversion "
            "is muted in clear down-trends", {
                "strategies": {"macd": {"enabled": False}},

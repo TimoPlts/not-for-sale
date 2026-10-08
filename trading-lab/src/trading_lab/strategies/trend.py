@@ -1,9 +1,10 @@
-"""Trend-following strategies: moving-average crossover and Donchian channel breakout.
+"""Trend-following strategies: moving-average crossover, Donchian channel breakout and
+time-series momentum.
 
-The built-in RSI and Bollinger strategies buy weakness; these two follow
+The built-in RSI and Bollinger strategies buy weakness; these follow
 strength, which suits trending markets and (with ``risk.allow_short``) both
-directions. Both are opt-in: enable them with a ``[strategies.ma_cross]`` or
-``[strategies.donchian]`` table.
+directions. All are opt-in: enable them with a ``[strategies.ma_cross]``,
+``[strategies.donchian]`` or ``[strategies.tsmom]`` table.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import math
 from typing import Any, Mapping
 
+import numpy as np
 import pandas as pd
 
 from trading_lab.core.models import Direction
@@ -165,3 +167,80 @@ class DonchianBreakoutStrategy(IndicatorStrategy):
                 meta["breakout"] = "exit_up"
                 return Direction.BUY, 0.5, meta
         return Direction.HOLD, 0.0, meta
+
+
+@register_strategy
+class TimeSeriesMomentumStrategy(IndicatorStrategy):
+    """Time-series momentum: is the price higher than it was N bars ago, over several horizons?
+
+    For each of the ``lookbacks`` (in bars) the strategy looks at the return
+    over that horizon. The score is (horizons up - horizons down) / horizons,
+    from -1 to 1. BUY when the score is at least ``threshold``, SELL when it
+    is at most ``-threshold``, HOLD in between (so one horizon turning does
+    not flip a position: with three horizons and the default threshold, two
+    must agree).
+
+    Every horizon is long, so it trades rarely: suited to daily bars
+    (``market.timeframe = "1d"``, the defaults are about one, three and six
+    months). On hourly bars use horizons in the hundreds.
+
+    Confidence grows with the size of the agreeing moves measured in their
+    usual size: each return divided by the volatility of one-bar log returns
+    (``vol_window`` bars) times the square root of its horizon. 0.5 when the
+    moves are tiny, 1.0 at two standard deviations.
+    """
+
+    name = "tsmom"
+
+    def __init__(self, lookbacks: Any = (20, 60, 120), threshold: float = 0.3, vol_window: int = 20) -> None:
+        if not isinstance(lookbacks, (list, tuple)) or not lookbacks:
+            raise ValueError("lookbacks must be a non-empty list of bar counts")
+        checked = [check_int("lookbacks", n) for n in lookbacks]
+        if len(set(checked)) != len(checked):
+            raise ValueError("lookbacks contains duplicates")
+        if max(checked) > 5000:
+            raise ValueError("lookbacks must be at most 5000 bars")
+        self.lookbacks = tuple(sorted(checked))
+        if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or not 0 < threshold <= 1:
+            raise ValueError(f"threshold must be in (0, 1], got {threshold!r}")
+        self.threshold = float(threshold)
+        self.vol_window = check_int("vol_window", vol_window, minimum=2)
+
+    @property
+    def warmup_bars(self) -> int:
+        return max(max(self.lookbacks), self.vol_window) + 1
+
+    @property
+    def history_bars(self) -> int:
+        return self.warmup_bars + 1  # plain returns and a rolling deviation: nothing to converge
+
+    @property
+    def params(self) -> dict[str, Any]:
+        return {"lookbacks": list(self.lookbacks), "threshold": self.threshold, "vol_window": self.vol_window}
+
+    def indicators(self, candles: pd.DataFrame) -> pd.DataFrame:
+        close = candles["close"]
+        frame = pd.DataFrame({"vol": np.log(close).diff().rolling(self.vol_window, min_periods=self.vol_window)
+                             .std(ddof=0)})
+        for n in self.lookbacks:
+            frame[f"ret_{n}"] = close / close.shift(n) - 1.0
+        return frame
+
+    def _decide(self, row: Mapping[str, Any]) -> tuple[Direction, float, dict[str, Any]]:
+        returns = {n: float(row[f"ret_{n}"]) for n in self.lookbacks}
+        vol = float(row["vol"])
+        meta: dict[str, Any] = {"returns": {str(n): finite_or_none(r) for n, r in returns.items()},
+                                "vol": finite_or_none(vol), "score": None}
+        if any(math.isnan(r) for r in returns.values()):
+            return Direction.HOLD, 0.0, meta
+        score = (sum(r > 0 for r in returns.values()) - sum(r < 0 for r in returns.values())) / len(returns)
+        meta["score"] = score
+        if abs(score) < self.threshold:
+            return Direction.HOLD, 0.0, meta
+        sign = 1.0 if score > 0 else -1.0
+        if vol > 0 and math.isfinite(vol):
+            z = [sign * math.log1p(r) / (vol * math.sqrt(n)) for n, r in returns.items() if sign * r > 0]
+            strength = sum(z) / len(z) / 2.0
+        else:
+            strength = 0.0
+        return (Direction.BUY if sign > 0 else Direction.SELL), scaled_confidence(strength), meta

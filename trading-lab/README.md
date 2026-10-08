@@ -95,6 +95,8 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 30B (complete):** funding and sentiment are kept on disk next to the candles (fetching only what is missing, serving the file when a source is down), and `trading-lab prefetch` downloads candles, funding and sentiment for a period in one go.
 - **Stage 31A (complete):** `trading-lab tournament`: validate every preset (or your configs) against the config you run now and rank them, with each one's deflated Sharpe against the whole field.
 - **Stage 31B (complete):** `trading-lab paper-plan NAME`: write `config/runs/NAME.toml` for the winner (same database, loads back identically) and print the commands for a side-by-side paper run.
+- **Stage 32A (complete):** an opt-in `tsmom` strategy (time-series momentum): is the price higher than one, three and six months ago?
+- **Stage 32B (complete):** a `swing` preset that trades daily bars a few times a month, so fees eat less, and a tournament that compares daily and hourly candidates fairly.
 
 ### Stage 9/10 summary
 
@@ -260,6 +262,7 @@ trading-lab ab config/default.toml config/trend.toml --days 180
 | `trend-shorts` | the same, trading both directions (simulated, fully collateralised shorts) |
 | `desk` | the trend preset plus the desk's whale and shill seats: `funding` and `sentiment` vote, and either one can veto a new entry (the confirmation gate below) |
 | `conservative` | half the risk per trade, volatility-targeted positions, ATR stops, a 200-bar trend filter, tighter breakers |
+| `swing` | daily bars (`market.timeframe = "1d"`) and trend voters only: `tsmom` (20/60/120 days), a 55/20-day Donchian breakout and a 20/100-day average; 3-ATR stops, volatility-sized positions, a 100-day trend filter and a wide trailing stop. Few trades, so fees matter less. Untuned |
 | `mean-reversion` | RSI and Bollinger only (MACD off), a 3% take-profit, a 24-bar time stop, and mean reversion muted in down-trends |
 
 The file lists only what the preset changes. Everything else keeps the defaults documented in `config/default.toml`, so you can see exactly what you are testing. An existing file is never overwritten without `--force`. Presets are starting points to test, not recommendations.
@@ -322,7 +325,7 @@ trading-lab paper-plan desk                                # set up the winner a
 2. then by A/B windows won against the baseline;
 3. then by Sharpe ratio.
 
-Trying several candidates and keeping the best makes the best look better than it is. So each one also shows its deflated Sharpe against the whole field, and a winner below 50% gets a caution that it may just be the luckiest. If no candidate is ready, it says so: keep the baseline and change the strategy, not its parameters.
+Trying several candidates and keeping the best makes the best look better than it is. So each one also shows its deflated Sharpe against the whole field, and a winner below 50% gets a caution that it may just be the luckiest. Candidates may trade different timeframes (the `swing` preset uses daily bars): every Sharpe ratio is converted to the candidate's bar length before the comparison, and the baseline is aligned to each candidate's timeframe for the A/B test. If no candidate is ready, it says so: keep the baseline and change the strategy, not its parameters.
 
 `paper-plan NAME` turns the winner into a paper run next to the one you have. It:
 
@@ -1231,13 +1234,22 @@ weight = 1.0
 entry_period = 20              # BUY above the previous 20-bar high, SELL below the 20-bar low
 exit_period = 10               # a weaker opposite signal on a 10-bar break (0 = off)
 atr_period = 14
+
+[strategies.tsmom]             # time-series momentum
+weight = 1.0
+lookbacks = [20, 60, 120]      # horizons in bars: about 1, 3 and 6 months on daily bars
+threshold = 0.3                # BUY when (horizons up - horizons down) / horizons >= 0.3, SELL when <= -0.3
+vol_window = 20                # bars of one-bar volatility, for the confidence
 ```
+
+`tsmom` asks one question per horizon: is the price higher than it was N bars ago? With three horizons and the default threshold, two must agree, so one horizon turning does not flip the position. Its horizons are long, so it suits daily bars; on hourly bars use horizons in the hundreds. Time-series momentum is one of the better documented effects in futures and crypto markets, but it is documented on the past: it loses in choppy years, and only a backtest and a paper run on your symbols say anything about now.
 
 * **Confidence:**
   * `ma_cross`: grows with how sharply the averages cross, relative to the usual size of the gap between them.
   * `donchian`: grows with the breakout distance measured in ATRs.
+  * `tsmom`: grows with the agreeing returns measured in their usual size (one-bar volatility times the square root of the horizon); 1.0 at two standard deviations.
 * **No look-ahead:** channels use only the bars *before* the current one.
-* **Shorts:** both strategies signal in both directions, so they work naturally with `allow_short = true`.
+* **Shorts:** all three strategies signal in both directions, so they work naturally with `allow_short = true`.
 
 To see whether they help on your symbols and timeframe, compare them on the same period. For example, `trading-lab sweep --param strategies.donchian.weight=0,1` runs the strategy on and off, and `walkforward` tests it out of sample.
 
