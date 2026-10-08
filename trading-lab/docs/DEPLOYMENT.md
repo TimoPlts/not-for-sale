@@ -167,7 +167,7 @@ A failed check also marks the watchdog unit failed, so `systemctl --failed` show
 
 ## 5d. Several paper runs side by side (optional)
 
-To compare configs live (say the defaults against the `trend` preset), run each as its own service.
+To compare configs live (say the defaults against the `trend` preset), run each as its own service. `trading-lab paper-plan PRESET` writes the run's config file and prints these commands for you (after `trading-lab tournament` picked a candidate).
 `trading-lab-paper@NAME` runs `config/runs/NAME.toml` as run id `NAME`, logging to
 `/var/log/trading-lab/paper-NAME.log`:
 
