@@ -105,3 +105,52 @@ def test_cli(run, tmp_path, capsys):
     assert f"Run {quiet.run_id}: no closed trades, so no outlook." in capsys.readouterr().out
     assert main(["--db", str(tmp_path / "q.db"), "outlook", "--json"]) == 0
     assert json.loads(capsys.readouterr().out) is None
+
+
+def test_dashboard_data_and_snapshot(run, capsys):
+    from trading_lab.dashboard import DashboardData
+
+    db, result = run
+    with DashboardData(db) as data:
+        o = data.outlook(result.run_id)
+        snap = data.snapshot(result.run_id)
+        expected = outlook_for_run(data.store, result.run_id, samples=2000)
+    assert o == pytest.approx(expected.to_dict()) and snap["outlook"] == o
+    json.dumps(snap)
+    assert main(["--db", str(db), "dashboard-data", result.run_id]) == 0
+    line = next(x for x in capsys.readouterr().out.splitlines() if x.startswith("Outlook (next "))
+    assert f"bad case {expected.drawdown_bad:.1%}" in line
+
+
+def test_html_report(run, tmp_path):
+    db, result = run
+    page = tmp_path / "r.html"
+    assert main(["--db", str(db), "report", result.run_id, "--html", str(page)]) == 0
+    html = page.read_text()
+    assert "<h2>What to be ready for</h2>" in html and "Bad case (1 in 20)" in html
+    assert "Chance of a drawdown of at least 10%" in html
+
+
+def test_no_outlook_without_trades(tmp_path):
+    from trading_lab.dashboard import DashboardData
+
+    with SQLiteStore(tmp_path / "q.db") as store:
+        quiet = BacktestEngine(BASE.with_overrides({"voting": {"min_agreeing": 3}}), SyntheticProvider(seed=2),
+                               store=store).run(START, START + timedelta(days=1))
+    with DashboardData(tmp_path / "q.db") as data:
+        assert data.outlook(quiet.run_id) is None
+    page = tmp_path / "q.html"
+    assert main(["--db", str(tmp_path / "q.db"), "report", quiet.run_id, "--html", str(page)]) == 0
+    assert "What to be ready for" not in page.read_text()
+
+
+def test_dashboard(run, monkeypatch):
+    pytest.importorskip("streamlit")
+    from test_dashboard_app import render
+
+    db, result = run
+    at = render(monkeypatch, db)
+    labels = {m.label: m.value for m in at.metric}
+    assert {"Drawdown, bad case", "Chance of a 20% drawdown", "Chance of a loss", "Losing streak, bad case"} <= set(labels)
+    assert labels["Losing streak, bad case"].endswith(" trades")
+    assert any(m.value.startswith("What to be ready for over the next") for m in at.markdown)

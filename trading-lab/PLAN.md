@@ -756,6 +756,12 @@ Trade-offs worth knowing:
   - trade returns recomputed from a backtest's equity curve;
   - the CLI (text, JSON, errors, no trades).
 
+### Stage 27B: The outlook in the reports ✅
+- `DashboardData.outlook(run_id, samples=2000)` gives the outlook as a dict, or None without trades. It is in the snapshot.
+- HTML report: "What to be ready for", a median and bad-case table (drawdown against the run's own, return with the chance of a loss, losing streak), the drawdown chances, warnings and the caveat.
+- Dashboard Research section: four metrics (bad-case drawdown, chance of a 20% drawdown, chance of a loss, bad-case losing streak) with a caption. `dashboard-data`: an "Outlook" line.
+- Tests: the data against `outlook_for_run`, the snapshot and text line, the HTML section (absent without trades), and the dashboard metrics.
+
 ## 5. Stage 11–27 status summary
 
 On top of the Stage 9/10 system:
@@ -776,7 +782,7 @@ On top of the Stage 9/10 system:
 - **Where the money goes (24):** trade analysis by exit, symbol, side, holding time and entry time (24A), shown in the reports and the dashboard (24B), and a "Sharpe is real" check in the checkup (24C).
 - **Faster feedback and deeper trade analysis (25):** the test suite on every core (25A), and trade excursions (25B), also in the reports and the dashboard (25C).
 - **Counting the tries (26):** an opt-in trial log, the `trials` command and a checkup check against it (26A), used by sweeps and shown in the dashboard (26B).
-- **What to expect (27):** forward drawdowns, returns and losing streaks from a run's trades (27A).
+- **What to expect (27):** forward drawdowns, returns and losing streaks from a run's trades (27A), shown in the reports and the dashboard (27B).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

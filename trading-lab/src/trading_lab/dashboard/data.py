@@ -433,6 +433,13 @@ class DashboardData:
         del out["trades"]  # every trade is in recent_trades / export; keep the snapshot small
         return _clean(out)
 
+    def outlook(self, run_id: str, *, samples: int = 2000) -> dict[str, Any] | None:
+        """Drawdowns, returns and losing streaks to expect (see ``research.outlook``); None without trades."""
+        from trading_lab.research.outlook import outlook_for_run
+
+        result = outlook_for_run(self.store, run_id, samples=samples)
+        return None if result is None else _clean(result.to_dict())
+
     def trial_log(self, run_id: str) -> dict[str, Any] | None:
         """Logged research trials overlapping this run's period (see ``research.trials``); None when there are none."""
         from trading_lab.research.trials import trial_summary
@@ -473,6 +480,7 @@ class DashboardData:
             "monthly_returns": self.monthly_returns(run_id),
             "trade_breakdown": self.trade_breakdown(run_id),
             "trial_log": self.trial_log(run_id),
+            "outlook": self.outlook(run_id),
             "paper_runs": self.paper_runs(),
             "equity_points": len(curve),
         })

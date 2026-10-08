@@ -84,6 +84,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 26A (complete):** an opt-in trial log (`[storage] record_trials = true`) of every backtest, sweep, A/B test, checkup and permutation test. `trading-lab trials` counts how many configs you tried on the same data, and `checkup` grades a result against all of them.
 - **Stage 26B (complete):** with the trial log on, `sweep` also deflates its winner against every logged trial on the same data, and the dashboard and `dashboard-data` show the trial count and luck bar for the run's period.
 - **Stage 27A (complete):** `trading-lab outlook`: the drawdowns, returns and losing streaks to be ready for over the next trades, from a run's own trades.
+- **Stage 27B (complete):** the outlook in the HTML report ("What to be ready for"), the dashboard's Research section and `dashboard-data`.
 
 ### Stage 9/10 summary
 
@@ -181,7 +182,7 @@ One page, refreshed automatically (every 60 s by default):
 * **Latest decision:** every vote (RSI, MACD, Bollinger, Qwen Trend, Momentum, Risk) with confidence, weight and label, the ensemble result and the actions taken.
 * **AI rationales:** one card per agent and symbol.
 * **Agent performance** leaderboard: votes, confidence, correctness, trades influenced, pivotal trades, PnL when agreed or disagreed.
-* **Research:** strategy versus buy & hold return, max drawdown, Sharpe and profit factor, monthly returns, the market-regime table (see `trading-lab regimes`), trades by exit type and holding time with their excursions (see `trading-lab trades`), plus saved experiments and walk-forward results.
+* **Research:** strategy versus buy & hold return, max drawdown, Sharpe and profit factor, monthly returns, the market-regime table (see `trading-lab regimes`), trades by exit type and holding time with their excursions (see `trading-lab trades`), the drawdowns and losing streaks to be ready for (see `trading-lab outlook`), plus saved experiments and walk-forward results.
 * **Qwen usage:** calls, cache hits, failures, retries, latency and tokens.
 * **Recent trades and signals.**
 

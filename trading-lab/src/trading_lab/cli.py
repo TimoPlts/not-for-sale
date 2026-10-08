@@ -1177,6 +1177,10 @@ def cmd_dashboard_data(args: argparse.Namespace) -> int:
     usage = snap["usage"]["total"]
     if usage:
         print(f"Model usage: {usage['calls']} calls, {usage['cache_hits']} cache hits, {usage['failures']} failures")
+    outlook = snap.get("outlook")
+    if outlook:
+        print(f"Outlook (next {outlook['horizon']} trades): drawdown median {outlook['drawdown_median']:.1%}, "
+              f"bad case {outlook['drawdown_bad']:.1%}; losing streak bad case {outlook['streak_bad']}")
     trials = snap.get("trial_log")
     if trials:
         bar = trials["luck_bar_sharpe"]
