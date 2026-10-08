@@ -78,6 +78,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 24A (complete):** `trading-lab trades`: a run's closed trades by exit type (stop, trailing stop, take-profit, time stop, kill switch, signal), symbol, side, holding time and entry weekday or hour.
 - **Stage 24B (complete):** the trade breakdown in the HTML report ("Where the money comes from"), the dashboard's Research section and `dashboard-data`.
 - **Stage 24C (complete):** a "Sharpe is real" check in `checkup`, based on the probabilistic Sharpe ratio.
+- **Stage 25A (complete):** the test suite runs on every core (`pytest -n auto`): about 2 minutes instead of 7 to 10.
 
 ### Stage 9/10 summary
 
@@ -152,7 +153,7 @@ Run these from this folder in PowerShell. The `trading-lab` command lives in the
 .venv/Scripts/trading-lab paper --resume <run id>       # continue a stopped paper run
 .venv/Scripts/trading-lab report                        # list all runs
 .venv/Scripts/trading-lab report <run id>               # details of one run
-.venv/Scripts/python -m pytest                          # run all tests (pip install -e ".[dev,dashboard]")
+.venv/Scripts/python -m pytest -n auto                  # run all tests on every core (pip install -e ".[dev,dashboard]")
 ```
 
 To type just `trading-lab`, activate the environment first with `.venv\Scripts\Activate.ps1`.
@@ -617,10 +618,10 @@ Only a broken database or a bug stops the process; systemd then restarts it and 
 cd trading-lab
 python -m venv .venv
 .venv\Scripts\python -m pip install -e ".[dev]"
-.venv\Scripts\python -m pytest
+.venv\Scripts\python -m pytest -n auto
 ```
 
-On macOS or Linux, use `.venv/bin/python` instead.
+On macOS or Linux, use `.venv/bin/python` instead. `-n auto` runs the tests on every CPU core (`pytest-xdist`, part of the `dev` extra): about 2 minutes on 4 cores instead of 7 to 10. Plain `pytest` still works, one test at a time.
 
 ## Configuration
 

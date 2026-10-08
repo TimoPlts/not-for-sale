@@ -690,7 +690,13 @@ Trade-offs worth knowing:
 - The README example was regenerated from a fresh run (the demo's random-walk prices), and the thresholds list gained the new check.
 - Tests: the full check list on a real edge (which passes it), and every grade boundary and the losing-run advice through `evaluate`.
 
-## 5. Stage 11–24 status summary
+### Stage 25A: A faster test suite ✅
+- Profiling (`--durations`) showed the time spread over many live-against-backtest and resume tests. These are the safety net, so they stay as they are.
+- `pytest-xdist` joins the `dev` extra. `pytest -n auto` runs all 752 tests in about 1 min 50 s on 4 cores, against 7 to 10.5 minutes one at a time. Every test passed in parallel, which shows they use only their own temporary files. It is opt-in, so plain `pytest` behaves as before.
+- The digest fixture (the slowest setup at about 30 s) now simulates 3 days instead of 9 and tests a 2-day digest, with the same cases: a run stopped before the period, one started and stopped inside it, and two running. It takes about 10 s.
+- README and DEPLOYMENT.md use `pytest -n auto`.
+
+## 5. Stage 11–25 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -708,6 +714,7 @@ On top of the Stage 9/10 system:
 - **Running several configs live (22):** several paper runs on one VM with one watchdog (22A), a comparison of two live runs over the time they ran together (22B), and an overview of all paper runs in the dashboard (22C).
 - **Is it luck, and how is it going? (23):** probabilistic and deflated Sharpe ratios (23A), and a weekly digest of every paper run (23B).
 - **Where the money goes (24):** trade analysis by exit, symbol, side, holding time and entry time (24A), shown in the reports and the dashboard (24B), and a "Sharpe is real" check in the checkup (24C).
+- **Faster feedback (25):** the test suite on every core (25A).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

@@ -18,7 +18,7 @@ dependencies = [
 trading-lab = "trading_lab.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "pytest-xdist>=3"]  # pytest -n auto: the suite on every core
 dashboard = ["streamlit>=1.50"]  # read-only web dashboard (trading-lab dashboard)
 
 [tool.setuptools.packages.find]

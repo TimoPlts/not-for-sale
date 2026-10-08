@@ -36,19 +36,19 @@ def week_db(tmp_path_factory):
     clock = Clock(START + H + timedelta(minutes=1))
     with SQLiteStore(db) as store:
         old = trader(store, clock, "old")  # stops before the digest period
-        for _ in range(24):
+        for _ in range(12):
             old.run_cycle()
             clock.now += H
         old.stop()
         default, trend = trader(store, clock, "default"), trader(store, clock, "trend", PRESETS["trend"].config(BASE))
         late = None
-        for i in range(24 * 9):
-            if i == 24 * 6:
+        for i in range(72):  # three days; the digest below covers the last two
+            if i == 24:
                 late = trader(store, clock, "late")  # starts and stops inside the period
             for t in (default, trend, late):
                 if t is not None:
                     t.run_cycle()
-            if i == 24 * 8:
+            if i == 48:
                 late.stop()
                 late = None
             clock.now += H
@@ -58,16 +58,16 @@ def week_db(tmp_path_factory):
 def test_digest_contents(week_db):
     db, now = week_db
     with SQLiteStore(db, readonly=True) as store:
-        d = build_digest(store, days=7, now=now)
+        d = build_digest(store, days=2, now=now)
         assert [s.run_id for s in d.runs] == ["default", "late", "trend"]  # "old" stopped before the period
         assert d.checks == {"default": "OK", "late": None, "trend": "OK"} and d.ok
         for s in d.runs:
-            expected = build_summary(store, s.run_id, hours=7 * 24, now=now)
+            expected = build_summary(store, s.run_id, hours=2 * 24, now=now)
             assert s.equity_change_pct == pytest.approx(expected.equity_change_pct)
             assert len(s.trades) == len(expected.trades)
         assert len(d.comparisons) == 1
         assert d.comparisons[0].verdict == live_compare(store, "default", "trend").verdict
-        later = build_digest(store, days=7, now=now + 10 * H)
+        later = build_digest(store, days=2, now=now + 10 * H)
         assert later.checks["default"].startswith("stalled") and not later.ok
     text = format_digest(d)
     assert "default (running)" in text and "late (stopped)" in text and "old" not in text
