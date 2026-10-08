@@ -743,7 +743,26 @@ Trade-offs worth knowing:
 - `DashboardData.trial_log(run_id)` gives the trials overlapping the run's bars (count, configs, luck bar, best, the run's Sharpe), or None. It is in the snapshot, the dashboard's Research section (a caption) and `dashboard-data` (a line).
 - Tests: the sweep line only with earlier trials and recording on, with the right count; the dashboard data, snapshot, text line and caption; no log, no line.
 
-## 5. Stage 11–26 status summary
+### Stage 27A: Forward risk (outlook) ✅
+- `research/outlook.py`: `trade_returns` gives each closed trade's PnL relative to the equity just before it closed, in order. `simulate` draws `horizon` trades with replacement into `samples` compounding paths (seeded per run size and horizon). For each path it measures:
+  - the max drawdown (median, 95th percentile, and the chance of reaching 10/20/30%);
+  - the final return (5/50/95th percentiles, and the chance of a loss);
+  - the longest losing streak (median and 95th percentile).
+  The run's own trade-by-trade drawdown is shown for comparison. There are warnings for fewer than 30 trades and for horizons beyond 3x the run.
+- CLI: `trading-lab outlook [RUN_ID] [--trades N] [--samples 5000] [--seed 7] [--json]`, read-only. A run without trades says so (JSON `null`).
+- Tests:
+  - drawdowns and streaks by hand (below the start, flat trades);
+  - simulation properties: seeded, monotone probabilities, longer horizons deeper, all-winning and all-losing extremes, warnings, invalid input including `horizon=0`;
+  - trade returns recomputed from a backtest's equity curve;
+  - the CLI (text, JSON, errors, no trades).
+
+### Stage 27B: The outlook in the reports ✅
+- `DashboardData.outlook(run_id, samples=2000)` gives the outlook as a dict, or None without trades. It is in the snapshot.
+- HTML report: "What to be ready for", a median and bad-case table (drawdown against the run's own, return with the chance of a loss, losing streak), the drawdown chances, warnings and the caveat.
+- Dashboard Research section: four metrics (bad-case drawdown, chance of a 20% drawdown, chance of a loss, bad-case losing streak) with a caption. `dashboard-data`: an "Outlook" line.
+- Tests: the data against `outlook_for_run`, the snapshot and text line, the HTML section (absent without trades), and the dashboard metrics.
+
+## 5. Stage 11–27 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -763,6 +782,7 @@ On top of the Stage 9/10 system:
 - **Where the money goes (24):** trade analysis by exit, symbol, side, holding time and entry time (24A), shown in the reports and the dashboard (24B), and a "Sharpe is real" check in the checkup (24C).
 - **Faster feedback and deeper trade analysis (25):** the test suite on every core (25A), and trade excursions (25B), also in the reports and the dashboard (25C).
 - **Counting the tries (26):** an opt-in trial log, the `trials` command and a checkup check against it (26A), used by sweeps and shown in the dashboard (26B).
+- **What to expect (27):** forward drawdowns, returns and losing streaks from a run's trades (27A), shown in the reports and the dashboard (27B).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

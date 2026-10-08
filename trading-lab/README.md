@@ -83,6 +83,8 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 25C (complete):** the excursions in the HTML report and the dashboard as well.
 - **Stage 26A (complete):** an opt-in trial log (`[storage] record_trials = true`) of every backtest, sweep, A/B test, checkup and permutation test. `trading-lab trials` counts how many configs you tried on the same data, and `checkup` grades a result against all of them.
 - **Stage 26B (complete):** with the trial log on, `sweep` also deflates its winner against every logged trial on the same data, and the dashboard and `dashboard-data` show the trial count and luck bar for the run's period.
+- **Stage 27A (complete):** `trading-lab outlook`: the drawdowns, returns and losing streaks to be ready for over the next trades, from a run's own trades.
+- **Stage 27B (complete):** the outlook in the HTML report ("What to be ready for"), the dashboard's Research section and `dashboard-data`.
 
 ### Stage 9/10 summary
 
@@ -180,7 +182,7 @@ One page, refreshed automatically (every 60 s by default):
 * **Latest decision:** every vote (RSI, MACD, Bollinger, Qwen Trend, Momentum, Risk) with confidence, weight and label, the ensemble result and the actions taken.
 * **AI rationales:** one card per agent and symbol.
 * **Agent performance** leaderboard: votes, confidence, correctness, trades influenced, pivotal trades, PnL when agreed or disagreed.
-* **Research:** strategy versus buy & hold return, max drawdown, Sharpe and profit factor, monthly returns, the market-regime table (see `trading-lab regimes`), trades by exit type and holding time with their excursions (see `trading-lab trades`), plus saved experiments and walk-forward results.
+* **Research:** strategy versus buy & hold return, max drawdown, Sharpe and profit factor, monthly returns, the market-regime table (see `trading-lab regimes`), trades by exit type and holding time with their excursions (see `trading-lab trades`), the drawdowns and losing streaks to be ready for (see `trading-lab outlook`), plus saved experiments and walk-forward results.
 * **Qwen usage:** calls, cache hits, failures, retries, latency and tokens.
 * **Recent trades and signals.**
 
@@ -498,6 +500,31 @@ Robustness (5000 bootstrap samples, seed 7; ranges are 5th .. median .. 95th per
 * The **block bootstrap** redraws blocks of about √n bars of the equity curve's returns, so calm and volatile stretches stay together.
 
 A range that spans both gains and losses, or fewer than 30 trades, means the run alone shows nothing either way. The HTML report includes the same table.
+
+## What should you be ready for? (`outlook`)
+
+```bash
+trading-lab outlook                       # the latest run, over as many trades as it made
+trading-lab outlook <run id> --trades 300 --json
+```
+
+It resamples the run's closed trades into 5,000 possible futures (seeded, so the numbers are repeatable). Each trade's return is relative to the equity just before it closed, and the returns compound. It reports:
+
+* the max drawdown to be ready for, as a median and a bad case (1 in 20), next to the run's own;
+* the chance of a 10%, 20% or 30% drawdown;
+* the range of returns and the chance of a loss;
+* the longest losing streak.
+
+```
+Run bt-7169d978c6ec: the next 122 trades, resampled 5,000 times from the run's 122 trades
+  max drawdown       median 9.5%, bad case (1 in 20) 16.2%   (the run itself: 11.5%)
+  chance of a drawdown of at least 10%: 45%, 20%: 1%, 30%: 0%
+  return             -15.1% .. median -7.2% .. +1.9%   (chance of a loss 91%)
+  losing streak      median 8 trades, bad case 13 in a row
+Trades are drawn independently and drawdowns are measured trade by trade, so real streaks and dips can be worse: treat the bad case as a floor to prepare for, not a worst case.
+```
+
+(The 90-day synthetic `trend` backtest from the `trades` section: an illustration of the layout, not a result.) Size positions so that the bad-case drawdown and losing streak are something you would sit through. A strategy is usually abandoned at its worst moment, and this shows roughly how bad that moment can get. The real thing can be worse: trades are drawn independently, drawdowns are measured trade by trade, and markets unlike the tested period are not in the sample. Read-only.
 
 ## Run summary
 

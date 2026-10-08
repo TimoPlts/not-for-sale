@@ -234,6 +234,18 @@ def research_section(data: DashboardData, run_id: str) -> None:
             st.caption(sentence)
         for note in breakdown["observations"]:
             st.caption(f"• {note}")
+    outlook = data.outlook(run_id)
+    if outlook:
+        st.markdown(f"What to be ready for over the next {outlook['horizon']} trades (resampled from this run's "
+                    f"{outlook['trades']})")
+        cols = st.columns(4)
+        cols[0].metric("Drawdown, bad case", _pct(-outlook["drawdown_bad"]))
+        twenty = next((p["probability"] for p in outlook["prob_drawdown"] if abs(p["level"] - 0.2) < 1e-9), None)
+        cols[1].metric("Chance of a 20% drawdown", _pct(twenty, signed=False))
+        cols[2].metric("Chance of a loss", _pct(outlook["prob_loss"], signed=False))
+        cols[3].metric("Losing streak, bad case", f"{outlook['streak_bad']} trades")
+        st.caption("Bad case = 1 in 20 futures. Trades are drawn independently and drawdowns measured trade by "
+                   "trade, so reality can be worse (see `trading-lab outlook`).")
     trials = data.trial_log(run_id)
     if trials:
         bar = trials["luck_bar_sharpe"]

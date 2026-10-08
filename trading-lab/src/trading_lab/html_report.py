@@ -227,6 +227,7 @@ def build_html_report(db_path: str, run_id: str | None = None, *, horizon: int =
         regimes = data.regimes(run_id)
         monthly = data.monthly_returns(run_id)
         breakdown = data.trade_breakdown(run_id)
+        outlook = data.outlook(run_id)
         fingerprint = data.store.get_run(run_id)["config_fingerprint"]
         decisions = data.store.load_decisions(run_id, include_holds=False)
     m, b = research["metrics"] or {}, research["benchmark"] or {}
@@ -319,6 +320,24 @@ def build_html_report(db_path: str, run_id: str | None = None, *, horizon: int =
             + f'<p class="muted">Trend from the {regimes["trend_bars"]}-bar average of an equal-weight index of the '
             f'symbols; volatility against its median. Returns compound only that regime\'s bars; '
             f'{regimes["warmup_bars"]} warm-up bars are in no regime.</p></div>')
+
+    if outlook:
+        rows = [[_td("Max drawdown"), _td(f'{outlook["drawdown_median"]:.1%}'), _td(f'{outlook["drawdown_bad"]:.1%}'),
+                 _td(f'run: {outlook["actual_drawdown"]:.1%}')],
+                [_td("Return"), _td(_pct(outlook["return_median"]), _cls(outlook["return_median"])),
+                 _td(_pct(outlook["return_low"]), _cls(outlook["return_low"])),
+                 _td(f'chance of a loss {outlook["prob_loss"]:.0%}')],
+                [_td("Losing streak"), _td(f'{outlook["streak_median"]} trades'), _td(f'{outlook["streak_bad"]} trades'),
+                 _td("")]]
+        chances = ", ".join(f'{p["level"]:.0%}: {p["probability"]:.0%}' for p in outlook["prob_drawdown"])
+        out.append(f'<h2>What to be ready for</h2><div class="card">'
+                   f'<p>The next {outlook["horizon"]} trades, resampled {outlook["samples"]:,} times from the run\'s '
+                   f'{outlook["trades"]}.</p>'
+                   + _table(["", "Median", "Bad case (1 in 20)", ""], rows)
+                   + f"<p>Chance of a drawdown of at least {_e(chances)}.</p>"
+                   + "".join(f'<p class="muted">⚠ {_e(w)}</p>' for w in outlook["warnings"])
+                   + '<p class="muted">Trades are drawn independently and drawdowns measured trade by trade, so '
+                   "real streaks and dips can be worse: treat the bad case as a floor to prepare for.</p></div>")
 
     if breakdown:
         titles = {"exit": "Exit", "side": "Side", "holding": "Holding time", "symbol": "Symbol"}

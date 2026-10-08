@@ -27,6 +27,7 @@
     trading-lab regimes [RUN_ID] [--trend-bars 50] [--vol-bars 24] [--json]
     trading-lab trades [RUN_ID] [--by exit,symbol,side,holding,weekday[,hour]] [--json] [--csv FILE]
     trading-lab trials [--days N | --start/--end] [--timeframe 1h] [--json]   (the research trial log)
+    trading-lab outlook [RUN_ID] [--trades N] [--samples 5000] [--json]   (drawdowns and streaks to expect)
     trading-lab ab A.toml B.toml [--days 180 | --start/--end] [--windows 6] [--metric total_return]
     trading-lab status [PAPER_RUN_ID | --all] [--max-behind 2] [--alert] [--json]   (watchdog; exit 1 if not OK)
     trading-lab live-compare RUN_A RUN_B [--min-days 14] [--json]   (two paper runs over the time they ran together)
@@ -722,6 +723,28 @@ def cmd_trials(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_outlook(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.research.outlook import format_outlook, outlook_for_run
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        run_id = args.run_id or _latest_run_id(store)
+        try:
+            outlook = outlook_for_run(store, run_id, horizon=args.trades, samples=args.samples, seed=args.seed)
+        except ValueError as exc:
+            raise TradingLabError(str(exc)) from None
+    if args.json:
+        print(_json.dumps(None if outlook is None else outlook.to_dict(), indent=2))
+    else:
+        print(format_outlook(outlook, run_id))
+    return 0
+
+
 def cmd_ab(args: argparse.Namespace) -> int:
     import json as _json
 
@@ -1154,6 +1177,10 @@ def cmd_dashboard_data(args: argparse.Namespace) -> int:
     usage = snap["usage"]["total"]
     if usage:
         print(f"Model usage: {usage['calls']} calls, {usage['cache_hits']} cache hits, {usage['failures']} failures")
+    outlook = snap.get("outlook")
+    if outlook:
+        print(f"Outlook (next {outlook['horizon']} trades): drawdown median {outlook['drawdown_median']:.1%}, "
+              f"bad case {outlook['drawdown_bad']:.1%}; losing streak bad case {outlook['streak_bad']}")
     trials = snap.get("trial_log")
     if trials:
         bar = trials["luck_bar_sharpe"]
@@ -1764,6 +1791,14 @@ def build_parser() -> argparse.ArgumentParser:
     tl.add_argument("--timeframe", help="default: the config's timeframe")
     tl.add_argument("--json", action="store_true", help="machine-readable output, with every trial")
     tl.set_defaults(func=cmd_trials)
+
+    ol = sub.add_parser("outlook", help="drawdowns, returns and losing streaks to expect over the next trades")
+    ol.add_argument("run_id", nargs="?", help="default: the latest run")
+    ol.add_argument("--trades", type=int, help="trades per simulated future (default: as many as the run made)")
+    ol.add_argument("--samples", type=int, default=5000, help="simulated futures (default 5000)")
+    ol.add_argument("--seed", type=int, default=7, help="random seed (default 7)")
+    ol.add_argument("--json", action="store_true", help="machine-readable output")
+    ol.set_defaults(func=cmd_outlook)
 
     ex = sub.add_parser("export", help="write a stored run to CSV files and a JSON summary")
     ex.add_argument("run_id")
