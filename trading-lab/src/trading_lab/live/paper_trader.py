@@ -42,7 +42,7 @@ from trading_lab.core.models import Decision, DecisionAction, Fill
 from trading_lab.core.timeutils import ensure_utc
 from trading_lab.data.base import MarketDataProvider, timeframe_delta
 from trading_lab.engine import Bar, Intent, TradingSession
-from trading_lab.engine.filters import correlation_lookup, filter_columns
+from trading_lab.engine.filters import correlation_lookup, filter_columns, trend_filter_history
 from trading_lab.engine.session import RestingLimit
 from trading_lab.execution.costs import market_stats_frame, next_bar_stats, stats_series
 from trading_lab.alerts import AlertManager
@@ -106,7 +106,8 @@ class LivePaperTrader:
         self._voting = build_voting(config, self._strategies)
         self._step = timeframe_delta(config.market.timeframe)
         voting = config.voting
-        self._history = max(max(s.history_bars for s in self._strategies), config.risk.trend_filter_period + 1,
+        self._history = max(max(s.history_bars for s in self._strategies),
+                            trend_filter_history(config.risk, config.market.timeframe),
                             config.risk.correlation_lookback + 2 if config.risk.max_correlated_positions else 0,
                             voting.regime_bars + voting.regime_slope_bars + 1 if voting.regime_weights else 0)
 
@@ -289,7 +290,8 @@ class LivePaperTrader:
                 sym: stats_series(market_stats_frame(frame, lookback, cfg.risk.atr_period))
                 for sym, frame in candles.items()
             }
-            filters = {sym: filter_columns(frame, cfg.risk, cfg.voting) for sym, frame in candles.items()}
+            filters = {sym: filter_columns(frame, cfg.risk, cfg.voting, cfg.market.timeframe)
+                       for sym, frame in candles.items()}
             correlations = correlation_lookup(candles, cfg.risk)
             columns = ("open", "high", "low", "close", "volume")
             for t in new_bars:

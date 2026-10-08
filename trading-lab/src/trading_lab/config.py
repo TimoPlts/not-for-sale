@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from trading_lab.core.errors import ConfigError
-from trading_lab.core.symbols import SUPPORTED_SYMBOLS, SUPPORTED_TIMEFRAMES, split_symbol
+from trading_lab.core.symbols import SUPPORTED_SYMBOLS, SUPPORTED_TIMEFRAMES, split_symbol, timeframe_to_seconds
 
 
 def _require(condition: bool, message: str) -> None:
@@ -166,6 +166,9 @@ class RiskConfig:
     position_volatility_pct: float = 0.0
     # Entry filters: they only block NEW entries (never force an exit, never override breakers).
     trend_filter_period: int = 0  # no new entry while the close is below its N-bar simple average (0 = off)
+    # The bars of that average: "" = the trading timeframe; e.g. "1d" = the last N completed daily closes,
+    # so an hourly strategy only buys in a daily uptrend (a multiple of market.timeframe).
+    trend_filter_timeframe: str = ""
     block_entries_on_risk_states: tuple[str, ...] = ()  # e.g. ("extreme",) or ("high", "extreme")
     risk_state_max_age_bars: int = 8  # how long a reported risk_state stays in force
     # Correlation limit (0 = off): no new entry if this many open/pending positions already move with it.
@@ -191,6 +194,11 @@ class RiskConfig:
             and 0 <= self.trend_filter_period <= 2000,
             f"risk.trend_filter_period must be an integer in [0, 2000], got {self.trend_filter_period!r}",
         )
+        _require(self.trend_filter_timeframe == "" or self.trend_filter_timeframe in SUPPORTED_TIMEFRAMES,
+                 f"risk.trend_filter_timeframe must be empty (the trading timeframe) or one of "
+                 f"{list(SUPPORTED_TIMEFRAMES)}, got {self.trend_filter_timeframe!r}")
+        _require(not self.trend_filter_timeframe or self.trend_filter_period > 0,
+                 "risk.trend_filter_timeframe needs risk.trend_filter_period > 0")
         _require(isinstance(self.block_entries_on_risk_states, (list, tuple)),
                  "risk.block_entries_on_risk_states must be a list")
         states = tuple(self.block_entries_on_risk_states)
@@ -558,6 +566,12 @@ class AppConfig:
         voting = {s.name for s in self.strategies if s.enabled and s.weight > 0}
         silent = sorted(set(self.voting.confirmers) - voting)
         _require(not silent, f"voting.confirmers must be enabled strategies with a positive weight: {silent}")
+        if self.risk.trend_filter_timeframe:
+            filter_seconds = timeframe_to_seconds(self.risk.trend_filter_timeframe)
+            bar_seconds = timeframe_to_seconds(self.market.timeframe)
+            _require(filter_seconds >= bar_seconds and filter_seconds % bar_seconds == 0,
+                     f"risk.trend_filter_timeframe {self.risk.trend_filter_timeframe!r} must be a multiple of "
+                     f"market.timeframe {self.market.timeframe!r}")
         enabled = [s for s in self.strategies if s.enabled]
         _require(bool(enabled), "at least one strategy must be enabled")
         _require(
