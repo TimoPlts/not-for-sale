@@ -29,6 +29,7 @@
     trading-lab trials [--days N | --start/--end] [--timeframe 1h] [--json]   (the research trial log)
     trading-lab outlook [RUN_ID] [--trades N] [--samples 5000] [--json]   (drawdowns and streaks to expect)
     trading-lab size [RUN_ID] --max-drawdown 20% [--trades N] [--json]   (risk per trade for a drawdown budget)
+    trading-lab desk [RUN_ID | --all] [--hours 24] [--alert] [--json]   (the funnel: leads -> fills -> exits)
     trading-lab ab A.toml B.toml [--days 180 | --start/--end] [--windows 6] [--metric total_return]
     trading-lab status [PAPER_RUN_ID | --all] [--max-behind 2] [--alert] [--json]   (watchdog; exit 1 if not OK)
     trading-lab live-compare RUN_A RUN_B [--min-days 14] [--json]   (two paper runs over the time they ran together)
@@ -804,6 +805,47 @@ def cmd_size(args: argparse.Namespace) -> int:
             print(format_verification(verification))
         elif args.verify:
             print("\n(--verify: no suggestion to verify)")
+    return 0
+
+
+def cmd_desk(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from trading_lab.research.desk import desk_funnel, format_funnel
+    from trading_lab.status import latest_paper_run, running_paper_runs
+    from trading_lab.storage import SQLiteStore
+
+    cfg = _load_config(args)
+    if not Path(cfg.storage.db_path).exists():
+        raise TradingLabError(f"no database at {cfg.storage.db_path}")
+    if args.all and args.run_id:
+        raise TradingLabError("use either a run id or --all, not both")
+    with SQLiteStore(cfg.storage.db_path, readonly=True) as store:
+        if args.all:
+            run_ids = running_paper_runs(store)
+        else:
+            run_ids = [args.run_id or latest_paper_run(store) or _latest_run_id(store)]
+        try:
+            funnels = [desk_funnel(store, r, hours=args.hours) for r in run_ids]
+        except ValueError as exc:
+            raise TradingLabError(str(exc)) from None
+    if args.json:
+        print(_json.dumps([f.to_dict() for f in funnels] if args.all else funnels[0].to_dict(), indent=2,
+                          default=str))
+        text = ""
+    else:
+        text = "\n\n".join(format_funnel(f, recent=args.leads) for f in funnels) or "No paper run is running."
+        print(text)
+    if args.alert:
+        from trading_lab.alerts import build_alerts
+
+        alerts = build_alerts(cfg)
+        body = text or "\n\n".join(format_funnel(f, recent=args.leads) for f in funnels)
+        if alerts is None:
+            print("(--alert: alerts are disabled in the config, nothing sent)", file=sys.stderr)
+        elif not alerts.emit("info", "Desk report", body or "No paper run is running.", force=True,
+                             run_id=None if args.all else run_ids[0]):
+            print("(--alert: the report could not be delivered; see the warning above)", file=sys.stderr)
     return 0
 
 
@@ -1872,6 +1914,15 @@ def build_parser() -> argparse.ArgumentParser:
     sz.add_argument("--verify", action="store_true",
                     help="re-run the stored backtest at the suggested size (same period and data; nothing stored)")
     sz.set_defaults(func=cmd_size)
+
+    dk = sub.add_parser("desk", help="the desk funnel: leads, confirmations, fills and exits, with lead IDs")
+    dk.add_argument("run_id", nargs="?", help="default: the running paper run, else the latest run")
+    dk.add_argument("--all", action="store_true", help="every running paper run")
+    dk.add_argument("--hours", type=float, help="only leads in the last N hours of the run (default: all)")
+    dk.add_argument("--leads", type=int, default=10, help="confirmed leads to list (default 10)")
+    dk.add_argument("--alert", action="store_true", help="send it through the configured alert channels")
+    dk.add_argument("--json", action="store_true", help="machine-readable output, with every lead")
+    dk.set_defaults(func=cmd_desk)
 
     ex = sub.add_parser("export", help="write a stored run to CSV files and a JSON summary")
     ex.add_argument("run_id")

@@ -196,6 +196,18 @@ sudo -u tradinglab bash -c 'cd /opt/trading-lab/trading-lab && .venv/bin/trading
 
 It is read-only, like the watchdog, and is sent whatever `min_level` is set to.
 
+## 5f. Evening desk report (optional)
+
+Every evening at 21:00 (the VM's time zone; check it with `timedatectl`), one message through the channels in `[alerts]`, for example Telegram. It shows each running paper run's last 24 hours as a funnel: leads, confirmed, cleared, executed and closed. It also counts why confirmed setups died and lists the latest leads by ID:
+
+```bash
+sudo cp deploy/systemd/trading-lab-desk.service deploy/systemd/trading-lab-desk.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now trading-lab-desk.timer
+sudo -u tradinglab bash -c 'cd /opt/trading-lab/trading-lab && .venv/bin/trading-lab desk --all --hours 24'   # preview
+```
+
+Like the watchdog and the digest, it is read-only and is sent whatever `min_level` is set to.
+
 ## 6. Where things are
 
 | what | where |

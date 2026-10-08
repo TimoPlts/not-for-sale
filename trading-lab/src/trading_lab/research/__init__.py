@@ -22,6 +22,7 @@ from trading_lab.research.experiments import (
     variant_overrides,
 )
 from trading_lab.research.live_compare import LiveComparison, format_live_compare, live_compare
+from trading_lab.research.desk import Funnel, desk_funnel, format_funnel
 from trading_lab.research.trials import TrialSummary, record_trials, trial, trial_summary
 from trading_lab.research.trades import TradeAnalysis, analyze_trades, format_trades
 from trading_lab.research.permutation import PermutationResult, format_permutation, permutation_test
@@ -48,6 +49,9 @@ from trading_lab.research.walkforward import (
 )
 
 __all__ = [
+    "Funnel",
+    "desk_funnel",
+    "format_funnel",
     "TrialSummary",
     "record_trials",
     "trial",

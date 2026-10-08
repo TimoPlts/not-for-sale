@@ -87,6 +87,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 27B (complete):** the outlook in the HTML report ("What to be ready for"), the dashboard's Research section and `dashboard-data`.
 - **Stage 28A (complete):** `trading-lab size --max-drawdown 20%`: the risk per trade at which the bad-case drawdown matches your budget, using the size limits each entry recorded.
 - **Stage 28B (complete):** `size --verify` re-runs the stored backtest at the suggested size and compares the real drawdown and return with the estimate.
+- **Stage 29A (complete):** `trading-lab desk`: the desk funnel (scanned, leads, confirmed, cleared, executed, closed) with a lead ID for every setup, why confirmed setups died, and an evening desk report at 21:00 through the alert channels.
 
 ### Stage 9/10 summary
 
@@ -569,6 +570,52 @@ Verification backtest at 1.27x (risk_per_trade_pct 0.0127), same period and data
 ```
 
 One period is one path: a drawdown below the budget here does not prove the budget holds, it only shows the estimate is not off. `--verify` works on stored backtests, not paper runs, and not with AI agents (it would call the model). Read-only.
+
+## The desk (`desk`)
+
+The bot is organised like a small trading desk, for BTC, ETH and other large coins, with simulated fills only:
+
+| seat | who | does |
+|---|---|---|
+| head of desk | the voting engine and the circuit breakers | routes every setup, halts the floor at the daily loss limit or the kill switch |
+| scouts | RSI, MACD, Bollinger, Donchian, MA cross, the Qwen trend and momentum agents | each votes BUY, SELL or HOLD; agents only produce opinions |
+| risk | the Qwen risk agent, the entry filters, the risk manager | clears or blocks every entry and sizes it |
+| execution and exits | the paper executor; stops, trailing stops, take-profit, time stop | fills at the next open, manages every open position |
+| evening report | `desk`, `summary`, `digest`, Telegram alerts | tells you what happened without opening a chart |
+
+No seat holds keys or can place a real order. `trading-lab desk` shows the funnel that every setup passes through:
+
+1. **scanned:** every symbol-bar evaluated;
+2. **leads:** a strategy or agent voted to enter while flat;
+3. **confirmed:** the vote passed;
+4. **cleared:** it passed the entry filters, the breakers and the risk manager;
+5. **executed:** it filled;
+6. **closed:** the position was closed.
+
+Each lead gets an ID so its thread can be followed from the first vote to the exit:
+
+```bash
+trading-lab desk                         # the running paper run (else the latest run), the whole run
+trading-lab desk --all --hours 24        # every running paper run, the last 24 hours
+trading-lab desk <run id> --json         # every lead with its votes, stage and outcome
+```
+
+```
+Desk funnel for bt-7169d978c6ec (2026-10-04 18:00 -> 2026-10-07 18:00 UTC)
+  scanned        292  symbol-bars evaluated
+  leads           39  a strategy voted to enter while flat
+  confirmed        5  the vote passed  (13%)
+  cleared          5  passed filters, breakers and risk  (100%)
+  executed         5  filled  (100%)
+  closed           3  position closed  (60%)
+  closed: 3 won, 0 lost, PnL +98.54; 2 still open
+Latest confirmed leads (3):
+  L-1172 2026-10-06 09:00 BTC/USDT   long  votes: macd, donchian -> closed by signal, PnL +68.36
+  L-1179 2026-10-06 16:00 ETH/USDT   long  votes: donchian, ma_cross -> open
+  L-1189 2026-10-07 17:00 BTC/USDT   long  votes: macd, donchian -> open
+```
+
+(The synthetic `trend` backtest: an illustration of the layout.) Confirmed setups that died are counted by reason, such as "filter: trend filter", "risk: max open positions reached" or "circuit breaker: max drawdown". `desk --all --hours 24 --alert` sends the funnel as the evening report, and the systemd timer in `deploy/systemd/trading-lab-desk.*` does it at 21:00 (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), section 5f). Read-only.
 
 ## Run summary
 
