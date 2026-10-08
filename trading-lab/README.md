@@ -79,6 +79,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 24B (complete):** the trade breakdown in the HTML report ("Where the money comes from"), the dashboard's Research section and `dashboard-data`.
 - **Stage 24C (complete):** a "Sharpe is real" check in `checkup`, based on the probabilistic Sharpe ratio.
 - **Stage 25A (complete):** the test suite runs on every core (`pytest -n auto`): about 2 minutes instead of 7 to 10.
+- **Stage 25B (complete):** `trades` shows how far each trade went against you and for you while it was open (MAE/MFE), next to the configured stop-loss.
 
 ### Stage 9/10 summary
 
@@ -411,7 +412,18 @@ By exit
   time stop             9   89%     +552.46   +3.52%     72.0    +111.90     -20.08 28.51
 ```
 
-(A 90-day synthetic backtest of the `trend` preset: an illustration of the layout, not a result.) Small groups are noise. Turn a hunch from this table into a config change and test it with `ab` or `walkforward` before trusting it. `--csv` writes every trade with its exit type and holding time. Read-only.
+Each group also shows the average **mae** (maximum adverse excursion: the worst move against the entry while the trade was open) and **mfe** (maximum favourable excursion: the best move in its favour), measured on the run's stored candles. A summary puts them in context:
+
+```
+Excursions (mae: worst move against the entry while open, mfe: best move for it; 122 trades)
+  90% of winning trades went at most 2.41% against the entry; the stop-loss is 5.0%
+  28 of 74 losing trades were at least 1% in profit at some point
+  e-ratio 1.21 (average mfe / average |mae|; above 1, trades move further for you than against you)
+```
+
+These are facts about past trades, not settings to copy. A tighter stop would also have changed which trades were taken, so test a change with `ab` or `walkforward`. Moves inside the exit candle before a stop or target filled are not seen.
+
+(A 90-day synthetic backtest of the `trend` preset: an illustration of the layout, not a result.) Small groups are noise. Turn a hunch from this table into a config change and test it with `ab` or `walkforward` before trusting it. `--csv` writes every trade with its exit type, holding time, mae and mfe. Read-only.
 
 ## Could a market without patterns do as well? (`permutation-test`)
 

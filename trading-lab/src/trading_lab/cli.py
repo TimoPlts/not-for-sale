@@ -669,7 +669,7 @@ def cmd_trades(args: argparse.Namespace) -> int:
         rows = analysis.to_dict()["trades"]
         Path(args.csv).parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(rows, columns=["symbol", "side", "opened_at", "closed_at", "pnl", "return_pct", "bars_held",
-                                    "exit_reason"]).to_csv(args.csv, index=False)
+                                    "exit_reason", "mae", "mfe"]).to_csv(args.csv, index=False)
         print(f"Trades written to {Path(args.csv).resolve()}", file=sys.stderr if args.json else sys.stdout)
     return 0
 

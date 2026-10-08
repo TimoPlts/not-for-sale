@@ -696,6 +696,17 @@ Trade-offs worth knowing:
 - The digest fixture (the slowest setup at about 30 s) now simulates 3 days instead of 9 and tests a 2-day digest, with the same cases: a run stopped before the period, one started and stopped inside it, and two running. It takes about 10 s.
 - README and DEPLOYMENT.md use `pytest -n auto`.
 
+### Stage 25B: Trade excursions (MAE/MFE) ✅
+- `research/trades.py`: each trade gets `mae` (0 or negative) and `mfe` (0 or positive) as fractions of the break-even entry price, as in the PnL.
+  - They span the lows and highs of the stored candles from the entry bar up to the exit bar, plus the exit price; shorts are mirrored.
+  - Runs without stored candles (before schema v3) get None.
+- Groups gain `avg_mae` and `avg_mfe`. `Excursions` summarises:
+  - the dip that 90% of winners stayed within, next to the fixed stop-loss (None for ATR stops, which differ per trade);
+  - the losing trades that were at least 1% up at some point;
+  - the e-ratio.
+- The `trades` text, JSON and CSV include them.
+- Tests: excursions by hand (long, short, never adverse, exit in the entry bar) and the summary by hand; every trade of a long and a long/short backtest recomputed independently from the bars, with the exit inside the excursion range; the stop shown or not; a run without candles; the CLI.
+
 ## 5. Stage 11–25 status summary
 
 On top of the Stage 9/10 system:
@@ -714,7 +725,7 @@ On top of the Stage 9/10 system:
 - **Running several configs live (22):** several paper runs on one VM with one watchdog (22A), a comparison of two live runs over the time they ran together (22B), and an overview of all paper runs in the dashboard (22C).
 - **Is it luck, and how is it going? (23):** probabilistic and deflated Sharpe ratios (23A), and a weekly digest of every paper run (23B).
 - **Where the money goes (24):** trade analysis by exit, symbol, side, holding time and entry time (24A), shown in the reports and the dashboard (24B), and a "Sharpe is real" check in the checkup (24C).
-- **Faster feedback (25):** the test suite on every core (25A).
+- **Faster feedback and deeper trade analysis (25):** the test suite on every core (25A), and trade excursions (25B).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.
