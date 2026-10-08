@@ -1,0 +1,10 @@
+# Runs trading-lab-desk.service every evening at 21:00 in the VM's time zone (set it with timedatectl).
+[Unit]
+Description=Send the trading-lab evening desk report
+
+[Timer]
+OnCalendar=*-*-* 21:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

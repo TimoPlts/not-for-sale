@@ -776,7 +776,26 @@ Trade-offs worth knowing:
 - CLI: `size --verify`, with the data source rebuilt like `reconcile`'s (synthetic runs replay their seed). It refuses up front, before any work, for paper runs (no fixed period) and configs with AI agents (no model calls). `--json` adds `verification`; without a suggestion it says so.
 - Tests: the verification equals an independent backtest at that risk; the text output; no suggestion; refusals for a paper run and an agents config.
 
-## 5. Stage 11–28 status summary
+### Stage 29A: The desk funnel and lead IDs ✅
+- `research/desk.py`: `desk_funnel(store, run_id, hours=None)` rebuilds a run's funnel from its audit trail (votes from the signals table, decisions in processing order, trades from `research.trades`).
+  - **scanned:** signal-stage decisions.
+  - **lead:** an entry vote while flat. The position state is tracked through fills and exits; shorts count only when allowed.
+  - **confirmed:** the ensemble's entry signal.
+  - **cleared:** scheduled after the filters, then not rejected at the next open (a limit order counts once it is working).
+  - **executed:** the fill.
+  - **closed:** the exit, with the trade's PnL and exit type.
+- Lead IDs (`L-0001`...) follow time order over the whole run, so a window keeps the same IDs.
+- Confirmed leads that went no further are counted by a normalised reason (no numbers or dates): filter, circuit breaker, risk limit, an order already working, size too small, or expired.
+- CLI: `trading-lab desk [RUN_ID | --all] [--hours N] [--leads 10] [--alert] [--json]`. The default is the running paper run, else the latest run. `--alert` sends "Desk report" whatever `min_level` is set to.
+- `deploy/systemd/trading-lab-desk.service` and `.timer`: daily at 21:00 (`Persistent=true`, read-only paths), described in DEPLOYMENT.md section 5f. The README gets a desk section mapping the seats (head, scouts, risk, execution, report) onto the existing parts.
+- Tests:
+  - on five backtests (plain, filters with one position, a kill switch, long/short, limit entries): the funnel narrows at every stage, executed equals the fills, closed leads equal the trades with the same PnL and match one each, kills account for the gap, IDs are sequential, and scanned equals the signal-stage decisions;
+  - the exact kill categories without dates or numbers;
+  - the window keeping IDs;
+  - two paper runs through the CLI, `--all --json` and `--alert`;
+  - the systemd units.
+
+## 5. Stage 11–29 status summary
 
 On top of the Stage 9/10 system:
 - **Risk:** trailing stops and take-profit (11A), ATR stops with volatility-scaled sizing (12A), entry filters by trend, risk state (12C) and correlation (13B). Every addition is off by default, only ever adds caution, and never overrides the circuit breakers.
@@ -798,6 +817,7 @@ On top of the Stage 9/10 system:
 - **Counting the tries (26):** an opt-in trial log, the `trials` command and a checkup check against it (26A), used by sweeps and shown in the dashboard (26B).
 - **What to expect (27):** forward drawdowns, returns and losing streaks from a run's trades (27A), shown in the reports and the dashboard (27B).
 - **Acting on it (28):** the risk per trade for a drawdown budget (28A), verified by a backtest at that size (28B).
+- **The desk (29):** the funnel from first vote to closed trade with lead IDs, and an evening desk report (29A).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.
