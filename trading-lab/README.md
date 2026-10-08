@@ -92,6 +92,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 29C (complete):** the desk's confirmation gate (`voting.confirmers`, `min_confirms`, `confirm_mode`): a new entry needs N confirmations, or no objection, from named voters; exits are never gated. Plus a `desk` preset.
 - **Stage 29D (complete):** the weekly seat review: `desk --seats` and the weekly digest show, for every voter, how often its calls were right, the PnL of the trades it backed or opposed, and whether it is earning its seat.
 - **Stage 30A (complete):** `trading-lab validate CONFIG`: should this config get a paper run? The checkup, an A/B test against the config you run now, the outlook, sizing and exits, and one strict recommendation, with a summary to paste and an HTML report.
+- **Stage 30B (complete):** funding and sentiment are kept on disk next to the candles (fetching only what is missing, serving the file when a source is down), and `trading-lab prefetch` downloads candles, funding and sentiment for a period in one go.
 
 ### Stage 9/10 summary
 
@@ -711,6 +712,8 @@ weight = 1.0            # fear = 25, greed = 75, max_age_hours = 72
   * Funding comes through CCXT from the futures market of your exchange (`binance` uses `binanceusdm`; set `[data] funding_exchange` to choose another), with a client that has no credentials.
   * The index comes from `api.alternative.me`.
   * On a VM with an outbound allow-list, allow those hosts.
+  * Like the candles, both are kept in the cache (`data/cache/context/`, when `[data] use_cache` is on). Only what is missing is fetched, and if a source is down the stored values are used; old values still become HOLD after `max_age_hours`.
+  * `trading-lab prefetch --days 365` downloads candles, funding and sentiment for a period in one go and reports each source.
 * **No look-ahead:** each bar only sees values published by its close. Funding counts from its funding time; the index counts from a day after the day it describes.
 * **Fail-safe:** missing, stale (older than `max_age_hours`) or failing data gives HOLD with the reason in the signal, never a trade.
 * **Synthetic data:** with `--synthetic`, both use synthetic data derived from the synthetic prices (funding rises after rallies, sentiment follows the 30-day trend), so offline backtests and tests work. Those results say nothing about real markets.

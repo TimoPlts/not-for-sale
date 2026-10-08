@@ -44,7 +44,16 @@ class CachedProvider(MarketDataProvider):
         return self._inner.current_open(symbol, timeframe, bar_open)
 
     def context_feed(self, kind: str, timeframe: str) -> Any:
-        return self._inner.context_feed(kind, timeframe)
+        """The inner source's feed, kept on disk next to the candles (``<cache_dir>/context/``)."""
+        from trading_lab.data.context import CachedContextFeed
+
+        inner = self._inner.context_feed(kind, timeframe)
+        if inner is None:
+            return None
+        feeds = self.__dict__.setdefault("_feeds", {})
+        if inner.name not in feeds:
+            feeds[inner.name] = CachedContextFeed(inner, self._cache_dir / "context")
+        return feeds[inner.name]
 
     def cache_path(self, symbol: str, timeframe: str) -> Path:
         return self._cache_dir / self.name / f"{symbol.replace('/', '-')}_{timeframe}.csv"

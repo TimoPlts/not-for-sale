@@ -31,6 +31,7 @@
     trading-lab size [RUN_ID] --max-drawdown 20% [--trades N] [--json]   (risk per trade for a drawdown budget)
     trading-lab desk [RUN_ID | --all] [--hours 24] [--alert] [--json]   (the funnel: leads -> fills -> exits)
     trading-lab validate CONFIG [--baseline B.toml] [--days 180] [--html FILE]   (should it get a paper run?)
+    trading-lab prefetch [--days 365] [--no-context]   (download candles, funding and sentiment into the cache)
     trading-lab ab A.toml B.toml [--days 180 | --start/--end] [--windows 6] [--metric total_return]
     trading-lab status [PAPER_RUN_ID | --all] [--max-behind 2] [--alert] [--json]   (watchdog; exit 1 if not OK)
     trading-lab live-compare RUN_A RUN_B [--min-days 14] [--json]   (two paper runs over the time they ran together)
@@ -61,7 +62,7 @@ from typing import Any, Sequence
 import pandas as pd
 
 from trading_lab.config import AppConfig, load_config
-from trading_lab.core.errors import TradingLabError
+from trading_lab.core.errors import DataError, TradingLabError
 from trading_lab.core.models import DecisionAction
 from trading_lab.data import MarketDataProvider, SyntheticProvider, build_provider
 
@@ -1061,6 +1062,39 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_prefetch(args: argparse.Namespace) -> int:
+    from trading_lab.data import CachedProvider
+    from trading_lab.data.context import FUNDING, SENTIMENT, FeedError
+
+    cfg = _load_config(args)
+    if not cfg.data.use_cache:
+        raise TradingLabError("[data] use_cache is off, so there is no cache to fill")
+    start, end = _period(args, args.days)
+    provider = _provider(cfg, args.synthetic)
+    if not isinstance(provider, CachedProvider):
+        provider = CachedProvider(provider, cfg.data.cache_dir)
+    print(f"Prefetching {start:%Y-%m-%d} -> {end:%Y-%m-%d} | {cfg.market.timeframe} | data: {provider.name} | "
+          f"cache: {Path(cfg.data.cache_dir).resolve()}")
+    failed = 0
+    jobs: list[tuple[str, Any]] = [(f"candles {s}", (lambda s=s: len(provider.fetch_ohlcv(
+        s, cfg.market.timeframe, start, end)))) for s in cfg.market.symbols]
+    if not args.no_context:
+        funding = provider.context_feed(FUNDING, cfg.market.timeframe)
+        sentiment = provider.context_feed(SENTIMENT, cfg.market.timeframe)
+        if funding is not None:
+            jobs += [(f"funding {s}", (lambda s=s: len(funding.series(s, start, end)))) for s in cfg.market.symbols]
+        if sentiment is not None:
+            jobs.append(("sentiment", lambda: len(sentiment.series(cfg.market.symbols[0], start, end))))
+    for label, job in jobs:
+        try:
+            print(f"  {label:<22} {job():>7,} rows")
+        except (DataError, FeedError) as exc:
+            failed += 1
+            print(f"  {label:<22} FAILED: {exc}")
+    print("Done." if not failed else f"{failed} source(s) failed; check the network or the exchange settings.")
+    return 1 if failed else 0
+
+
 def cmd_walkforward(args: argparse.Namespace) -> int:
     from trading_lab.research import walk_forward
 
@@ -1877,6 +1911,14 @@ def build_parser() -> argparse.ArgumentParser:
     ck.add_argument("--html", metavar="FILE", help="also write a one-page HTML report")
     ck.add_argument("--json", metavar="FILE", help="also write the full results as JSON")
     ck.set_defaults(func=cmd_checkup)
+
+    pf = sub.add_parser("prefetch", help="download candles, funding and sentiment into the cache for a period")
+    market_options(pf)
+    pf.add_argument("--start", type=_date, help="YYYY-MM-DD (UTC)")
+    pf.add_argument("--end", type=_date, help="YYYY-MM-DD (UTC, exclusive); default now")
+    pf.add_argument("--days", type=int, default=365, help="length when --start is omitted (default 365)")
+    pf.add_argument("--no-context", action="store_true", help="candles only (skip funding and sentiment)")
+    pf.set_defaults(func=cmd_prefetch)
 
     va = sub.add_parser("validate", help="should this config get a paper run? every check, one recommendation")
     va.add_argument("candidate", help="the config to validate, e.g. config/desk.toml")

@@ -76,6 +76,16 @@ mode = "record"   # cache every answer; restarts never ask the model twice about
 A paper run keeps the config it was **started** with. To change the config,
 start a new run (a new `--run-id`).
 
+## 3b. Fill the data cache (optional)
+
+Research commands (`validate`, `checkup`, `sweep`, ...) download what they need, but one prefetch shows straight away whether every source is reachable from the VM:
+
+```bash
+sudo -u tradinglab bash -c 'cd /opt/trading-lab/trading-lab && .venv/bin/trading-lab prefetch --days 365'
+```
+
+It lists the candles per symbol, and the funding (from the exchange's futures market) and sentiment (`api.alternative.me`) rows. A FAILED line names the source to allow in the firewall. Everything goes into `data/cache/`.
+
 ## 4. Try it in the foreground
 
 ```bash
