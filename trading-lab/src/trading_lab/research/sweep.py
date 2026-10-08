@@ -40,11 +40,18 @@ class MemoizedProvider(MarketDataProvider):
     def __init__(self, inner: MarketDataProvider) -> None:
         self._inner = inner
         self._memo: dict[tuple[Any, ...], pd.DataFrame] = {}
+        self._feeds: dict[tuple[Any, ...], Any] = {}
         self.fetches = 0
 
     @property
     def name(self) -> str:
         return self._inner.name
+
+    def context_feed(self, kind: str, timeframe: str) -> Any:
+        key = ("feed", kind, timeframe)
+        if key not in self._feeds:  # one feed per kind, so its memo is shared by every backtest
+            self._feeds[key] = self._inner.context_feed(kind, timeframe)
+        return self._feeds[key]
 
     def fetch_ohlcv(self, symbol, timeframe, since, until=None):  # type: ignore[no-untyped-def]
         key = (symbol, timeframe, since, until)

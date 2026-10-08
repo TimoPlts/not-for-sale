@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Any, Sequence
 
 import trading_lab.agents  # noqa: F401  (registers agent strategies)
 from trading_lab.agents import AgentStrategy, LLMProviderStrategy, SQLiteResponseCache
 from trading_lab.config import AppConfig
+from trading_lab.core.errors import ConfigError
 from trading_lab.llm import LLMProvider, build_llm_provider
 from trading_lab.strategies import Strategy, build_strategies
 from trading_lab.strategies.registry import strategy_class
@@ -40,6 +41,19 @@ def strategies_for(config: AppConfig, *, llm_provider: LLMProvider | None = None
     strategies = build_strategies(config.enabled_strategies)
     configure_agents(strategies, config, llm_provider=llm_provider)
     return strategies
+
+
+def attach_context_feeds(strategies: Sequence[Strategy], provider: Any, timeframe: str) -> None:
+    """Give funding/sentiment strategies their data feed from the candle source (see ``data.context``)."""
+    from trading_lab.strategies.context import ContextStrategy
+
+    for strategy in strategies:
+        if isinstance(strategy, ContextStrategy) and strategy.feed is None:
+            feed = provider.context_feed(strategy.feed_kind, timeframe)
+            if feed is None:
+                raise ConfigError(f"strategy {strategy.name!r} needs {strategy.feed_kind} data, which the data source "
+                                  f"{provider.name!r} does not provide")
+            strategy.attach_feed(feed)
 
 
 def needs_llm(config: AppConfig) -> bool:

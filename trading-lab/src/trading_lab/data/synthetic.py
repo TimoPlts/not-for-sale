@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import zlib
 from datetime import datetime, timezone
-from typing import Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -101,6 +101,16 @@ class SyntheticProvider(MarketDataProvider):
             index=index,
         )
         return normalize_ohlcv(slice_ohlcv(frame, since, until))
+
+    def context_feed(self, kind: str, timeframe: str) -> Any:
+        """Synthetic funding and sentiment derived from these prices (see ``data.context``)."""
+        from trading_lab.data.context import FUNDING, SENTIMENT, SyntheticFundingFeed, SyntheticSentimentFeed
+
+        if kind == FUNDING:
+            return SyntheticFundingFeed(self, timeframe)
+        if kind == SENTIMENT:
+            return SyntheticSentimentFeed(self, timeframe)
+        return None
 
     def current_open(self, symbol: str, timeframe: str, bar_open: datetime) -> float | None:
         start = to_utc_timestamp(bar_open)

@@ -88,6 +88,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 28A (complete):** `trading-lab size --max-drawdown 20%`: the risk per trade at which the bad-case drawdown matches your budget, using the size limits each entry recorded.
 - **Stage 28B (complete):** `size --verify` re-runs the stored backtest at the suggested size and compares the real drawdown and return with the estimate.
 - **Stage 29A (complete):** `trading-lab desk`: the desk funnel (scanned, leads, confirmed, cleared, executed, closed) with a lead ID for every setup, why confirmed setups died, and an evening desk report at 21:00 through the alert channels.
+- **Stage 29B (complete):** two opt-in voters on market context: `funding` (futures positioning, the desk's "whale" seat) and `sentiment` (the Fear & Greed index, the "shill" seat), from public data, without look-ahead, with synthetic versions for offline tests.
 
 ### Stage 9/10 summary
 
@@ -579,6 +580,7 @@ The bot is organised like a small trading desk, for BTC, ETH and other large coi
 |---|---|---|
 | head of desk | the voting engine and the circuit breakers | routes every setup, halts the floor at the daily loss limit or the kill switch |
 | scouts | RSI, MACD, Bollinger, Donchian, MA cross, the Qwen trend and momentum agents | each votes BUY, SELL or HOLD; agents only produce opinions |
+| whale and shill | `funding` (futures positioning) and `sentiment` (Fear & Greed), opt-in | add a vote from crowding and mood, not from the chart |
 | risk | the Qwen risk agent, the entry filters, the risk manager | clears or blocks every entry and sizes it |
 | execution and exits | the paper executor; stops, trailing stops, take-profit, time stop | fills at the next open, manages every open position |
 | evening report | `desk`, `summary`, `digest`, Telegram alerts | tells you what happened without opening a chart |
@@ -616,6 +618,34 @@ Latest confirmed leads (3):
 ```
 
 (The synthetic `trend` backtest: an illustration of the layout.) Confirmed setups that died are counted by reason, such as "filter: trend filter", "risk: max open positions reached" or "circuit breaker: max drawdown". `desk --all --hours 24 --alert` sends the funnel as the evening report, and the systemd timer in `deploy/systemd/trading-lab-desk.*` does it at 21:00 (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), section 5f). Read-only.
+
+## Positioning and sentiment (`funding`, `sentiment`)
+
+Two opt-in voters that look beyond the chart, for BTC, ETH and other large coins:
+
+* **`funding`** reads the perpetual futures funding rate, the desk's "whale" seat. When it is high, longs pay shorts and the trade is crowded; when it is negative, shorts are crowded. By default it is contrarian: it votes SELL at or above `high` (0.05% per 8 hours, averaged over the last 3 prints) and BUY at or below `low` (-0.01%).
+* **`sentiment`** reads the Crypto Fear & Greed index, the "shill" seat. By default it is contrarian too: BUY in fear (25 or below), SELL in greed (75 or above).
+
+`mode = "follow"` reverses either one.
+
+```toml
+[strategies.funding]
+weight = 1.0            # high = 0.0005, low = -0.0001, average = 3, max_age_hours = 24
+[strategies.sentiment]
+weight = 1.0            # fear = 25, greed = 75, max_age_hours = 72
+```
+
+(A `[strategies]` table replaces the default strategies, so list the others you want too, or start from a preset.)
+
+* **Data:** public only.
+  * Funding comes through CCXT from the futures market of your exchange (`binance` uses `binanceusdm`; set `[data] funding_exchange` to choose another), with a client that has no credentials.
+  * The index comes from `api.alternative.me`.
+  * On a VM with an outbound allow-list, allow those hosts.
+* **No look-ahead:** each bar only sees values published by its close. Funding counts from its funding time; the index counts from a day after the day it describes.
+* **Fail-safe:** missing, stale (older than `max_age_hours`) or failing data gives HOLD with the reason in the signal, never a trade.
+* **Synthetic data:** with `--synthetic`, both use synthetic data derived from the synthetic prices (funding rises after rallies, sentiment follows the 30-day trend), so offline backtests and tests work. Those results say nothing about real markets.
+
+Whether either one improves results on real data is exactly what `checkup`, `walkforward` and `ab` are for. Test them before giving them weight in a paper run. The desk funnel (`trading-lab desk`) shows them among the voters of each lead.
 
 ## Run summary
 

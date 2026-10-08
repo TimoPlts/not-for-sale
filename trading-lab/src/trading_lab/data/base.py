@@ -12,6 +12,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -46,6 +48,10 @@ class MarketDataProvider(ABC):
         can fill orders scheduled for this bar right away. Returns None when
         the source cannot provide it; callers then wait for the bar to close.
         """
+        return None
+
+    def context_feed(self, kind: str, timeframe: str) -> Any:
+        """A ``data.context.ContextFeed`` of ``kind`` ("funding" or "sentiment") for this source, or None."""
         return None
 
 

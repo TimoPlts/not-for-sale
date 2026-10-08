@@ -65,6 +65,7 @@ correlation_lookback = 48     # bars in the rolling correlation
 cache_dir = "data/cache"      # CSV cache of public candles
 use_cache = true
 page_limit = 1000             # candles per public request
+funding_exchange = ""         # funding rates for the `funding` strategy: "" = the exchange's futures market
 
 # Each [strategies.<name>] table enables one strategy. `enabled` and `weight`
 # are generic; all other keys are strategy parameters.

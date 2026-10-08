@@ -251,6 +251,7 @@ class DataConfig:
     cache_dir: str = "data/cache"  # relative paths resolve against the working directory
     use_cache: bool = True
     page_limit: int = 1000  # candles per public OHLCV request
+    funding_exchange: str = ""  # CCXT id for funding rates ("" = the market exchange's futures, e.g. binanceusdm)
 
     def __post_init__(self) -> None:
         _require(
@@ -264,6 +265,7 @@ class DataConfig:
             and 1 <= self.page_limit <= 5000,
             f"data.page_limit must be an integer in [1, 5000], got {self.page_limit!r}",
         )
+        _require(isinstance(self.funding_exchange, str), "data.funding_exchange must be a string")
 
 
 @dataclass(frozen=True, slots=True)

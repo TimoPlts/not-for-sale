@@ -79,6 +79,9 @@ class PermutedProvider(MarketDataProvider):
     def name(self) -> str:
         return f"{self._inner.name}-permuted-{self._seed}"
 
+    def context_feed(self, kind: str, timeframe: str) -> Any:
+        return self._inner.context_feed(kind, timeframe)  # context stays in real time order
+
     def fetch_ohlcv(self, symbol: str, timeframe: str, since: datetime, until: datetime | None = None
                     ) -> pd.DataFrame:
         return permute_candles(self._inner.fetch_ohlcv(symbol, timeframe, since, until), self._start, self._seed)
