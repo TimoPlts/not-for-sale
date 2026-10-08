@@ -186,7 +186,7 @@ sudo -u tradinglab .venv/bin/trading-lab status --all
 
 ## 5e. Weekly digest (optional)
 
-Every Monday morning (07:52 UTC), one message through the channels in `[alerts]`. It covers each paper run's week: return against the market, worst drawdown, trades, equity and the watchdog check. With several runs, it also gives the `live-compare` verdict for each pair:
+Every Monday morning (07:52 UTC), one message through the channels in `[alerts]`. It covers each paper run's week: return against the market, worst drawdown, trades, equity and the watchdog check. With several runs, it also gives the `live-compare` verdict for each pair. It ends with the seat review: which voters are earning their place.
 
 ```bash
 sudo cp deploy/systemd/trading-lab-digest.service deploy/systemd/trading-lab-digest.timer /etc/systemd/system/

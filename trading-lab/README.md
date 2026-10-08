@@ -90,6 +90,7 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 29A (complete):** `trading-lab desk`: the desk funnel (scanned, leads, confirmed, cleared, executed, closed) with a lead ID for every setup, why confirmed setups died, and an evening desk report at 21:00 through the alert channels.
 - **Stage 29B (complete):** two opt-in voters on market context: `funding` (futures positioning, the desk's "whale" seat) and `sentiment` (the Fear & Greed index, the "shill" seat), from public data, without look-ahead, with synthetic versions for offline tests.
 - **Stage 29C (complete):** the desk's confirmation gate (`voting.confirmers`, `min_confirms`, `confirm_mode`): a new entry needs N confirmations, or no objection, from named voters; exits are never gated. Plus a `desk` preset.
+- **Stage 29D (complete):** the weekly seat review: `desk --seats` and the weekly digest show, for every voter, how often its calls were right, the PnL of the trades it backed or opposed, and whether it is earning its seat.
 
 ### Stage 9/10 summary
 
@@ -632,7 +633,16 @@ Latest confirmed leads (3):
   L-1189 2026-10-07 17:00 BTC/USDT   long  votes: macd, donchian -> open
 ```
 
-(The synthetic `trend` backtest: an illustration of the layout.) Confirmed setups that died are counted by reason, such as "filter: trend filter", "risk: max open positions reached" or "circuit breaker: max drawdown". `desk --all --hours 24 --alert` sends the funnel as the evening report, and the systemd timer in `deploy/systemd/trading-lab-desk.*` does it at 21:00 (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), section 5f). Read-only.
+(The synthetic `trend` backtest: an illustration of the layout.) `desk --seats` adds the seat review, which also goes into the weekly digest. For every voter (strategy or agent) it shows:
+
+* how often its BUY/SELL calls were right over the next 4 bars;
+* the PnL of the trades it voted for and against;
+* how often it was pivotal;
+* a cautious verdict: "too early" under 30 measured calls, then "earning its seat", "not earning its seat" or "unclear".
+
+Act on a seat that keeps failing by lowering its weight, then confirm with `ab`.
+
+Confirmed setups that died are counted by reason, such as "filter: trend filter", "risk: max open positions reached" or "circuit breaker: max drawdown". `desk --all --hours 24 --alert` sends the funnel as the evening report, and the systemd timer in `deploy/systemd/trading-lab-desk.*` does it at 21:00 (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), section 5f). Read-only.
 
 ## Positioning and sentiment (`funding`, `sentiment`)
 

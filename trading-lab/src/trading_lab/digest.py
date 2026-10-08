@@ -37,6 +37,7 @@ class Digest:
     checks: dict[str, str | None] = field(default_factory=dict)  # "OK", the problems, or None (not running)
     comparisons: list[LiveComparison] = field(default_factory=list)
     skipped_pairs: int = 0
+    seats: dict[str, list[Any]] = field(default_factory=dict)  # running run -> research.desk.Seat list
 
     @property
     def ok(self) -> bool:
@@ -58,10 +59,12 @@ class Digest:
                              "a_return": None if c.a is None else c.a.total_return,
                              "b_return": None if c.b is None else c.b.total_return} for c in self.comparisons],
             "skipped_pairs": self.skipped_pairs,
+            "seats": {run: [s.to_dict() for s in seats] for run, seats in self.seats.items()},
         }
 
 
-def build_digest(store: Any, *, days: float = 7.0, now: datetime | None = None, max_behind: int = 2) -> Digest:
+def build_digest(store: Any, *, days: float = 7.0, now: datetime | None = None, max_behind: int = 2,
+                 seats: bool = True) -> Digest:
     if days <= 0:
         raise ValueError("days must be positive")
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -79,6 +82,10 @@ def build_digest(store: Any, *, days: float = 7.0, now: datetime | None = None, 
             running.append(run_id)
             status = check_status(store, run_id, now=now, max_behind=max_behind)
             out.checks[run_id] = "OK" if status.ok else "; ".join(status.problems)
+            if seats:
+                from trading_lab.research.desk import seat_review
+
+                out.seats[run_id] = seat_review(store, run_id)
         else:
             out.checks[run_id] = None
     pairs = list(itertools.combinations(running, 2))
@@ -119,5 +126,10 @@ def format_digest(d: Digest) -> str:
             lines.append(f"  {c.run_a['run_id']} vs {c.run_b['run_id']}{returns}: {c.verdict}")
         if d.skipped_pairs:
             lines.append(f"  ... and {d.skipped_pairs} more pair(s); use trading-lab live-compare")
+    if any(d.seats.values()):
+        from trading_lab.research.desk import format_seats
+
+        lines.append("\nWhich seats earned their place:")
+        lines += [format_seats(run, seats) for run, seats in d.seats.items() if seats]
     lines.append("\nPaper trading only: simulated fills, no real orders.")
     return "\n".join(lines)

@@ -212,6 +212,68 @@ def desk_funnel(store: Any, run_id: str, *, hours: float | None = None) -> Funne
     return out
 
 
+@dataclass(frozen=True, slots=True)
+class Seat:
+    """How one voter (strategy or agent) has done on the desk (see ``research.attribution``)."""
+
+    strategy: str
+    calls: int  # measurable BUY/SELL votes
+    correct: float | None  # share of those the price then followed
+    agreed: int  # closed trades it voted for
+    pnl_agreed: float
+    disagreed: int
+    pnl_disagreed: float
+    pivotal: int  # trades that would not have opened without it
+    verdict: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"strategy": self.strategy, "calls": self.calls, "correct": self.correct, "agreed": self.agreed,
+                "pnl_agreed": self.pnl_agreed, "disagreed": self.disagreed, "pnl_disagreed": self.pnl_disagreed,
+                "pivotal": self.pivotal, "verdict": self.verdict}
+
+
+MIN_CALLS = 30
+
+
+def seat_verdict(calls: int, correct: float | None, agreed: int, pnl_agreed: float, pnl_disagreed: float) -> str:
+    """Cautious on purpose: fewer than MIN_CALLS measurable calls is "too early"."""
+    if calls < MIN_CALLS or correct is None:
+        return "too early"
+    if correct >= 0.52 and pnl_agreed >= pnl_disagreed:
+        return "earning its seat"
+    if correct < 0.48 or (agreed >= 5 and pnl_agreed < min(pnl_disagreed, 0.0)):
+        return "not earning its seat"
+    return "unclear"
+
+
+def seat_review(store: Any, run_id: str, *, horizon: int = 4) -> list[Seat]:
+    """Every voter of a run, best first (by PnL of the trades it voted for)."""
+    from trading_lab.research.attribution import attribute_run
+
+    seats = []
+    for name, a in attribute_run(store, run_id, horizon=horizon).items():
+        if not a.votes:
+            continue
+        seats.append(Seat(name, a.measured, a.directional_correctness, a.trades_agreed, a.pnl_agreed,
+                          a.trades_disagreed, a.pnl_disagreed, a.trades_pivotal,
+                          seat_verdict(a.measured, a.directional_correctness, a.trades_agreed, a.pnl_agreed,
+                                       a.pnl_disagreed)))
+    return sorted(seats, key=lambda s: (-s.pnl_agreed, s.strategy))
+
+
+def format_seats(run_id: str, seats: list[Seat]) -> str:
+    if not seats:
+        return f"Seats of {run_id}: no votes yet."
+    lines = [f"Seats of {run_id} (whole run; calls measured {MIN_CALLS}+ before any verdict)",
+             f"  {'voter':<15} {'calls':>6} {'right':>6} {'for: trades':>11} {'pnl':>10} {'against':>8} {'pnl':>10} "
+             f"{'pivotal':>7}  verdict"]
+    for s in seats:
+        right = "n/a" if s.correct is None else f"{s.correct:.0%}"
+        lines.append(f"  {s.strategy:<15} {s.calls:>6} {right:>6} {s.agreed:>11} {s.pnl_agreed:>+10,.2f} "
+                     f"{s.disagreed:>8} {s.pnl_disagreed:>+10,.2f} {s.pivotal:>7}  {s.verdict}")
+    return "\n".join(lines)
+
+
 def format_funnel(f: Funnel, *, recent: int = 10) -> str:
     span = ("the whole run" if f.start is None
             else f"{f.start:%Y-%m-%d %H:%M} -> {f.end:%Y-%m-%d %H:%M} UTC")

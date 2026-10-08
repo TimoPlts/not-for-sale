@@ -820,6 +820,12 @@ Trade-offs worth knowing:
 - The `desk` preset is the trend preset plus `funding` and `sentiment` (weight 0.5), as `not_against` confirmers that must both not object. `config/default.toml` documents the settings.
 - Tests: the config validation and round trip; the gate by hand in both modes and for shorts; a backtest where every executed entry had its confirmations and the blocked ones are recorded; the funnel count; and the `desk` preset with vetoes, matching live paper trading fill for fill and veto for veto.
 
+### Stage 29D: The weekly seat review ✅
+- `research/desk.seat_review(store, run_id)` gives one `Seat` per voter with votes, from `research.attribution`, ordered by the PnL of the trades it backed: measured calls, share right (4-bar forward), trades for and against with their PnL, and pivotal trades.
+- `seat_verdict` is cautious: "too early" under 30 measured calls; "earning its seat" (right at least 52% of the time and the trades it backed did at least as well as those it opposed); "not earning its seat" (under 48%, or the trades it backed lost more than the opposed ones, with at least 5 backed trades); otherwise "unclear".
+- `desk --seats` (text and JSON). The weekly digest adds a "Which seats earned their place" section for every running paper run (`build_digest(seats=False)` leaves it out).
+- Tests: the verdicts by hand; the seats against the attribution; the order; the CLI (text, JSON); and the digest section with and without seats.
+
 ## 5. Stage 11–29 status summary
 
 On top of the Stage 9/10 system:
@@ -842,7 +848,7 @@ On top of the Stage 9/10 system:
 - **Counting the tries (26):** an opt-in trial log, the `trials` command and a checkup check against it (26A), used by sweeps and shown in the dashboard (26B).
 - **What to expect (27):** forward drawdowns, returns and losing streaks from a run's trades (27A), shown in the reports and the dashboard (27B).
 - **Acting on it (28):** the risk per trade for a drawdown budget (28A), verified by a backtest at that size (28B).
-- **The desk (29):** the funnel from first vote to closed trade with lead IDs, and an evening desk report (29A), the positioning and sentiment voters (29B), and the confirmation gate with a `desk` preset (29C).
+- **The desk (29):** the funnel from first vote to closed trade with lead IDs, and an evening desk report (29A), the positioning and sentiment voters (29B), the confirmation gate with a `desk` preset (29C), and the weekly seat review (29D).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.
