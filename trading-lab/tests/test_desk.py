@@ -129,3 +129,37 @@ def test_systemd_units():
     assert "Type=oneshot" in service and "QWEN_API_KEY" not in service
     timer = (DEPLOY / "trading-lab-desk.timer").read_text()
     assert "OnCalendar=*-*-* 21:00:00" in timer and "Persistent=true" in timer
+
+
+def test_seat_verdicts_by_hand():
+    from trading_lab.research.desk import seat_verdict
+
+    assert seat_verdict(10, 0.9, 5, 100.0, -50.0) == "too early"
+    assert seat_verdict(40, 0.55, 5, 100.0, -50.0) == "earning its seat"
+    assert seat_verdict(40, 0.45, 5, 100.0, -50.0) == "not earning its seat"
+    assert seat_verdict(40, 0.50, 6, -80.0, -10.0) == "not earning its seat"  # the trades it backed lost more
+    assert seat_verdict(40, 0.50, 6, 20.0, 10.0) == "unclear"
+    assert seat_verdict(40, None, 0, 0.0, 0.0) == "too early"
+
+
+def test_seat_review_and_cli(runs, capsys):
+    from trading_lab.research.attribution import attribute_run
+    from trading_lab.research.desk import seat_review
+
+    db, results = runs
+    run_id = results["plain"].run_id
+    with SQLiteStore(db, readonly=True) as store:
+        seats = seat_review(store, run_id)
+        attribution = attribute_run(store, run_id)
+    assert {s.strategy for s in seats} == {name for name, a in attribution.items() if a.votes}
+    for s in seats:
+        a = attribution[s.strategy]
+        assert (s.calls, s.agreed, s.pivotal) == (a.measured, a.trades_agreed, a.trades_pivotal)
+        assert s.pnl_agreed == pytest.approx(a.pnl_agreed)
+    assert [s.pnl_agreed for s in seats] == sorted((s.pnl_agreed for s in seats), reverse=True)
+    assert main(["--db", str(db), "desk", run_id, "--seats"]) == 0
+    out = capsys.readouterr().out
+    assert f"Seats of {run_id}" in out and all(s.strategy in out for s in seats)
+    assert main(["--db", str(db), "desk", run_id, "--seats", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert {s["strategy"] for s in data["seats"]} == {s.strategy for s in seats}

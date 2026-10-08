@@ -40,6 +40,15 @@ PRESETS: dict[str, Preset] = {p.name: p for p in (
         "risk": {"allow_short": True, "trailing_stop_pct": 0.04, "trailing_activation_pct": 0.02,
                  "max_holding_bars": 72},
     }),
+    Preset("desk", "the trend preset with the desk's whale and shill seats: futures positioning (funding) and "
+           "sentiment (Fear & Greed) vote, and either one can veto a new entry", {
+               "strategies": {"donchian": {"weight": 1.5, "entry_period": 20, "exit_period": 10},
+                              "ma_cross": {"weight": 1.0, "fast": 20, "slow": 50, "average": "ema"},
+                              "funding": {"weight": 0.5}, "sentiment": {"weight": 0.5}},
+               "risk": {"trailing_stop_pct": 0.04, "trailing_activation_pct": 0.02, "max_holding_bars": 72},
+               "voting": {"confirmers": ["funding", "sentiment"], "min_confirms": 2,
+                          "confirm_mode": "not_against"},
+           }),
     Preset("conservative", "smaller, volatility-targeted positions, ATR stops, a 200-bar trend filter and "
            "tighter circuit breakers", {
                "risk": {"risk_per_trade_pct": 0.005, "max_position_pct": 0.15, "position_volatility_pct": 0.10,

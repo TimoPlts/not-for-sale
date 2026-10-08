@@ -795,6 +795,37 @@ Trade-offs worth knowing:
   - two paper runs through the CLI, `--all --json` and `--alert`;
   - the systemd units.
 
+### Stage 29B: Positioning and sentiment voters ✅
+- `data/context.py`: a `ContextFeed` gives values indexed by the time each became known.
+  - `CcxtFundingFeed` reads public funding-rate history through a credential-free CCXT client (it refuses one with credentials): paginated, retried, memoised with tail-only refreshes, on the perpetual symbol (`BTC/USDT:USDT`).
+  - `FearGreedFeed` makes one public request to alternative.me, refreshed at most hourly when newer data is needed. A value is known a day after its date.
+  - The synthetic feeds derive funding (every 8h, from the 24h return) and sentiment (daily, from the 30-day trend) from the synthetic prices in the run's timeframe, using only candles closed by each value's time.
+  - `value_asof` takes the latest known value per bar close, unit-safe (a microseconds-against-nanoseconds bug was caught by the first backtest and fixed).
+- `MarketDataProvider.context_feed(kind, timeframe)` returns None by default. The CCXT provider gives the real feeds (with `[data] funding_exchange`, where "" means the exchange's futures market) and the synthetic provider gives synthetic ones. The cache, memo and permutation wrappers delegate; the memo shares one feed per kind.
+- `strategies/context.py`: `funding` and `sentiment` are contrarian by default (`mode = "follow"` reverses them). Missing, stale or failing data, or no feed, gives HOLD with the reason. One evaluation path serves live and backtest signals, so they are identical.
+- `strategy_factory.attach_context_feeds` is called by both engines. A data source without the needed feed is refused with a clear error.
+- Tests:
+  - `value_asof` by hand and across time units;
+  - synthetic feeds deterministic, window-independent and causal (tampering with candles after a value's time does not change it) and plausible;
+  - every vote by hand (thresholds, averaging, follow mode, staleness, missing data, errors), with live and backtest signals identical;
+  - parameter validation;
+  - a backtest using both, with live paper trading plus a resume matching it fill for fill;
+  - a source without context refused, and the wrappers passing feeds through;
+  - the real feeds against fakes (pagination, the perpetual symbol, memo tails, retries, errors, the credential refusal, the index's lag and refresh);
+  - the provider's feed selection and the config.
+
+### Stage 29C: The confirmation gate ✅
+- New `[voting]` settings: `confirmers` (strategy names), `min_confirms` (0 = off, the default) and `confirm_mode` (`agree` or `not_against`). They are validated: confirmers must be enabled strategies with a positive weight, `min_confirms` at most their number, no duplicates.
+- `TradingSession.confirmation_shortfall` checks a new entry (long or short) against the ensemble's votes. An unconfirmed entry is IGNORED with "blocked by confirmation: n of m needed (mode; confirmed: ...; against: ...)", which the desk funnel counts as "filter: confirmation". Exits and covers are never gated.
+- The `desk` preset is the trend preset plus `funding` and `sentiment` (weight 0.5), as `not_against` confirmers that must both not object. `config/default.toml` documents the settings.
+- Tests: the config validation and round trip; the gate by hand in both modes and for shorts; a backtest where every executed entry had its confirmations and the blocked ones are recorded; the funnel count; and the `desk` preset with vetoes, matching live paper trading fill for fill and veto for veto.
+
+### Stage 29D: The weekly seat review ✅
+- `research/desk.seat_review(store, run_id)` gives one `Seat` per voter with votes, from `research.attribution`, ordered by the PnL of the trades it backed: measured calls, share right (4-bar forward), trades for and against with their PnL, and pivotal trades.
+- `seat_verdict` is cautious: "too early" under 30 measured calls; "earning its seat" (right at least 52% of the time and the trades it backed did at least as well as those it opposed); "not earning its seat" (under 48%, or the trades it backed lost more than the opposed ones, with at least 5 backed trades); otherwise "unclear".
+- `desk --seats` (text and JSON). The weekly digest adds a "Which seats earned their place" section for every running paper run (`build_digest(seats=False)` leaves it out).
+- Tests: the verdicts by hand; the seats against the attribution; the order; the CLI (text, JSON); and the digest section with and without seats.
+
 ## 5. Stage 11–29 status summary
 
 On top of the Stage 9/10 system:
@@ -817,7 +848,7 @@ On top of the Stage 9/10 system:
 - **Counting the tries (26):** an opt-in trial log, the `trials` command and a checkup check against it (26A), used by sweeps and shown in the dashboard (26B).
 - **What to expect (27):** forward drawdowns, returns and losing streaks from a run's trades (27A), shown in the reports and the dashboard (27B).
 - **Acting on it (28):** the risk per trade for a drawdown budget (28A), verified by a backtest at that size (28B).
-- **The desk (29):** the funnel from first vote to closed trade with lead IDs, and an evening desk report (29A).
+- **The desk (29):** the funnel from first vote to closed trade with lead IDs, and an evening desk report (29A), the positioning and sentiment voters (29B), the confirmation gate with a `desk` preset (29C), and the weekly seat review (29D).
 
 ### Later
 Order-book data, more LLM providers (e.g. Gemini, as `LLMProvider` subclasses), and more alert channels.

@@ -122,3 +122,16 @@ def test_systemd_units():
     assert "Type=oneshot" in service and "QWEN_API_KEY" not in service
     timer = (DEPLOY / "trading-lab-digest.timer").read_text()
     assert "OnCalendar=Mon *-*-* 07:52:00 UTC" in timer and "Persistent=true" in timer
+
+
+def test_the_digest_reviews_the_seats(week_db):
+    db, now = week_db
+    with SQLiteStore(db, readonly=True) as store:
+        d = build_digest(store, days=2, now=now)
+        plain = build_digest(store, days=2, now=now, seats=False)
+    assert set(d.seats) == {"default", "trend"} and plain.seats == {}
+    assert all(d.seats[run] for run in d.seats)
+    text = format_digest(d)
+    assert "Which seats earned their place:" in text and "Seats of default" in text
+    assert "Which seats" not in format_digest(plain)
+    assert set(d.to_dict()["seats"]) == {"default", "trend"}

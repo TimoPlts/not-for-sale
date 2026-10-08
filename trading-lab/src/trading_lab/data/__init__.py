@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 def build_provider(config: AppConfig) -> MarketDataProvider:
     """Public CCXT provider for the configured exchange, optionally behind the CSV cache."""
     provider: MarketDataProvider = CcxtPublicProvider(
-        config.market.exchange, page_limit=config.data.page_limit
+        config.market.exchange, page_limit=config.data.page_limit, funding_exchange=config.data.funding_exchange
     )
     if config.data.use_cache:
         provider = CachedProvider(provider, config.data.cache_dir)

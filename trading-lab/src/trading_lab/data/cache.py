@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -41,6 +42,9 @@ class CachedProvider(MarketDataProvider):
 
     def current_open(self, symbol: str, timeframe: str, bar_open: datetime) -> float | None:
         return self._inner.current_open(symbol, timeframe, bar_open)
+
+    def context_feed(self, kind: str, timeframe: str) -> Any:
+        return self._inner.context_feed(kind, timeframe)
 
     def cache_path(self, symbol: str, timeframe: str) -> Path:
         return self._cache_dir / self.name / f"{symbol.replace('/', '-')}_{timeframe}.csv"

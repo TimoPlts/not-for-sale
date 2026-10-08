@@ -88,6 +88,9 @@ See [PLAN.md](PLAN.md) for the architecture and the staged roadmap.
 - **Stage 28A (complete):** `trading-lab size --max-drawdown 20%`: the risk per trade at which the bad-case drawdown matches your budget, using the size limits each entry recorded.
 - **Stage 28B (complete):** `size --verify` re-runs the stored backtest at the suggested size and compares the real drawdown and return with the estimate.
 - **Stage 29A (complete):** `trading-lab desk`: the desk funnel (scanned, leads, confirmed, cleared, executed, closed) with a lead ID for every setup, why confirmed setups died, and an evening desk report at 21:00 through the alert channels.
+- **Stage 29B (complete):** two opt-in voters on market context: `funding` (futures positioning, the desk's "whale" seat) and `sentiment` (the Fear & Greed index, the "shill" seat), from public data, without look-ahead, with synthetic versions for offline tests.
+- **Stage 29C (complete):** the desk's confirmation gate (`voting.confirmers`, `min_confirms`, `confirm_mode`): a new entry needs N confirmations, or no objection, from named voters; exits are never gated. Plus a `desk` preset.
+- **Stage 29D (complete):** the weekly seat review: `desk --seats` and the weekly digest show, for every voter, how often its calls were right, the PnL of the trades it backed or opposed, and whether it is earning its seat.
 
 ### Stage 9/10 summary
 
@@ -251,6 +254,7 @@ trading-lab ab config/default.toml config/trend.toml --days 180
 |---|---|
 | `trend` | Donchian breakouts and an EMA crossover join the vote, plus a 4% trailing stop and a 72-bar time stop |
 | `trend-shorts` | the same, trading both directions (simulated, fully collateralised shorts) |
+| `desk` | the trend preset plus the desk's whale and shill seats: `funding` and `sentiment` vote, and either one can veto a new entry (the confirmation gate below) |
 | `conservative` | half the risk per trade, volatility-targeted positions, ATR stops, a 200-bar trend filter, tighter breakers |
 | `mean-reversion` | RSI and Bollinger only (MACD off), a 3% take-profit, a 24-bar time stop, and mean reversion muted in down-trends |
 
@@ -579,11 +583,25 @@ The bot is organised like a small trading desk, for BTC, ETH and other large coi
 |---|---|---|
 | head of desk | the voting engine and the circuit breakers | routes every setup, halts the floor at the daily loss limit or the kill switch |
 | scouts | RSI, MACD, Bollinger, Donchian, MA cross, the Qwen trend and momentum agents | each votes BUY, SELL or HOLD; agents only produce opinions |
+| whale and shill | `funding` (futures positioning) and `sentiment` (Fear & Greed), opt-in | add a vote from crowding and mood, not from the chart |
 | risk | the Qwen risk agent, the entry filters, the risk manager | clears or blocks every entry and sizes it |
 | execution and exits | the paper executor; stops, trailing stops, take-profit, time stop | fills at the next open, manages every open position |
 | evening report | `desk`, `summary`, `digest`, Telegram alerts | tells you what happened without opening a chart |
 
-No seat holds keys or can place a real order. `trading-lab desk` shows the funnel that every setup passes through:
+No seat holds keys or can place a real order.
+
+**Confirmations.** The desk rule "nothing executes without the confirmations" is a config setting:
+
+```toml
+[voting]
+confirmers = ["funding", "sentiment"]   # enabled strategies with a weight
+min_confirms = 2
+confirm_mode = "not_against"            # "agree": they must vote the same way; "not_against": they must not object
+```
+
+A new entry, long or short, then needs `min_confirms` of the confirmers to confirm it, or not to object. Otherwise it is skipped as "blocked by confirmation: 1 of 2 needed (... against: funding)" and counted in the funnel. Exits are never gated: getting out does not wait for anyone. It is off by default (`min_confirms = 0`). The `desk` preset (`trading-lab init-config desk`) sets it up with `funding` and `sentiment` as vetoes. As with every preset, test it with `checkup` and `ab` before relying on it.
+
+`trading-lab desk` shows the funnel that every setup passes through:
 
 1. **scanned:** every symbol-bar evaluated;
 2. **leads:** a strategy or agent voted to enter while flat;
@@ -615,7 +633,44 @@ Latest confirmed leads (3):
   L-1189 2026-10-07 17:00 BTC/USDT   long  votes: macd, donchian -> open
 ```
 
-(The synthetic `trend` backtest: an illustration of the layout.) Confirmed setups that died are counted by reason, such as "filter: trend filter", "risk: max open positions reached" or "circuit breaker: max drawdown". `desk --all --hours 24 --alert` sends the funnel as the evening report, and the systemd timer in `deploy/systemd/trading-lab-desk.*` does it at 21:00 (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), section 5f). Read-only.
+(The synthetic `trend` backtest: an illustration of the layout.) `desk --seats` adds the seat review, which also goes into the weekly digest. For every voter (strategy or agent) it shows:
+
+* how often its BUY/SELL calls were right over the next 4 bars;
+* the PnL of the trades it voted for and against;
+* how often it was pivotal;
+* a cautious verdict: "too early" under 30 measured calls, then "earning its seat", "not earning its seat" or "unclear".
+
+Act on a seat that keeps failing by lowering its weight, then confirm with `ab`.
+
+Confirmed setups that died are counted by reason, such as "filter: trend filter", "risk: max open positions reached" or "circuit breaker: max drawdown". `desk --all --hours 24 --alert` sends the funnel as the evening report, and the systemd timer in `deploy/systemd/trading-lab-desk.*` does it at 21:00 (see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), section 5f). Read-only.
+
+## Positioning and sentiment (`funding`, `sentiment`)
+
+Two opt-in voters that look beyond the chart, for BTC, ETH and other large coins:
+
+* **`funding`** reads the perpetual futures funding rate, the desk's "whale" seat. When it is high, longs pay shorts and the trade is crowded; when it is negative, shorts are crowded. By default it is contrarian: it votes SELL at or above `high` (0.05% per 8 hours, averaged over the last 3 prints) and BUY at or below `low` (-0.01%).
+* **`sentiment`** reads the Crypto Fear & Greed index, the "shill" seat. By default it is contrarian too: BUY in fear (25 or below), SELL in greed (75 or above).
+
+`mode = "follow"` reverses either one.
+
+```toml
+[strategies.funding]
+weight = 1.0            # high = 0.0005, low = -0.0001, average = 3, max_age_hours = 24
+[strategies.sentiment]
+weight = 1.0            # fear = 25, greed = 75, max_age_hours = 72
+```
+
+(A `[strategies]` table replaces the default strategies, so list the others you want too, or start from a preset.)
+
+* **Data:** public only.
+  * Funding comes through CCXT from the futures market of your exchange (`binance` uses `binanceusdm`; set `[data] funding_exchange` to choose another), with a client that has no credentials.
+  * The index comes from `api.alternative.me`.
+  * On a VM with an outbound allow-list, allow those hosts.
+* **No look-ahead:** each bar only sees values published by its close. Funding counts from its funding time; the index counts from a day after the day it describes.
+* **Fail-safe:** missing, stale (older than `max_age_hours`) or failing data gives HOLD with the reason in the signal, never a trade.
+* **Synthetic data:** with `--synthetic`, both use synthetic data derived from the synthetic prices (funding rises after rallies, sentiment follows the 30-day trend), so offline backtests and tests work. Those results say nothing about real markets.
+
+Whether either one improves results on real data is exactly what `checkup`, `walkforward` and `ab` are for. Test them before giving them weight in a paper run. The desk funnel (`trading-lab desk`) shows them among the voters of each lead.
 
 ## Run summary
 

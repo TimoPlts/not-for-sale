@@ -811,7 +811,7 @@ def cmd_size(args: argparse.Namespace) -> int:
 def cmd_desk(args: argparse.Namespace) -> int:
     import json as _json
 
-    from trading_lab.research.desk import desk_funnel, format_funnel
+    from trading_lab.research.desk import desk_funnel, format_funnel, format_seats, seat_review
     from trading_lab.status import latest_paper_run, running_paper_runs
     from trading_lab.storage import SQLiteStore
 
@@ -827,14 +827,18 @@ def cmd_desk(args: argparse.Namespace) -> int:
             run_ids = [args.run_id or latest_paper_run(store) or _latest_run_id(store)]
         try:
             funnels = [desk_funnel(store, r, hours=args.hours) for r in run_ids]
+            seats = {r: seat_review(store, r) for r in run_ids} if args.seats else {}
         except ValueError as exc:
             raise TradingLabError(str(exc)) from None
     if args.json:
-        print(_json.dumps([f.to_dict() for f in funnels] if args.all else funnels[0].to_dict(), indent=2,
-                          default=str))
+        data = [{**f.to_dict(), "seats": [s.to_dict() for s in seats.get(f.run_id, [])]} if args.seats
+                else f.to_dict() for f in funnels]
+        print(_json.dumps(data if args.all else data[0], indent=2, default=str))
         text = ""
     else:
-        text = "\n\n".join(format_funnel(f, recent=args.leads) for f in funnels) or "No paper run is running."
+        text = "\n\n".join(format_funnel(f, recent=args.leads)
+                            + (f"\n{format_seats(f.run_id, seats[f.run_id])}" if args.seats else "")
+                            for f in funnels) or "No paper run is running."
         print(text)
     if args.alert:
         from trading_lab.alerts import build_alerts
@@ -1920,6 +1924,7 @@ def build_parser() -> argparse.ArgumentParser:
     dk.add_argument("--all", action="store_true", help="every running paper run")
     dk.add_argument("--hours", type=float, help="only leads in the last N hours of the run (default: all)")
     dk.add_argument("--leads", type=int, default=10, help="confirmed leads to list (default 10)")
+    dk.add_argument("--seats", action="store_true", help="also review every voter: is it earning its seat?")
     dk.add_argument("--alert", action="store_true", help="send it through the configured alert channels")
     dk.add_argument("--json", action="store_true", help="machine-readable output, with every lead")
     dk.set_defaults(func=cmd_desk)

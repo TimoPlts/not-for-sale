@@ -251,6 +251,7 @@ class DataConfig:
     cache_dir: str = "data/cache"  # relative paths resolve against the working directory
     use_cache: bool = True
     page_limit: int = 1000  # candles per public OHLCV request
+    funding_exchange: str = ""  # CCXT id for funding rates ("" = the market exchange's futures, e.g. binanceusdm)
 
     def __post_init__(self) -> None:
         _require(
@@ -264,6 +265,7 @@ class DataConfig:
             and 1 <= self.page_limit <= 5000,
             f"data.page_limit must be an integer in [1, 5000], got {self.page_limit!r}",
         )
+        _require(isinstance(self.funding_exchange, str), "data.funding_exchange must be a string")
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,6 +324,12 @@ class VotingConfig:
     The regime is "up" (close above a rising ``regime_bars`` average), "down"
     (below a falling one) or "sideways", from candles up to the bar only.
     Strategies not listed keep their weight.
+
+    ``min_confirms`` (0 = off) is the desk's confirmation gate: a new entry
+    needs at least that many of the ``confirmers`` (strategy names) to confirm
+    it. With ``confirm_mode = "agree"`` a confirmer confirms by voting the same
+    way; with ``"not_against"`` by not voting the other way (it can veto).
+    Exits never need confirmation.
     """
 
     buy_threshold: float = 0.15
@@ -330,6 +338,9 @@ class VotingConfig:
     regime_weights: Any = ()  # normalised to ((regime, ((strategy, multiplier), ...)), ...)
     regime_bars: int = 50
     regime_slope_bars: int = 10
+    confirmers: tuple[str, ...] = ()
+    min_confirms: int = 0
+    confirm_mode: str = "agree"
 
     def __post_init__(self) -> None:
         _number(self, "buy_threshold", low=0.0, high=1.0, low_inclusive=False)
@@ -345,6 +356,17 @@ class VotingConfig:
             _require(isinstance(value, int) and not isinstance(value, bool) and low <= value <= 5000,
                      f"voting.{name} must be an integer in [{low}, 5000], got {value!r}")
         object.__setattr__(self, "regime_weights", _normalise_regime_weights(self.regime_weights))
+        _require(isinstance(self.confirmers, (list, tuple)) and all(isinstance(c, str) and c.isidentifier()
+                                                                   for c in self.confirmers),
+                 "voting.confirmers must be a list of strategy names")
+        object.__setattr__(self, "confirmers", tuple(self.confirmers))
+        _require(len(set(self.confirmers)) == len(self.confirmers), "voting.confirmers lists a strategy twice")
+        _require(isinstance(self.min_confirms, int) and not isinstance(self.min_confirms, bool)
+                 and 0 <= self.min_confirms <= len(self.confirmers),
+                 f"voting.min_confirms must be an integer from 0 to the number of confirmers "
+                 f"({len(self.confirmers)}), got {self.min_confirms!r}")
+        _require(self.confirm_mode in ("agree", "not_against"),
+                 f"voting.confirm_mode must be 'agree' or 'not_against', got {self.confirm_mode!r}")
 
     def regime_multipliers(self, regime: str | None) -> dict[str, float]:
         """Weight multipliers for a regime ({} when off, unknown or not configured)."""
@@ -533,6 +555,9 @@ class AppConfig:
         _require(len(set(names)) == len(names), "duplicate strategy names")
         unknown = sorted({s for _, ws in self.voting.regime_weights for s, _ in ws} - set(names))
         _require(not unknown, f"voting.regime_weights names strategies that are not configured: {unknown}")
+        voting = {s.name for s in self.strategies if s.enabled and s.weight > 0}
+        silent = sorted(set(self.voting.confirmers) - voting)
+        _require(not silent, f"voting.confirmers must be enabled strategies with a positive weight: {silent}")
         enabled = [s for s in self.strategies if s.enabled]
         _require(bool(enabled), "at least one strategy must be enabled")
         _require(
@@ -574,6 +599,7 @@ class AppConfig:
         data["market"]["symbols"] = list(self.market.symbols)
         data["risk"]["block_entries_on_risk_states"] = list(self.risk.block_entries_on_risk_states)
         data["voting"]["regime_weights"] = {r: dict(w) for r, w in self.voting.regime_weights}
+        data["voting"]["confirmers"] = list(self.voting.confirmers)
         data["strategies"] = [asdict(s) for s in self.strategies]
         return data
 

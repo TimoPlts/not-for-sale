@@ -50,6 +50,7 @@ class CcxtPublicProvider(MarketDataProvider):
         retry_delay: float = 1.0,
         clock: Callable[[], datetime] = _utcnow,
         sleep: Callable[[float], None] = time.sleep,
+        funding_exchange: str = "",
     ) -> None:
         if page_limit < 1:
             raise ValueError("page_limit must be >= 1")
@@ -61,10 +62,26 @@ class CcxtPublicProvider(MarketDataProvider):
         self._retry_delay = retry_delay
         self._clock = clock
         self._sleep = sleep
+        self._funding_exchange = funding_exchange
+        self._feeds: dict[str, Any] = {}
 
     @property
     def name(self) -> str:
         return self._exchange_id
+
+    def context_feed(self, kind: str, timeframe: str) -> Any:
+        """Real funding rates (this exchange's perpetual futures market, public) and the Fear & Greed index."""
+        from trading_lab.data.context import DERIVATIVES, FUNDING, SENTIMENT, CcxtFundingFeed, FearGreedFeed
+
+        if kind not in self._feeds:
+            if kind == FUNDING:
+                exchange = self._funding_exchange or DERIVATIVES.get(self._exchange_id, self._exchange_id)
+                self._feeds[kind] = CcxtFundingFeed(exchange, sleep=self._sleep)
+            elif kind == SENTIMENT:
+                self._feeds[kind] = FearGreedFeed()
+            else:
+                return None
+        return self._feeds[kind]
 
     @staticmethod
     def _build_public_client(exchange_id: str) -> Any:

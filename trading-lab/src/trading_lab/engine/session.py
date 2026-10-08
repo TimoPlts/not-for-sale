@@ -644,6 +644,24 @@ class TradingSession:
             self.pending[sym] = Intent(DecisionAction.EXIT_SIGNAL, signal)
             self._decide(ts, sym, DecisionAction.EXIT_SIGNAL, "kill switch: closing position", signal)
 
+    def confirmation_shortfall(self, ensemble: Signal, side: Side) -> str | None:
+        """Why an entry lacks its confirmations (``voting.min_confirms``), or None when it has them."""
+        cfg = self.config.voting
+        if cfg.min_confirms <= 0:
+            return None
+        votes = {v["strategy"]: v["direction"] for v in ensemble.metadata.get("votes", [])}
+        want = "sell" if side is Side.SELL else "buy"
+        against = "buy" if want == "sell" else "sell"
+        if cfg.confirm_mode == "agree":
+            confirmed = [c for c in cfg.confirmers if votes.get(c) == want]
+        else:
+            confirmed = [c for c in cfg.confirmers if c in votes and votes[c] != against]
+        if len(confirmed) >= cfg.min_confirms:
+            return None
+        objecting = [c for c in cfg.confirmers if votes.get(c) == against]
+        return (f"{len(confirmed)} of {cfg.min_confirms} needed ({cfg.confirm_mode}; confirmed: "
+                f"{', '.join(confirmed) or 'none'}" + (f"; against: {', '.join(objecting)}" if objecting else "") + ")")
+
     def entry_filter_reason(
         self, sym: str, ts: datetime, close: float, market: Mapping[str, float | None], side: Side = Side.BUY,
     ) -> str | None:
@@ -718,6 +736,8 @@ class TradingSession:
             self._decide(ts, sym, DecisionAction.IGNORED, f"{word} signal but {what} already open", ensemble)
         elif sym in self.resting:
             self._decide(ts, sym, DecisionAction.IGNORED, f"{word} signal but limit order already working", ensemble)
+        elif (missing := self.confirmation_shortfall(ensemble, side)) is not None:
+            self._decide(ts, sym, DecisionAction.IGNORED, f"{word} signal blocked by confirmation: {missing}", ensemble)
         elif bar is not None and (blocked := self.entry_filter_reason(sym, ts, bar.close, market or {}, side)):
             self._decide(ts, sym, DecisionAction.IGNORED, f"{word} signal blocked by {blocked}", ensemble)
         else:

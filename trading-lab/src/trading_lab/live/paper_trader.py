@@ -52,7 +52,7 @@ from trading_lab.risk.breakers import BreakerState
 from trading_lab.reporting import run_metrics
 from trading_lab.storage import SQLiteStore
 from trading_lab.strategies import Strategy
-from trading_lab.strategy_factory import strategies_for
+from trading_lab.strategy_factory import attach_context_feeds, strategies_for
 
 RUN_KIND = "paper"
 _GRACE = timedelta(seconds=5)  # wait a little after a candle closes before fetching it
@@ -102,6 +102,7 @@ class LivePaperTrader:
             list(strategies) if strategies is not None
             else strategies_for(config, llm_provider=llm_provider)
         )
+        attach_context_feeds(self._strategies, provider, config.market.timeframe)
         self._voting = build_voting(config, self._strategies)
         self._step = timeframe_delta(config.market.timeframe)
         voting = config.voting

@@ -52,7 +52,7 @@ from trading_lab.metrics import PerformanceMetrics, RelativeMetrics, compute_met
 from trading_lab.metrics.benchmark import buy_and_hold_equity
 from trading_lab.storage import SQLiteStore
 from trading_lab.strategies import Strategy
-from trading_lab.strategy_factory import strategies_for
+from trading_lab.strategy_factory import attach_context_feeds, strategies_for
 
 SNAPSHOT_COLUMNS = (
     "cash",
@@ -155,6 +155,7 @@ class BacktestEngine:
             list(strategies) if strategies is not None
             else strategies_for(config, llm_provider=llm_provider)
         )
+        attach_context_feeds(self._strategies, provider, config.market.timeframe)
         self._voting = build_voting(config, self._strategies)
 
     @property

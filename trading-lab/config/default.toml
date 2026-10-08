@@ -65,6 +65,7 @@ correlation_lookback = 48     # bars in the rolling correlation
 cache_dir = "data/cache"      # CSV cache of public candles
 use_cache = true
 page_limit = 1000             # candles per public request
+funding_exchange = ""         # funding rates for the `funding` strategy: "" = the exchange's futures market
 
 # Each [strategies.<name>] table enables one strategy. `enabled` and `weight`
 # are generic; all other keys are strategy parameters.
@@ -92,6 +93,11 @@ num_std = 2.0
 buy_threshold = 0.15          # net weighted score needed to BUY
 sell_threshold = 0.15         # net weighted score needed to SELL
 min_agreeing = 1              # min number of strategies voting that way
+# The desk's confirmation gate (off at 0): a new entry needs min_confirms of the named confirmers.
+# confirm_mode "agree" = they vote the same way; "not_against" = they do not vote the other way (a veto).
+confirmers = []               # e.g. ["funding", "sentiment"] (enabled strategies with a weight)
+min_confirms = 0
+confirm_mode = "agree"
 # Optional regime-dependent weights (off unless present). The regime per symbol and bar is
 # "up" (close above a rising 50-bar average), "down" (below a falling one) or "sideways".
 # regime_bars = 50
